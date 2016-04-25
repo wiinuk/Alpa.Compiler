@@ -1,0 +1,47 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<FSharpLintSettings xmlns="https://github.com/fsprojects/FSharpLint/blob/master/ConfigurationSchema.xsd">
+  <IgnoreFiles Update="Overwrite"><![CDATA[assemblyinfo.*]]></IgnoreFiles>
+  <Analysers>
+    <NameConventions>
+      <Rules>
+        <IdentifiersMustNotContainUnderscores>
+          <Enabled>False</Enabled>
+        </IdentifiersMustNotContainUnderscores>
+        <InterfaceNamesMustBeginWithI>
+          <Enabled>False</Enabled>
+        </InterfaceNamesMustBeginWithI>
+        <LiteralNamesMustBePascalCase>
+          <Enabled>False</Enabled>
+        </LiteralNamesMustBePascalCase>
+        <NonPublicValuesCamelCase>
+          <Enabled>False</Enabled>
+        </NonPublicValuesCamelCase>
+        <ParameterMustBeCamelCase>
+          <Enabled>False</Enabled>
+        </ParameterMustBeCamelCase>
+        <RecordFieldNamesMustBePascalCase>
+          <Enabled>False</Enabled>
+        </RecordFieldNamesMustBePascalCase>
+        <TypeNamesMustBePascalCase>
+          <Enabled>False</Enabled>
+        </TypeNamesMustBePascalCase>
+      </Rules>
+    </NameConventions>
+    <NumberOfItems>
+      <Rules>
+        <MaxNumberOfBooleanOperatorsInCondition>
+          <Enabled>False</Enabled>
+          <MaxItems>4</MaxItems>
+        </MaxNumberOfBooleanOperatorsInCondition>
+        <MaxNumberOfItemsInTuple>
+          <Enabled>True</Enabled>
+          <MaxItems>7</MaxItems>
+        </MaxNumberOfItemsInTuple>
+        <MaxNumberOfMembers>
+          <Enabled>False</Enabled>
+          <MaxItems>32</MaxItems>
+        </MaxNumberOfMembers>
+      </Rules>
+    </NumberOfItems>
+  </Analysers>
+</FSharpLintSettings>
