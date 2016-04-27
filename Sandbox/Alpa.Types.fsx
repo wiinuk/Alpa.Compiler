@@ -44,7 +44,7 @@ type Slice<'T when 'T : unmanaged> =
         Length = length
     }
 
-[<Struct>]
+[<Struct; StructuredFormatDisplay("{StructuredFormatDisplay}")>]
 type Position =
     val Index: int32<c16ix>
     val Line: int32<c16ix>
@@ -54,6 +54,8 @@ type Position =
         Line = line
         Column = column
     }
+    member private x.StructuredFormatDisplay = sprintf "Position(%d, %d, %d)" x.Index x.Line x.Column
+    override x.ToString() = x.StructuredFormatDisplay
 
 type Symbol = string
 
@@ -95,80 +97,78 @@ type Special =
 type TokenKind =
     /// delimiter;
     /// Value = int (char Special);
-    /// Value2 = CreatedInt32;
+    /// Value2 = null;
     | D
     
     /// received identifier;
     /// Value = int (char Special);
-    /// Value2 = CreatedInt32;
+    /// Value2 = null;
     | Rid
     
     /// received operator;
     /// Value = int (char Special);
-    /// Value2 = CreatedInt32;
+    /// Value2 = null;
     | Rop
     
     /// identifier;
     /// Value = 0;
-    /// Value2 = Uncreated -> Name ..;
+    /// Value2 = box (Symbol ..);
     | Id
     
     /// quoted identifier;
     /// Value = 0;
-    /// Value2 = Uncreated -> Name ..;
+    /// Value2 = box (Symbol ..);
     | Qid
     
     /// operator;
     /// Value = 0;
-    /// Value2 = Uncreated -> Name ..;
+    /// Value2 = box (Symbol ..);
     | Op
     
     /// quoted operator;
     /// Value = 0;
-    /// Value2 = Uncreated -> Name ..;
+    /// Value2 = box (Symbol ..);
     | Qop
     
     /// integer literal;
     /// Value = 0;
-    /// Value2 = Uncreated  -> Bigint ..;
+    /// Value2 = box(bigint ..);
     /// |
-    /// Value = 0           -> ..;
-    /// Value2 = Uncreated  -> CreatedInt32;
+    /// Value = ..;
+    /// Value2 = null;
     | I
 
     /// floating literal;
     /// Value = 0;
-    /// Value2 = Uncreated -> Float(.., .., ..);
+    /// Value2 = box(bigint .., bigint .., bigint ..);
     /// |
-    /// Value = 0           -> int ..;
-    /// Value2 = Uncreated  -> CreatedInt32;
+    /// Value = int ..;
+    /// Value2 = null;
     | F
     
     /// character literal;
-    /// Value = 0           -> '...';
-    /// Value2 = Uncreated  -> CreatedInt32;
+    /// Value = int '...';
+    /// Value2 = null;
     | C
 
     /// string literal;
     /// Value = 0;
-    /// Value2 = Uncreated -> String ..;
+    /// Value2 = Symbol ..;
     | S
 
-type TokenValue = 
-    | Uncreated
-    | CreatedInt32
-    | Name of Symbol
-    | Bigint of bigint
-    | Float of bigint * bigint * bigint
-    | String of Symbol
+type TokenValue = obj
+//    | CreatedInt32
+//    | Bigint of bigint
+//    | Float of bigint * bigint * bigint
+//    | Symbol of Symbol
 
 type Token =
     {
         TriviaStart: Position
         Start: Position
         Kind: TokenKind
-        mutable _value: int
-        mutable _value2: TokenValue
+        _value: int
+        _value2: TokenValue
         End: Position
     }
 
@@ -201,28 +201,82 @@ module Token =
         | Qop -> true
         | _ -> false
     
-type Identifier = Token
-type LongIdentifier = LongIdentifier of Identifier list * Identifier
-
-type Pattern =
-    | WildcardPattern // of ``_``: Keyword
-    | LongIdentifierPattern of LongIdentifier
-
-type LetHeader = LetHeader of Identifier * Pattern list
-type Const = Token
-type Expression =
-    | ConstExpression of Const
-    | LookupExpression of LongIdentifier
-    | DotLookupExpression of Expression * LongIdentifier
-    | ApplicationsExpression of Expression * Expression * Expression list
-    | BlockExpression of Expression
-    | SequentialExpression of Expression * Expression
-    | LetExpression of LetHeader * Expression * Expression
-
 namespace Alpa.IO
 
 open System
 open Alpa
+
+type NativeBuffer<'T, [<Measure>] 'U when 'T : unmanaged> = {
+    mutable items: nativeptr<'T>
+    mutable capacity: int32<'U>
+    mutable size: int32<'U>
+    mutable freeItems: unit -> unit
+}
+    with
+    override x.Finalize() = x.freeItems()
+    interface IDisposable with
+        member x.Dispose() =
+            x.freeItems()
+            System.GC.SuppressFinalize x
+
+// using nativeptr
+#nowarn "9"
+
+module NativeBuffer =
+    open System.Runtime.InteropServices
+    module P = NativeInterop.NativePtr
+
+    let alloc n = P.ofNativeInt<'a> <| Marshal.AllocHGlobal(sizeof<'a> * n)
+    let free p = Marshal.FreeHGlobal(P.toNativeInt p)
+    let nullptr<'a when 'a : unmanaged> = P.ofNativeInt<'a> 0n
+    let copy xs ys size =
+        let rec aux i =
+            if i = size then ()
+            else
+                P.set ys i (P.get xs i)
+                aux(i + 1)
+        aux 0
+
+    let freeOnce p =
+        let isFree = ref false
+        fun _ ->
+            if !isFree then ()
+            else
+                free p
+                isFree := true
+
+    let newNativeBuffer capacity =
+        let p = alloc(int capacity)
+        {
+            items = p
+            capacity = capacity
+            size = 0<_>
+            freeItems = freeOnce p
+        }
+
+    let toSeq xs = seq { for i in 0..xs.size-1 -> P.get xs.items i }
+    let add xs x =
+        let extend xs =
+            let newCapacity = xs.capacity + xs.capacity
+            
+            printfn "extend %A -> %A" xs.capacity newCapacity
+            let ys = alloc (min 2146435071 (int newCapacity))
+            
+            copy xs.items ys (int xs.size)
+            xs.freeItems()
+
+            xs.items <- ys
+            xs.capacity <- newCapacity
+            xs.freeItems <- freeOnce ys
+
+        let size = xs.size
+        if xs.capacity = size then extend xs
+            
+        P.set xs.items (int size) x
+        xs.size <- size + 1
+
+    let get xs i = if 0 <= i && i < xs.size then Some(P.get xs.items i) else None
+    let clear xs = xs.size <- 0<_>
 
 type Buffer<'T> = {
     mutable items: array<'T>
@@ -245,11 +299,10 @@ module Buffer =
         xs.size <- size+1
 
     let get xs i = if 0 <= i && i < xs.size then Some xs.items.[i] else None
-    
+
 type CharStream = {
     buffer: nativeptr<char>
     length: int32<c16ix>
-
     mutable index: int32<c16ix>
     mutable line: int32<c16ix>
     mutable column: int32<c16ix>
@@ -258,5 +311,7 @@ type CharStream = {
     with
     override x.Finalize() = x.dispose()
     interface IDisposable with
-        member x.Dispose() = x.dispose()
+        member x.Dispose() =
+            x.dispose()
+            System.GC.SuppressFinalize x
     

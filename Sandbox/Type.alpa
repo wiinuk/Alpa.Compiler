@@ -1,0 +1,195 @@
+﻿module Alpa
+
+type ValueTuple2 t1 t2 = (t1, t2)
+type ValueTuple3 t1 t2 t3 = (t1, t2, t3)
+type ValueTuple4 t1 t2 t3 t4 = (t1, t2, t3, t4)
+type Slice a = (Pointer a, Int32)
+type Position = (Int32, Int32, Int32)
+type Symbol = string
+
+type Special = Character
+module Specials =
+	``D,`` = ','
+	``D;`` = ';'
+	``D[`` = '['
+	``D]`` = ']'
+	``D{`` = '{'
+	``D}`` = '}'
+	``D(`` = '('
+	``D)`` = ')'
+
+	``O=`` = '='
+	``O.`` = '.'
+	``O:`` = ':'
+	``O|`` = '|'
+
+	``O->`` = 'a'
+	``O<-`` = 'b'
+	``O..`` = 'c'
+	``O::`` = 'g'
+	``O...`` = 'i'
+    
+	I_ = '_'
+
+	Alias = 'A'
+	Case = 'B'
+	Class = 'C'
+//    In = 'D'
+	Type = 'E'
+	With = 'F'
+	Import = 'G'
+	Module = 'H'
+	For = 'I'
+	Where = 'J'
+	Let = 'K'
+/*
+	type TokenKind =
+		/// delimiter;
+		/// Value = int (char Special);
+		/// Value2 = CreatedInt32;
+		| D
+    
+		/// received identifier;
+		/// Value = int (char Special);
+		/// Value2 = CreatedInt32;
+		| Rid
+    
+		/// received operator;
+		/// Value = int (char Special);
+		/// Value2 = CreatedInt32;
+		| Rop
+    
+		/// identifier;
+		/// Value = 0;
+		/// Value2 = Uncreated -> Name ..;
+		| Id
+    
+		/// quoted identifier;
+		/// Value = 0;
+		/// Value2 = Uncreated -> Name ..;
+		| Qid
+    
+		/// operator;
+		/// Value = 0;
+		/// Value2 = Uncreated -> Name ..;
+		| Op
+    
+		/// quoted operator;
+		/// Value = 0;
+		/// Value2 = Uncreated -> Name ..;
+		| Qop
+    
+		/// integer literal;
+		/// Value = 0;
+		/// Value2 = Uncreated  -> Bigint ..;
+		/// |
+		/// Value = 0           -> ..;
+		/// Value2 = Uncreated  -> CreatedInt32;
+		| I
+
+		/// floating literal;
+		/// Value = 0;
+		/// Value2 = Uncreated -> Float(.., .., ..);
+		/// |
+		/// Value = 0           -> int ..;
+		/// Value2 = Uncreated  -> CreatedInt32;
+		| F
+    
+		/// character literal;
+		/// Value = 0           -> '...';
+		/// Value2 = Uncreated  -> CreatedInt32;
+		| C
+
+		/// string literal;
+		/// Value = 0;
+		/// Value2 = Uncreated -> String ..;
+		| S
+
+	type TokenValue = 
+		| Uncreated
+		| CreatedInt32
+		| Name Symbol
+		| Bigint bigint
+		| Float bigint bigint bigint
+		| String Symbol
+
+	type Token = Token {
+		trivia_start: Position
+		start: Position
+		kind: TokenKind
+		_value: int
+		_value2: TokenValue
+		end: Position
+	}
+
+	module Token =
+		kind t = t.kind
+		range t = t.start.index, t.end.index
+
+		isR s { kind = D | Rop | Rid; _value = v } = Char.to_int32 v == s
+		isR _ _ = false
+
+		isI t = t.kind == I
+		isF t = t.kind == F
+		isC t = t.kind == C
+		isS t = t.kind == S
+
+		isId { kind = Id | Qid } = true
+		isId _ = false
+
+		isOp { kind = Op | Qop } = true
+		isOp _ = false
+    
+	type Identifier = Token
+	type LongIdentifier = LongIdentifier [Identifier] Identifier
+
+	type Pattern =
+		| WildcardPattern // Keyword
+		| LongIdentifierPattern LongIdentifier
+
+	type LetHeader = LetHeader Identifier [Pattern]
+	type Const = Token
+	type Expression =
+		| ConstExpression Const
+		| LookupExpression LongIdentifier
+		| DotLookupExpression Expression LongIdentifier
+		| ApplicationsExpression Expression Expression [Expression]
+		| BlockExpression Expression
+		| SequentialExpression Expression Expression
+		| LetExpression LetHeader Expression Expression
+
+module Alpa.IO =
+	import Alpa
+
+	type Buffer a = {
+		items: Array a
+		size: Int32
+	}
+
+	module Buffer =
+		newBuffer() = { items = Array.zeroCreate 4; size = 0 }
+
+		add xs x =            
+			extend xs =
+				ys = Array.zeroCreate(min 2146435071 (xs.items.Length * 2))
+				Array.copy xs.items 0 ys 0 xs.size
+				xs.items <- ys
+
+			size = xs.size
+			if xs.items.Length == size then extend xs else ()
+            
+			Array.set xs.items size x
+			xs.size <- size+1
+
+		get xs i = if 0 <= i && i < xs.size then Some(Array.get xs.items i) else None
+    
+	type CharStream = {
+		buffer: Pointer Char16
+		length: Int32
+
+		index: Int32
+		line: Int32
+		column: Int32
+		dispose: () -> ()
+	}
+*/

@@ -1,6 +1,6 @@
 ﻿module Alpa.Lexer
 
-#load "./Alpa.CharStream.fsx"
+#load "./Alpa.IO.CharStream.fsx"
 
 open Alpa
 open Alpa.Token
@@ -201,10 +201,10 @@ let makeIntegerLiteral (result: byref<ValueTuple3<_,_,_>>) n =
     result.Item1 <- I
     if inInt32 n then
         result.Item2 <- int n
-        result.Item3 <- CreatedInt32
+        result.Item3 <- null
     else
         result.Item2 <- 0
-        result.Item3 <- Bigint n
+        result.Item3 <- box n
     true
 
 let hexadecimalLiteral (result: byref<_>) xs =
@@ -244,10 +244,10 @@ let makeFloatingPointLiteral (result: byref<ValueTuple3<_,_,_>>) n (f: bigint) (
     result.Item1 <- F
     if f.IsZero && e.IsZero && inInt32 n then
         result.Item2 <- int n
-        result.Item3 <- CreatedInt32
+        result.Item3 <- null
     else
         result.Item2 <- 0
-        result.Item3 <- Float(n, f, e)
+        result.Item3 <- box (n, f, e)
 
 let decimalExponent (result: byref<_>) n f xs =
     let e = satisfy (|FloatingPointE|) xs
@@ -293,7 +293,7 @@ let delimiter (result: byref<ValueTuple3<_,_,_>>) xs =
         let c = r.GetValueOrDefault()
         result.Item1 <- D
         result.Item2 <- int c
-        result.Item3 <- CreatedInt32
+        result.Item3 <- null
         true
     )
 
@@ -307,11 +307,11 @@ let nameOrReceived (head, tail, nameTag, receivedTag) (result: byref<ValueTuple3
         if receivedNames.TryGetValue(s, &r) then
             result.Item1 <- receivedTag
             result.Item2 <- int (LanguagePrimitives.EnumToValue r : char)
-            result.Item3 <- CreatedInt32
+            result.Item3 <- null
         else
             result.Item1 <- nameTag
             result.Item2 <- 0
-            result.Item3 <- Uncreated
+            result.Item3 <- s :> obj
         true
     )
 
@@ -371,11 +371,13 @@ let charLiteral (result: byref<ValueTuple3<_,_,_>>) xs =
     skipChar '\'' xs && (
         result.Item1 <- C
         result.Item2 <- int c32
-        result.Item3 <- CreatedInt32
+        result.Item3 <- null
         true
     )
 
-let quotedTextItems0 closeQuote xs =
+let buffer = System.Text.StringBuilder()
+let quotedTextItems0 closeQuote (result: byref<_>) xs =
+    let rs = buffer
     let rec aux _ =
         let r = peek xs
         r.HasValue &&
@@ -383,58 +385,78 @@ let quotedTextItems0 closeQuote xs =
             | '\\' ->
                 skip xs &&
                 let mutable r = 0<_>
-                escapedChar &r xs && aux()
-
+                escapedChar &r xs && (
+                    if needSurrogatePair r 
+                        then ignore(rs.Append(Char.ConvertFromUtf32(int r)))
+                        else ignore(rs.Append(char r))
+                    aux()
+                )
             | c ->
                 (c = closeQuote) ||
-                (skip xs && aux())
+                (
+                    ignore(rs.Append c);
+                    skip xs && aux()
+                )
+
+    result <- rs.ToString()
+    ignore(rs.Clear())
     aux()
 
-let quotedTextItems1 closeQuote xs =
+let quotedTextItems1 closeQuote (result: byref<_>) xs =
     let r = peek xs
-    r.HasValue
+    r.HasValue &&
+
+    let c = r.GetValueOrDefault()
+    match c with
+    | '\\' ->
+        skip xs &&
+        let mutable r = 0<_>
+        escapedChar &r xs
+
+    | _ -> (c <> closeQuote) && skip xs
+
     &&
-        match r.GetValueOrDefault() with
-        | '\\' ->
-            skip xs &&
-            let mutable r = 0<_>
-            escapedChar &r xs
 
-        | c -> (c <> closeQuote) && skip xs
-
-    && quotedTextItems0 closeQuote xs
-
+    let mutable r = null
+    quotedTextItems0 closeQuote &r xs &&
+    (
+        result <- string c + r
+        true
+    )
 
 let stringLiteral (result: byref<ValueTuple3<_,_,_>>) xs =
+    let mutable r = null
     skipChar '"' xs &&
-    quotedTextItems0 '"' xs &&
+    quotedTextItems0 '"' &r xs &&
     skipChar '"' xs &&
     (
         result.Item1 <- S
         result.Item2 <- 0
-        result.Item3 <- Uncreated
+        result.Item3 <- r :> obj
         true
     )
     
 let quotedIdentifier (result: byref<ValueTuple3<_,_,_>>) xs =
+    let mutable r = null
     skipChar2 '`' '`' xs &&
-    quotedTextItems1 '`' xs &&
+    quotedTextItems1 '`' &r xs &&
     skipChar2 '`' '`' xs &&
     (
         result.Item1 <- Qid
         result.Item2 <- 0
-        result.Item3 <- Uncreated
+        result.Item3 <- r :> obj
         true
     )
     
 let quotedOperator (result: byref<ValueTuple3<_,_,_>>) xs =
+    let mutable r = null
     skipChar '`' xs &&
-    quotedTextItems1 '`' xs &&
+    quotedTextItems1 '`' &r xs &&
     skipChar '`' xs &&
     (
         result.Item1 <- Qop
         result.Item2 <- 0
-        result.Item3 <- Uncreated
+        result.Item3 <- r :> obj
         true
     )
 

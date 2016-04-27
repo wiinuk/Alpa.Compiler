@@ -54,8 +54,6 @@ let (.>>.) (Parser p1) (Parser p2) = fun xs ->
         else
             Reply((r1.Value, r2.Value))
 
-let between pstart pend p = pstart >>. p .>> pend
-
 let pipe2 (Parser p1) (Parser p2) f =
     let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt f
     fun xs ->
@@ -99,21 +97,64 @@ let pipe4 (Parser p1) (Parser p2) (Parser p3) (Parser p4) f =
                     else
                         Reply(f.Invoke(r1.Value, r2.Value, r3.Value, r4.Value))
     p
-            
+
+let pipe5(Parser p1, Parser p2, Parser p3, Parser p4, Parser p5, f) =
+    let f = OptimizedClosures.FSharpFunc<_,_,_,_,_,_>.Adapt f
+    let p xs =
+        let r1 = p1 xs
+        if r1.Status <> Ok then Reply((), r1.Error)
+        else
+            let r2 = p2 xs
+            if r2.Status <> Ok then Reply((), r2.Error)
+            else
+                let r3 = p3 xs
+                if r3.Status <> Ok then Reply((), r3.Error)
+                else
+                    let r4 = p4 xs
+                    if r4.Status <> Ok then Reply((), r4.Error)
+                    else
+                        let r5 = p5 xs
+                        if r5.Status <> Ok then Reply((), r5.Error)
+                        else
+                            Reply(f.Invoke(r1.Value, r2.Value, r3.Value, r4.Value, r5.Value))
+    p
+         
 let many (Parser p) =
     let p xs =
         let rec aux rs =
             let i = xs.Index
             let r = p xs
-            if r.Status <> Ok then
+            if r.Status = Ok && i < xs.Index then
+                aux(r.Value::rs)
+            else
                 xs.Index <- i
                 List.rev rs
 
-            else aux(r.Value::rs)
         Reply(aux [])
     p
 
-let sepBy1 (Parser p) (Parser sep) = pipe2 p (many (sep >>. p)) <| fun x xs -> x::xs
+let many1 p = p .>>. many p
+let sepBy1 p sep = p .>>. many (sep .>>. p)
+
+let chainL1 (Parser p) (Parser op) f =
+    let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt f
+    let p xs =
+        let rec aux a =
+            let i = xs.Index
+            let rOp = op xs
+            let mutable r = Unchecked.defaultof<_>
+            if rOp.Status = Ok && (r <- p xs; r.Status = Ok && i < xs.Index) then
+                aux(f.Invoke(a, rOp.Value, r.Value))
+            else
+                xs.Index <- i
+                a
+
+        let r = p xs
+        if r.Status = Ok then
+            Reply(aux r.Value)
+        else
+            Reply((), r.Error)
+    p
 
 let (<|>) (Parser p1) (Parser p2) = fun xs ->
     let i = xs.Index
@@ -140,6 +181,7 @@ let choice = function
                     let r = p xs
                     let i = xs.Index
                     if r.Status = Ok && i' < i then aux r i ps else aux r' i' ps
+
             aux r xs.Index ps
         p
     
@@ -152,8 +194,7 @@ let opt (Parser p) = fun xs ->
         Reply None
 
 let createParserForwardedToRef() =
-    let p = (fun _ -> failwith "not initialized")
-    let r = ref p
+    let r = ref <| fun _ -> failwith "not initialized"
     (fun xs -> !r xs), r
 
 let satisfyE p e =

@@ -69,9 +69,11 @@
     <Compile Include="Alpa.Lexer.fsx" />
     <None Include="Alpa.IO.Stream.fsx" />
     <None Include="Alpa.ParserCombinator.fsx" />
+    <None Include="Alpa.Parser.Types.fsx" />
     <None Include="Alpa.Parser.fsx" />
     <None Include="Lexer.Test.fsx" />
     <None Include="Parser.Test.fsx" />
+    <None Include="Type.alpa" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

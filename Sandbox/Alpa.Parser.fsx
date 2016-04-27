@@ -1,13 +1,12 @@
 ﻿module Alpa.Parser
-#load "./Alpa.ParserCombinator.fsx"
+#load "./Alpa.Parser.Types.fsx"
 
 open Alpa.IO
 open Alpa.Token
 open Alpa.ParserCombinator
 
-    
-type State = Position
-let initialState = Position(0<_>, 1<_>, 1<_>)
+type State = ValueTuple3<Position, list<Position>, unit>
+let initialState: State = ValueTuple3(Item1 = Position(0<_>, 1<_>, 1<_>), Item2 = [], Item3 = ())
 
 type Error =
     | ErrorNone
@@ -18,45 +17,132 @@ type Error =
     | RequireFloatLiteral
     | RequireCharLiteral
     | RequireStringLiteral
-    | RequireLineSeparator of Position
+    | RequireLineSeparator
+    | RequireBlockBegin
+    | RequireBlockEnd
+    | RequireFileStart
 
 type Parser<'a> = Parser<Token, State, Error, 'a>
 let (|Parser|) (p: Parser<_>) = p
 
 let rParser s = satisfyE (isR s) (RequireR s)
-module Delimiters =
-    let ``d=`` = rParser Special.``O=``
+
+module Specials =
     let ``(`` = rParser Special.``D(``
     let ``)`` = rParser Special.``D)``
-    let ``.`` = rParser Special.``O.``
     let ``;`` = rParser Special.``D;``
+    let ``,`` = rParser Special.``D,``
+    let ``[`` = rParser Special.``D[``
+    let ``]`` = rParser Special.``D]``
+    let ``{`` = rParser Special.``D{``
+    let ``}`` = rParser Special.``D}``
 
-module Keywords =
+    let ``d=`` = rParser Special.``O=``
+    let ``.`` = rParser Special.``O.``
+    let ``->`` = rParser Special.``O->``
+
     let ``_`` = rParser Special.I_
+    let ``module`` = rParser Special.Module
+    let ``type`` = rParser Special.Type
 //    let ``let`` = RParser Special.Let
 //    let ``in`` = RParser Special.In
 
-module D = Delimiters
-module K = Keywords
+module Layout =
+    let lineSeparatorToken =
+        {
+            TriviaStart = Position()
+            Start = Position()
+            Kind = D
+            _value = int (LanguagePrimitives.EnumToValue Special.``D;``)
+            _value2 = null
+            End = Position()
+        }
+
+    let blockBeginLayoutToken =
+        {
+            TriviaStart = Position()
+            Start = Position()
+            Kind = D
+            _value = int (LanguagePrimitives.EnumToValue Special.``D{``)
+            _value2 = null
+            End = Position()
+        }
+
+    let blockEndLayoutToken =
+        {
+            TriviaStart = Position()
+            Start = Position()
+            Kind = D
+            _value = int (LanguagePrimitives.EnumToValue Special.``D}``)
+            _value2 = null
+            End = Position()
+        }
+
+    let lineSeparatorLayout (xs: Stream<_,State>) =
+        if xs.Items.size <= xs.Index then Reply((), RequireLineSeparator)
+        else
+            let x = xs.Items.items.[xs.Index]
+            let p = xs.UserState.Item1
+            if not (p.Line < x.Start.Line && p.Column = x.Start.Column) then Reply((), RequireLineSeparator)
+            else
+                xs.UserState.Item1 <- x.Start
+                Reply lineSeparatorToken
+
+    let blockBeginLayout (xs: Stream<_,State>) =
+        if xs.Items.size <= xs.Index then Reply((), RequireBlockBegin)
+        else
+            let p = xs.UserState.Item1
+
+            let x = xs.Items.items.[xs.Index]
+            if not (p.Line <= x.Start.Line && p.Column < x.Start.Column) then Reply((), RequireBlockBegin)
+            else
+                let ps = xs.UserState.Item2
+
+                xs.UserState.Item1 <- x.Start
+                xs.UserState.Item2 <- p::ps
+                Reply blockBeginLayoutToken
+
+    let blockEndLayout (xs: Stream<_,State>) =
+        let ps = xs.UserState.Item2
+        match ps with
+        | [] -> Reply((), RequireBlockEnd)
+        | p::ps ->
+            xs.UserState.Item1 <- p
+            xs.UserState.Item2 <- ps
+            Reply blockEndLayoutToken
+
+    let fileStartLayout (xs: Stream<_,State>) =
+        if xs.Items.size <= xs.Index then Reply((), RequireFileStart)
+        else
+            match xs.UserState.Item2 with
+            | _::_ -> Reply((), RequireFileStart)
+            | [] ->
+                let x = xs.Items.items.[xs.Index]
+                xs.UserState.Item1 <- x.Start
+                Reply(())
+
+module S = Specials
+let lineSeparator = S.``;`` <|> Layout.lineSeparatorLayout
+let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBeginLayout p Layout.blockEndLayout f
 
 let identifier = satisfyE isId RequireIdentifer
 let operator = satisfyE isOp RequireOperator
 
-let path0 = many (identifier .>> D.``.``)
+let path0 = many (identifier .>> S.``.``)
 
 let longIdentifier = pipe2 path0 identifier <| fun xs x -> LongIdentifier(xs, x)
 let longIdentifierOrOperator = pipe2 path0 (identifier <|> operator) <| fun xs x -> LongIdentifier(xs, x)
 
-let constInt = satisfyE isI RequireIntegerLiteral
-let constFloat = satisfyE isF RequireFloatLiteral
-let constChar = satisfyE isC RequireCharLiteral
-let constString = satisfyE isS RequireStringLiteral
-let const' =
+let constantInt = satisfyE isI RequireIntegerLiteral
+let constantFloat = satisfyE isF RequireFloatLiteral
+let constantChar = satisfyE isC RequireCharLiteral
+let constantString = satisfyE isS RequireStringLiteral
+let constant =
     choice [
-        constInt
-        constFloat
-        constChar
-        constString
+        constantInt
+        constantFloat
+        constantChar
+        constantString
     ]
 
 let pattern, _pattern = createParserForwardedToRef()
@@ -64,28 +150,28 @@ let pattern, _pattern = createParserForwardedToRef()
 let atomicPattern =
     choice [
 //        ``const``
+        S.``_`` |>> WildcardPattern
+        pipe3 S.``(`` pattern S.``)`` <| fun a b c -> ParenthesizedPattern(a, b, c)
         longIdentifier |>> LongIdentifierPattern
 //        listPattern
 //        recordPattern
 //        arrayPattern
-        between D.``(`` D.``)`` pattern
 //        D.``:?`` atomicType
 //        K.``null``
-        K.``_`` >>% WildcardPattern
     ]
 
 _pattern :=
     choice [
-//        const -- constant pattern
+        S.``_`` |>> WildcardPattern
+        pipe3 S.``(`` pattern S.``)`` <| fun a b c -> ParenthesizedPattern(a, b, c)
         longIdentifier |>> LongIdentifierPattern // pat-paramopt patopt -- named pattern
-        K.``_`` >>% WildcardPattern
+//        const -- constant pattern
 //        pat as ident -- "as" pattern
 //        pat '|' pat -- disjunctive pattern
 //        pat '&' pat -- conjunctive pattern
 //        pat :: pat -- "cons" pattern
 //        pat : type -- pattern with type constraint
 //        pat,...,pat -- tuple pattern
-        between D.``(`` D.``)`` pattern
 //        list-pat -- list pattern
 //        array-pat -- array pattern
 //        record-pat -- record pattern
@@ -101,18 +187,9 @@ let letHeader =
     opHead <|> idHead
 
 let expression, _expression = createParserForwardedToRef()
-let letDefinition = letHeader .>> D.``d=`` .>>. expression
 
-_expression :=
-    choice [
-        const' |>> ConstExpression // -- a constant value
-        between D.``(`` D.``)`` expression |>> BlockExpression // -- block expression
+_expression := (
 //        begin expr end -- block expression
-        longIdentifierOrOperator |>> LookupExpression // -- lookup expression
-        pipe3 expression D.``.`` longIdentifierOrOperator <| fun e _ n -> DotLookupExpression(e, n) // -- dot lookup expression
-        pipe3 expression expression (many expression) <| fun e1 e2 es -> ApplicationsExpression(e1, e2, es)
-//        expr expr -- application expression
-
 //        expr(expr) -- high precedence application
 //        expr<types> -- type application expression
 //        expr infix-op expr -- infix application expression
@@ -138,13 +215,11 @@ _expression :=
 //        expr :?> type -- dynamic downcast coercion
 //        upcast expr -- static upcast expression
 //        downcast expr -- dynamic downcast expression
-        pipe3 letDefinition D.``;`` expression <| fun (h, v) _ e -> LetExpression(h, v, e) // –- function definition expression
 //        let value-defn in expr –- value definition expression
 //        let rec function-or-value-defns in expr -- recursive definition expression
 //        use ident = expr in expr –- deterministic disposal expression
 //        fun argument-pats -> expr -- function expression
 //        function rules -- matching function expression
-        pipe3 expression D.``;`` expression <| fun l _ r -> SequentialExpression(l, r) // -- sequential execution expression
 //        match expr with rules -- match expression
 //        try expr with rules -- try/with expression
 //        try expr finally expr -- try/finally expression
@@ -158,44 +233,99 @@ _expression :=
 //        %expr -- expression splice
 //        %%expr -- weakly typed expression splice
 //        (static-typars : (member-sig) expr) -– static member invocation
-]
+    let primitiveExpression =
+        choice [
+            constant |>> ConstExpression // -- a constant value
+            pipe3 S.``(`` expression S.``)`` <| fun a b c -> BlockExpression(a, b, c)
+            longIdentifierOrOperator |>> LookupExpression
+        ]
+
+    let p = primitiveExpression
+    let p = pipe2 p (opt (S.``.`` .>>. longIdentifierOrOperator)) <| fun e n -> match n with None -> e | Some(a, b) -> DotLookupExpression(e, a, b) // -- dot lookup expression
+    let p = many1 p |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(e1, e2, es)
+    
+    let p =
+        let pipe a b c d e = LetExpression(a, b, c, d, e)
+        let letExpression = pipe5(letHeader, S.``d=``, primitiveExpression, lineSeparator, p, pipe) // –- function definition expression
+        letExpression <|> p
+
+    let p = chainL1 p lineSeparator <| fun l op r -> SequentialExpression(l, op, r) // -- sequential execution expression
+    p
+)
 
 let moduleFunctionOrValueDefinition =
     choice [
-        letDefinition
+        pipe3 letHeader S.``d=`` expression <| fun a b c -> ModuleLetElement(a, b, c)
 //        doExpression
     ]
 
-let moduleElement =
+let typar = (S.``_`` <|> identifier) |>> TypeArgument
+let typarDefinition = (* attributesopt *) typar
+let typarDefinitions1 = many1 typarDefinition
+let typeName = pipe2 (* attributes opt access opt *) identifier (opt typarDefinitions1) <| fun a b -> TypeName(a, match b with None -> [] | Some(x,xs) -> x::xs)
+
+let type', _type' = createParserForwardedToRef()
+_type' := (    
+    let primitiveType = 
+        choice [
+            pipe3 S.``(`` type' S.``)`` <| fun a b c -> ParenthesizedType(a, b, c)
+            pipe3 S.``[`` type' S.``]`` <| fun a b c -> ListType(a, b, c)
+            longIdentifier |>> fun x -> NamedType(x, [])
+
+            // typar -- variable type
+            // type[ , ... , ] -- array type
+            // type typar-defns -- type with constraints
+            // typar :> type -- variable type with subtype constraint
+            // #type -- anonymous type with subtype constraint
+        ]
+
+    let p = primitiveType
+    let p = pipe2 longIdentifier (many1 p) (fun a (x, xs) -> NamedType(a, x::xs)) <|> p
+    let p = chainL1 p S.``->`` <| fun l op r -> FunctionType(l, op, r)
+    let p = pipe2 p (many (S.``,`` .>>. p)) <| fun a -> function [] -> a | (b, c)::xs -> TupleType(a, b, c, xs)
+    p
+)
+
+let abbreviationTypeDefinition = pipe3 typeName S.``d=`` type' <| fun a b c -> AbbreviationTypeDefinition(a, b, c)
+let typeDefinition =
+    choice [
+        abbreviationTypeDefinition
+//        record-type-defn
+//        union-type-defn
+//        anon-type-defn
+//        class-type-defn
+//        struct-type-defn
+//        interface-type-defn
+//        enum-type-defn
+//        delegate-type-defn
+//        type-extension
+    ]
+
+let typeDefinitions = pipe2 S.``type`` typeDefinition <| fun a b -> ModuleTypeDefinition(a, b)
+
+let moduleElement, _moduleElement = createParserForwardedToRef()
+let moduleElements = sepBy1 moduleElement lineSeparator
+let moduleDefinitionBody = block (opt moduleElements) <| fun a b c -> a, b, c
+let moduleDefinition = pipe4 (* attributes opt *) S.``module`` (* access opt *) identifier S.``d=`` moduleDefinitionBody <| fun a b c (d,e,f) -> ModuleDefinition(a, b, c, d, e, f)
+
+_moduleElement :=
     choice [
         moduleFunctionOrValueDefinition
-        // typeDefinitions -- type definitions
-        // moduleDefinition -- module definitions
+        typeDefinitions
+        moduleDefinition
         // module-abbrev -- module abbreviations
         // import-decl -- import declarations
         // compiler-directive-decl
     ]
 
-let lineSeparator =
-    let p xs =
-        let p: Position = xs.UserState
-        if xs.Items.size <= xs.Index then Reply((), RequireLineSeparator p)
-        else
-            let x: Token = xs.Items.items.[xs.Index]
-            if not (p.Line < x.Start.Line && p.Column = x.Start.Column) then Reply((), RequireLineSeparator p)
-            else
-                xs.UserState <- x.Start
-                Reply(())
-    p
-
-let moduleElements = sepBy1 moduleElement lineSeparator
-let anonymousModule = moduleElements
+let anonymousModule = moduleElements |>> AnonymousModule
+let namedModule = pipe3 S.``module`` longIdentifier moduleElements <| fun a b c -> NamedModule(a, b, c)
 
 let implementationFile =
     choice [
 //        many namespaceDeclGroup
-//        namedModule
+        namedModule
         anonymousModule
     ]
 
-let (Parser start) = opt implementationFile .>> eof
+let (Parser start) = opt (Layout.fileStartLayout >>. implementationFile) .>> eof
