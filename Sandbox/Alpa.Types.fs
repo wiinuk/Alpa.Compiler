@@ -6,7 +6,7 @@
 
 type internal int32<[<Measure>] 'u> = int<'u>
 
-[<Struct>]
+[<Struct; StructuredFormatDisplay "{StructuredFormatDisplay}">]
 type ValueTuple2<'T1,'T2> =
     val Item1: 'T1
     val Item2: 'T2
@@ -14,8 +14,11 @@ type ValueTuple2<'T1,'T2> =
         Item1 = item1
         Item2 = item2
     }
+    member private x.StructuredFormatDisplay = sprintf "ValueTuple2(item1 = %A, item2 = %A)" x.Item1 x.Item2
+    override x.ToString() = x.StructuredFormatDisplay
+
     
-[<Struct>]
+[<Struct; StructuredFormatDisplay "{StructuredFormatDisplay}">]
 type ValueTuple3<'T1,'T2,'T3> =
     [<DefaultValue(false)>]
     val mutable Item1: 'T1
@@ -24,7 +27,10 @@ type ValueTuple3<'T1,'T2,'T3> =
     [<DefaultValue(false)>]
     val mutable Item3: 'T3
 
-[<Struct>]
+    member private x.StructuredFormatDisplay = sprintf "ValueTuple3(Item1 = %A, Item2 = %A, Item3 = %A)" x.Item1 x.Item2 x.Item3
+    override x.ToString() = x.StructuredFormatDisplay
+
+[<Struct; StructuredFormatDisplay "{StructuredFormatDisplay}">]
 type ValueTuple4<'T1,'T2,'T3,'T4> =
     [<DefaultValue(false)>]
     val mutable Item1: 'T1
@@ -34,6 +40,9 @@ type ValueTuple4<'T1,'T2,'T3,'T4> =
     val mutable Item3: 'T3
     [<DefaultValue(false)>]
     val mutable Item4: 'T4
+
+    member private x.StructuredFormatDisplay = sprintf "ValueTuple4(Item1 = %A, Item2 = %A, Item3 = %A, Item4 = %A)" x.Item1 x.Item2 x.Item3 x.Item4
+    override x.ToString() = x.StructuredFormatDisplay
 
 [<Struct>]
 type Slice<'T when 'T : unmanaged> =
@@ -54,7 +63,7 @@ type Position =
         Line = line
         Column = column
     }
-    member private x.StructuredFormatDisplay = sprintf "Position(%d, %d, %d)" x.Index x.Line x.Column
+    member private x.StructuredFormatDisplay = sprintf "Position(index = %d, line = %d, column = %d)" x.Index x.Line x.Column
     override x.ToString() = x.StructuredFormatDisplay
 
 type Symbol = string

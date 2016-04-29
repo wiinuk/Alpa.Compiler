@@ -4,8 +4,6 @@ module Alpa.IO.CharStream
 // using nativeptr
 #nowarn "9"
 
-#load "./Alpa.Types.fsx"
-
 open Alpa
 open Alpa.IO
 open System
@@ -14,21 +12,22 @@ open System.Runtime.InteropServices
 module P = NativeInterop.NativePtr
 
 
+let get xs i = P.get xs.buffer (int (xs.index + i))
 let inline private (@) xs i = P.get xs.buffer (int (xs.index + i))
 
-[<Literal>]
-let Char16Ix0 = 0<c16ix>
 let char16ToChar32 (c: char) = int c * 1<c32>
 let int32ToChar32 (c: int32) = c * 1<c32>
-let needSurrogatePair c = 0x10000<c32> <= c && c <= 0x10FFFF<_>
+let stringLength (s: string) = s.Length * 1<c16ix>
+let needSurrogatePair c = 0x10000<c32> <= c && c <= 0x10FFFF<c32>
+let surrogatePairToChar32 (high: char) low = Char.ConvertToUtf32(high, low) * 1<c32>
 
 let tabWidth = 4<c16ix>
-let tabColumn column = 1<c16ix^2/1> * ((column - 1<_> + tabWidth - 1<_>) / (tabWidth * tabWidth + 1<_>))
+let nextTabColumn column = (column - 1<_> + tabWidth - 1<_>) / tabWidth * tabWidth + 1<_>
 
 let private advanceOf c xs =
     match c with
     | '\t' ->
-        xs.column <- tabColumn xs.column
+        xs.column <- nextTabColumn xs.column
         xs.index <- xs.index + 1<_>
 
     | '\n' ->
@@ -41,12 +40,12 @@ let private advanceOf c xs =
         xs.index <- xs.index + 1<_>
 
 let private advanceN n xs =
-    let rec aux i = if i < n then advanceOf (xs@(i)) xs; aux(i+1<_>) else ()
+    let rec aux i = if i < n then advanceOf (xs@(0<_>)) xs; aux(i + 1<_>) else ()
     aux 0<_>
     
 let private advanceOfU c xs =
     if c = char16ToChar32 '\t' then
-        xs.column <- tabColumn xs.column
+        xs.column <- nextTabColumn xs.column
         xs.index <- xs.index + 1<_>
 
     elif c = char16ToChar32 '\n' then
@@ -71,7 +70,7 @@ let ofString (s: string) =
     let p = h.AddrOfPinnedObject() |> P.ofNativeInt<char>
     {
         buffer = p
-        length = s.Length * 1<_>
+        length = stringLength s
         index = 0<_>
         line = 1<_>
         column = 1<_>
@@ -104,7 +103,7 @@ let peekJust4 (r: byref<ValueTuple4<_,_,_,_>>) xs =
         r.Item4 <- xs@(3<_>)
         4<_>
     else
-        Char16Ix0
+        0<c16ix>
 
 let readNoneOf c xs =
     if not (canRead xs) then Nullable()
@@ -121,7 +120,7 @@ let peekU xs =
     let c1 = xs@(0<_>)
     let c2 = xs@(1<_>)
     if canReadN 2<_> xs && Char.IsHighSurrogate c1 && Char.IsLowSurrogate c2
-    then Nullable(Char.ConvertToUtf32(c1, c2) * 1<_>)
+    then Nullable(surrogatePairToChar32 c1 c2)
     elif canRead xs then Nullable(char16ToChar32 c1)
     else Nullable()
 

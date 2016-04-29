@@ -1,7 +1,5 @@
 ﻿[<AutoOpen>]
 module Alpa.ParserCombinator.Primitives
-#load "./Alpa.IO.Stream.fsx"
-
 open Alpa.IO
 
 type Parser<'c,'u,'e,'a> = Stream<'c, 'u> -> Reply<'a, 'e>
@@ -123,30 +121,37 @@ let many (Parser p) =
     let p xs =
         let rec aux rs =
             let i = xs.Index
+            let u = xs.UserState
+
             let r = p xs
             if r.Status = Ok && i < xs.Index then
                 aux(r.Value::rs)
             else
                 xs.Index <- i
+                xs.UserState <- u
                 List.rev rs
 
         Reply(aux [])
     p
 
 let many1 p = p .>>. many p
-let sepBy1 p sep = p .>>. many (sep .>>. p)
+
+let separateBy1 p sep = p .>>. many (sep .>>. p)
+let sepBy1 p sep = p .>>. many (sep >>. p)
 
 let chainL1 (Parser p) (Parser op) f =
     let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt f
     let p xs =
         let rec aux a =
             let i = xs.Index
+            let u = xs.UserState
             let rOp = op xs
             let mutable r = Unchecked.defaultof<_>
             if rOp.Status = Ok && (r <- p xs; r.Status = Ok && i < xs.Index) then
                 aux(f.Invoke(a, rOp.Value, r.Value))
             else
                 xs.Index <- i
+                xs.UserState <- u
                 a
 
         let r = p xs
@@ -156,12 +161,14 @@ let chainL1 (Parser p) (Parser op) f =
             Reply((), r.Error)
     p
 
-let (<|>) (Parser p1) (Parser p2) = fun xs ->
+let (<|>) (Parser p1) (Parser p2) xs =
     let i = xs.Index
+    let u = xs.UserState
     let r = p1 xs
     if r.Status = Ok then r
     else
         xs.Index <- i
+        xs.UserState <- u
         p2 xs
 
 let choice = function
@@ -170,27 +177,33 @@ let choice = function
     | p::ps ->
         let p xs =
             let startIndex = xs.Index
+            let startState = xs.UserState
             let r = p xs
-            let rec aux r' i' = function
+            let rec aux r' i' u' = function
                 | [] ->
                     xs.Index <- i'
+                    xs.UserState <- u'
                     r'
 
                 | (Parser p)::ps ->
                     xs.Index <- startIndex
+                    xs.UserState <- startState
                     let r = p xs
                     let i = xs.Index
-                    if r.Status = Ok && i' < i then aux r i ps else aux r' i' ps
+                    let u = xs.UserState
+                    if r.Status = Ok && i' < i then aux r i u ps else aux r' i' u' ps
 
-            aux r xs.Index ps
+            aux r xs.Index xs.UserState ps
         p
     
-let opt (Parser p) = fun xs ->
+let opt (Parser p) xs =
     let i = xs.Index
+    let u = xs.UserState
     let r = p xs
     if r.Status = Ok then Reply(Some r.Value)
     else
         xs.Index <- i
+        xs.UserState <- u
         Reply None
 
 let createParserForwardedToRef() =

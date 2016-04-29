@@ -1,5 +1,4 @@
 ﻿namespace Alpa.IO
-#r "./bin/debug/Alpa.Compiler.dll"
 
 open Alpa.IO
 open Alpa.Token

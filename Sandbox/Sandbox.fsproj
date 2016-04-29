@@ -64,16 +64,17 @@
     <None Include="TastPickle.Types.fsx" />
     <None Include="TastPickle.fsx" />
     <Content Include="packages.config" />
-    <Compile Include="Alpa.Types.fsx" />
-    <Compile Include="Alpa.IO.CharStream.fsx" />
-    <Compile Include="Alpa.Lexer.fsx" />
-    <None Include="Alpa.IO.Stream.fsx" />
-    <None Include="Alpa.ParserCombinator.fsx" />
+    <Compile Include="Alpa.Types.fs" />
+    <Compile Include="Alpa.IO.CharStream.fs" />
+    <Compile Include="Alpa.Lexer.fs" />
+    <Compile Include="Alpa.IO.Stream.fs" />
+    <Compile Include="Alpa.ParserCombinator.fs" />
     <None Include="Alpa.Parser.Types.fsx" />
     <None Include="Alpa.Parser.fsx" />
     <None Include="Lexer.Test.fsx" />
-    <None Include="Parser.Test.fsx" />
     <None Include="Type.alpa" />
+    <None Include="Alpa.Parser.Helpers.fsx" />
+    <None Include="Parser.Test.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

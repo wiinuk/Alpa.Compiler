@@ -1,7 +1,5 @@
 ﻿module Alpa.Lexer
 
-#load "./Alpa.IO.CharStream.fsx"
-
 open Alpa
 open Alpa.Token
 open Alpa.IO
@@ -489,7 +487,6 @@ let rec multiComment xs =
             do ()
         success
 
-let whitespaces xs = skipManySatisfy (|Whitespace|) xs
 let trivia xs =
     let rec aux _ =
         let c = peek2 xs
@@ -502,7 +499,6 @@ let trivia xs =
         | _, _, Whitespace false -> skip xs
         | _ ->
             ignore(skip2 xs)
-            whitespaces xs
             aux()
     aux()
 

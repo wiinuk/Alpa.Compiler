@@ -1,4 +1,4 @@
-﻿#load "./Alpa.Lexer.fsx"
+﻿#r "./bin/debug/Alpa.Compiler.dll"
 
 open Alpa
 open Alpa.Token
@@ -10,9 +10,12 @@ let tokenInfo (source: string) t =
     let i1, i2 = range t
     kind t, source.[int<int<_>> i1 .. int<int<_>>i2 - 1]
 
-let tokenInfos source rs = Seq.map (tokenInfo source) rs
+let tokenInfoWithPosition (source: string) t =
+    let i1, i2 = t.Start, t.End
+    kind t, source.[int<int<_>> i1.Index .. int<int<_>>i2.Index - 1], (int<int<_>> i1.Line, int<int<_>> i1.Column), (int<int<_>> i2.Line, int<int<_>> i2.Column)
 
-let lex s = CharStream.run Lexer.start s |> Option.map (Buffer.toSeq >> tokenInfos s)
+let lexP s = CharStream.run Lexer.start s |> Option.map (Buffer.toSeq >> Seq.map (tokenInfoWithPosition s))
+let lex s = CharStream.run Lexer.start s |> Option.map (Buffer.toSeq >> Seq.map (tokenInfo s))
 
 let test xs =
     for a, b in xs do
@@ -21,7 +24,17 @@ let test xs =
         | Some rs ->
             if Seq.compareWith compare rs b <> 0
             then
-                printfn "failure %A <> %A" rs b
+                printfn "failure %A => %A <> %A" a rs b
+
+let testPosition xs =
+    for a, b in xs do
+        match lexP a with
+        | None -> printfn "parse error %A" a
+        | Some rs ->
+            if Seq.compareWith compare rs b <> 0
+            then
+                printfn "failure %A => %A <> %A" a rs b
+
 
 let errorTest xs =
     for x in xs do
@@ -54,6 +67,22 @@ module TokenInfos =
 
     /// operator
     let o x = Op, x
+
+testPosition [
+    
+    // trivia
+    "aa ss", [Id,"aa",(1,1),(1,3); Id,"ss",(1,4),(1,6)]
+    "aa\ttt", [Id,"aa",(1,1),(1,3); Id,"tt",(1,5),(1,7)]
+    "aa\rrr", [Id,"aa",(1,1),(1,3); Id,"rr",(1,4),(1,6)]
+    "aa\nnn", [Id,"aa",(1,1),(1,3); Id,"nn",(2,1),(2,3)]
+    "aa \nsn", [Id,"aa",(1,1),(1,3); Id,"sn",(2,1),(2,3)]
+    "aa \n bn", [Id,"aa",(1,1),(1,3); Id,"bn",(2,2),(2,4)]
+    "aa\n ns", [Id,"aa",(1,1),(1,3); Id,"ns",(2,2),(2,4)]
+    "aa\r\nrn", [Id,"aa",(1,1),(1,3); Id,"rn",(2,1),(2,3)]
+
+    // utf32 id
+    "\U0000AB01", [Id,"\U0000AB01",(1,1),(1,2)] // "ꬁ", "ETHIOPIC SYLLABLE TTHU", UnicodeCategory.OtherLetter
+]
 
 // unused char
 errorTest [
@@ -211,6 +240,9 @@ test [
     "\u0272", [v"\u0272"] // "ɲ", "LATIN SMALL LETTER N WITH LEFT HOOK", UnicodeCategory.LowercaseLetter
     "\u02E0", [v"\u02E0"] // "ˠ", "MODIFIER LETTER SMALL GAMMA", UnicodeCategory.ModifierLetter
     "\u210F", [v"\u210F"] // "ℏ", "PLANCK CONSTANT OVER TWO PI, UnicodeCategory.LowercaseLetter
+    
+
+    // utf32
 
     "\U0000AB01", [v"\U0000AB01"] // "ꬁ", "ETHIOPIC SYLLABLE TTHU", UnicodeCategory.OtherLetter
     "\U00029E3D", [v"\U00029E3D"] // "𩸽", "Unicode Han Character 'U+29E3D'", UnicodeCategory.OtherLetter
@@ -226,6 +258,9 @@ test [
     "x-+y, x -+y", [v"x-"; o"+"; v"y"; d","; v"x"; o"-+"; v"y"]
     "a = b;", [v"a"; p"="; v"b"; d";"]
 
+    
+    // utf32
+
     "\U0001F49A", [o"\U0001F49A"] // "💚", "GREEN HEART", UnicodeCategory.OtherSymbol
     "\U0001F49B", [o"\U0001F49B"] // "💛", "YELLOW HEART", UnicodeCategory.OtherSymbol
     "\U0001F49C", [o"\U0001F49C"] // "💜", "PURPLE HEART", UnicodeCategory.OtherSymbol
@@ -233,60 +268,3 @@ test [
     "\U0001F49A\U0001F49B", [o"\U0001F49A\U0001F49B"]
     "+\U0001F49A\U0001F49B", [o"+\U0001F49A\U0001F49B"]
 ]
-
-//#load "./Parser.fsx"
-//open Parser
-//open Basics
-//open FParsec
-//let run p x = runParserOnString p state "stream0" x
-//
-//run (skipped lineComment) "// \r\n"
-//run (skipped multiComment) "/* * test * / */"
-//
-//
-//let test p xs =
-//    for a, b in xs do
-//        match run p a with
-//        | Success(x,_,_) when x = b -> ()
-//        | e -> failwithf "%A" e
-//    printfn "ok"
-//
-//test (blockComment |> skipped) [
-//    "/* */", "/* */"
-//    begin
-//        let data = "/*
-//* /* inner
-//*  * line comment
-//*  * // */
-//*  * \"string */\"
-//*  * ``id */``
-//*  * `op */`
-//*  */
-//*/"
-//        data, data
-//    end
-//]
-//
-//let opHead = pipe4 atomicPattern operator atomicPattern (many atomicPattern) <| fun p1 n p2 ps -> Types.LetHeader(n, p1::p2::ps)
-//let idHead = pipe2 Parser.identifier (many atomicPattern) <| fun n ps -> Types.LetHeader(n, ps)
-//
-//run longIdentifier "a.b.c"
-//
-//let path0 = many (attempt (Parser.identifier .>> Delimiters.``.``))
-//run path0 "a.b. "
-//
-//let longIdentifier = path0 .>>.? Parser.identifier 
-//run longIdentifier "a.b. "
-//
-//let p = Parser.identifier >>. many longIdentifier
-//run p "a a.b = -10"
-//
-//let path0 = many (Parser.identifier .>>? Delimiters.``.``)
-//let longIdentifier = tuple2 path0 Parser.identifier
-//run longIdentifier "a"
-//
-//run letHeader "a = 10"
-//
-//let letDefinition = letHeader .>>? Delimiters.``d=`` .>>. expression
-//run letDefinition "a = 10"
-//run start "a = 10"

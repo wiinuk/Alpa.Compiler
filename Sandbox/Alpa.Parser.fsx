@@ -13,17 +13,18 @@ type Error =
     | RequireR of Special
     | RequireIdentifer
     | RequireOperator
-    | RequireIntegerLiteral
-    | RequireFloatLiteral
-    | RequireCharLiteral
-    | RequireStringLiteral
+
+    /// Char, Int, Float, String
+    | RequireLiteral
     | RequireLineSeparator
     | RequireBlockBegin
     | RequireBlockEnd
     | RequireFileStart
+    | RequireApplicationSeparator
 
 type Parser<'a> = Parser<Token, State, Error, 'a>
 let (|Parser|) (p: Parser<_>) = p
+let (|Stream|) (xs: Stream<_,State>) = xs
 
 let rParser s = satisfyE (isR s) (RequireR s)
 
@@ -78,40 +79,47 @@ module Layout =
             End = Position()
         }
 
-    let lineSeparatorLayout (xs: Stream<_,State>) =
+    let lineSeparator (Stream xs) =
         if xs.Items.size <= xs.Index then Reply((), RequireLineSeparator)
         else
-            let x = xs.Items.items.[xs.Index]
-            let p = xs.UserState.Item1
-            if not (p.Line < x.Start.Line && p.Column = x.Start.Column) then Reply((), RequireLineSeparator)
+            let offside = xs.UserState.Item1
+            let p = xs.Items.items.[xs.Index].Start
+            if not (offside.Line < p.Line && offside.Column = p.Column) then Reply((), RequireLineSeparator)
             else
-                xs.UserState.Item1 <- x.Start
+                xs.UserState.Item1 <- p
                 Reply lineSeparatorToken
 
-    let blockBeginLayout (xs: Stream<_,State>) =
+
+    let applicationSeparator (Stream xs) =
+        if xs.Items.size <= xs.Index then Reply((), RequireApplicationSeparator)
+        else
+            let offside = xs.UserState.Item1
+            let p = xs.Items.items.[xs.Index].Start
+            if not (offside.Line <= p.Line && offside.Column <= p.Column) then Reply((), RequireBlockBegin)
+            else
+                Reply(())
+
+    let blockBegin (Stream xs) =
         if xs.Items.size <= xs.Index then Reply((), RequireBlockBegin)
         else
-            let p = xs.UserState.Item1
-
-            let x = xs.Items.items.[xs.Index]
-            if not (p.Line <= x.Start.Line && p.Column < x.Start.Column) then Reply((), RequireBlockBegin)
+            let offside = xs.UserState.Item1
+            let p = xs.Items.items.[xs.Index].Start
+            if not (offside.Line <= p.Line && offside.Column < p.Column) then Reply((), RequireBlockBegin)
             else
-                let ps = xs.UserState.Item2
-
-                xs.UserState.Item1 <- x.Start
-                xs.UserState.Item2 <- p::ps
+                let offsideStack = xs.UserState.Item2
+                xs.UserState.Item1 <- p
+                xs.UserState.Item2 <- offside::offsideStack
                 Reply blockBeginLayoutToken
 
-    let blockEndLayout (xs: Stream<_,State>) =
-        let ps = xs.UserState.Item2
-        match ps with
+    let blockEnd (Stream xs) =
+        match xs.UserState.Item2 with
         | [] -> Reply((), RequireBlockEnd)
-        | p::ps ->
-            xs.UserState.Item1 <- p
-            xs.UserState.Item2 <- ps
+        | offside::offsideStack ->
+            xs.UserState.Item1 <- offside
+            xs.UserState.Item2 <- offsideStack
             Reply blockEndLayoutToken
 
-    let fileStartLayout (xs: Stream<_,State>) =
+    let fileStart (Stream xs) =
         if xs.Items.size <= xs.Index then Reply((), RequireFileStart)
         else
             match xs.UserState.Item2 with
@@ -122,8 +130,8 @@ module Layout =
                 Reply(())
 
 module S = Specials
-let lineSeparator = S.``;`` <|> Layout.lineSeparatorLayout
-let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBeginLayout p Layout.blockEndLayout f
+let lineSeparator = S.``;`` <|> Layout.lineSeparator
+let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBegin p Layout.blockEnd f
 
 let identifier = satisfyE isId RequireIdentifer
 let operator = satisfyE isOp RequireOperator
@@ -133,17 +141,9 @@ let path0 = many (identifier .>> S.``.``)
 let longIdentifier = pipe2 path0 identifier <| fun xs x -> LongIdentifier(xs, x)
 let longIdentifierOrOperator = pipe2 path0 (identifier <|> operator) <| fun xs x -> LongIdentifier(xs, x)
 
-let constantInt = satisfyE isI RequireIntegerLiteral
-let constantFloat = satisfyE isF RequireFloatLiteral
-let constantChar = satisfyE isC RequireCharLiteral
-let constantString = satisfyE isS RequireStringLiteral
 let constant =
-    choice [
-        constantInt
-        constantFloat
-        constantChar
-        constantString
-    ]
+    (satisfyE (fun t -> match t.Kind with I | F | C | S -> true | _ -> false) RequireLiteral |>> Constant) <|>
+    pipe2 S.``(`` S.``)`` (fun a b -> UnitConstant(a, b))
 
 let pattern, _pattern = createParserForwardedToRef()
 
@@ -235,14 +235,14 @@ _expression := (
 //        (static-typars : (member-sig) expr) -– static member invocation
     let primitiveExpression =
         choice [
-            constant |>> ConstExpression // -- a constant value
+            constant |>> ConstantExpression // -- a constant value
             pipe3 S.``(`` expression S.``)`` <| fun a b c -> BlockExpression(a, b, c)
             longIdentifierOrOperator |>> LookupExpression
         ]
 
     let p = primitiveExpression
     let p = pipe2 p (opt (S.``.`` .>>. longIdentifierOrOperator)) <| fun e n -> match n with None -> e | Some(a, b) -> DotLookupExpression(e, a, b) // -- dot lookup expression
-    let p = many1 p |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(e1, e2, es)
+    let p = sepBy1 p Layout.applicationSeparator |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(e1, e2, es)
     
     let p =
         let pipe a b c d e = LetExpression(a, b, c, d, e)
@@ -255,7 +255,7 @@ _expression := (
 
 let moduleFunctionOrValueDefinition =
     choice [
-        pipe3 letHeader S.``d=`` expression <| fun a b c -> ModuleLetElement(a, b, c)
+        pipe3 letHeader S.``d=`` (block expression (fun a b c -> a, b, c)) <| fun a b (c,d,e) -> ModuleLetElement(a, b, c, d, e)
 //        doExpression
     ]
 
@@ -304,7 +304,7 @@ let typeDefinition =
 let typeDefinitions = pipe2 S.``type`` typeDefinition <| fun a b -> ModuleTypeDefinition(a, b)
 
 let moduleElement, _moduleElement = createParserForwardedToRef()
-let moduleElements = sepBy1 moduleElement lineSeparator
+let moduleElements = separateBy1 moduleElement lineSeparator
 let moduleDefinitionBody = block (opt moduleElements) <| fun a b c -> a, b, c
 let moduleDefinition = pipe4 (* attributes opt *) S.``module`` (* access opt *) identifier S.``d=`` moduleDefinitionBody <| fun a b c (d,e,f) -> ModuleDefinition(a, b, c, d, e, f)
 
@@ -319,13 +319,13 @@ _moduleElement :=
     ]
 
 let anonymousModule = moduleElements |>> AnonymousModule
-let namedModule = pipe3 S.``module`` longIdentifier moduleElements <| fun a b c -> NamedModule(a, b, c)
+let module' = pipe3 S.``module`` longIdentifier moduleElements <| fun a b c -> NamedModule(a, b, c)
 
 let implementationFile =
     choice [
 //        many namespaceDeclGroup
-        namedModule
+        module'
         anonymousModule
     ]
 
-let (Parser start) = opt (Layout.fileStartLayout >>. implementationFile) .>> eof
+let (Parser start) = opt (Layout.fileStart >>. implementationFile) .>> eof

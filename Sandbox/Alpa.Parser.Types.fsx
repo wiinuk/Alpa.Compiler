@@ -1,5 +1,5 @@
 ﻿namespace Alpa
-#load "./Alpa.ParserCombinator.fsx"
+#r "./bin/debug/Alpa.Compiler.dll"
 
 type Identifier = Token
 type LongIdentifier = LongIdentifier of Identifier list * Identifier
@@ -10,9 +10,12 @@ type Pattern =
     | LongIdentifierPattern of LongIdentifier
 
 type LetHeader = LetHeader of Identifier * Pattern list
-type Const = Token
+type Constant =
+    | UnitConstant of ``(``: Token * ``)``: Token
+    | Constant of Token
+
 type Expression =
-    | ConstExpression of Const
+    | ConstantExpression of Constant
     | LookupExpression of LongIdentifier
     | DotLookupExpression of Expression * ``.``: Token * LongIdentifier
     | ApplicationsExpression of Expression * Expression * Expression list
@@ -36,7 +39,7 @@ type TypeDefinition =
 
 type ModuleElement = 
     | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements> * blockEnd: Token
-    | ModuleLetElement of LetHeader * ``=``: Token * Expression
+    | ModuleLetElement of LetHeader * ``=``: Token * blockBegin: Token * Expression * blockEnd: Token
     | ModuleTypeDefinition of ``type``: Token * TypeDefinition
 
 and ModuleElements = ModuleElement * list<Token * ModuleElement>
