@@ -8,6 +8,7 @@ open Alpa.ParserCombinator
 
 module P = Alpa.Parser
 module S = Alpa.Parser.Helpers.Syntax
+module C = Alpa.Parser.Helpers.Syntax.Constants
 
 fsi.AddPrintTransformer(box << tokenToTokenInfo)
 
@@ -23,7 +24,7 @@ let test diff p xs =
             match diff x b with
             | Eq -> ()
             | Diff _ as d ->
-                printfn "NotEq Act = %A; Exp = %A; Diff = %A" b x d
+                printfn "NotEq Act = %A -> %A; Exp = %A; Diff = %A" a b x d
 
         | Failure _ as r -> printfn "%A" r
 
@@ -37,50 +38,55 @@ let errorTest p xs =
 let lex s = CharStream.run Lexer.start s |> Option.map (Buffer.toSeq >> tokenInfos s)
 
 
+parse start "
+module X = {
+    x = ()
+    y = ()
+}
+"
+
 test syntaxDiff typeDefinition [
     "ValueTuple2 t1 t2 = t1, t2",
-        S.abbreviationTypeDefinition (S.typeName2 !"ValueTuple2" !"t1" !"t2") (S.tupleType2 +"t1" +"t2")
+        S.abbreviationTypeDefinition (S.typeName2 !"ValueTuple2" !"t1" !"t2") (S.tupleType2 !-"t1" !-"t2")
 ]
 
 test syntaxDiff moduleElements [
-    "a = ()\nb = ()", S.moduleElements (S.moduleVal "a" S.cUnit) [S.moduleVal "b" S.cUnit]
+    "a = ()\nb = ()", S.moduleElements (S.moduleVal "a" C.unit) [S.moduleVal "b" C.unit]
 ]
 
-do
-    let a = 'a'
-    let
-     a = 'a'
-
-    let a
-     = 'a'
-
-    let a =
-     'a'
-
-    let a x y =
-        x
-        +
-        y
-
-    let a x y =
-        x
-         +
-          y
-
-    let a = 'a'
-    ()
-
 test syntaxDiff start (
-    let exp = S.anonymousModule [S.moduleVal "a" S.cUnit]
+    let exp = S.anonymousModule [S.moduleVal "a" C.unit]
+    let exp2 =
+        S.anonymousModule [
+            S.moduleFun2 "a" !@"x" !@"y" (S.apply3 !!"x" !!%"+" !!"y")
+        ]
+    let exp3 =
+        S.anonymousModule [
+            S.module' !"A" [
+                S.moduleVal "a" C.unit
+                S.moduleVal "b" C.unit
+            ]
+            S.moduleVal "x" C.unit
+        ]
     [
-        "module X\na = ()", S.namedModule !~"X" [S.moduleVal "a" S.cUnit]
-        "module X\na = ()\nb = ()", S.namedModule !~"X" [S.moduleVal "a" S.cUnit; S.moduleVal "b" S.cUnit]
+        "module X\na = ()", S.namedModule !+"X" [S.moduleVal "a" C.unit]
+        "module X\na = ()\nb = ()", S.namedModule !+"X" [S.moduleVal "a" C.unit; S.moduleVal "b" C.unit]
 
         "a = ()", exp
         "a\n = ()", exp
         "a =\n ()", exp
-        "a x y =\n  x\n  +\n  y", exp
-        "a x y =\n  x\n   +\n   y", exp
+
+        "a x y =\n  x + y", exp2
+        "a x y =\n  x +\n  y", exp2
+        "a x y =\n  x\n  + y", exp2
+        "a x y =\n  x\n  +\n  y", exp2
+        "a x y =\n  x\n   +\n   y", exp2
+
+        
+        "module A =\n  a = ()\n  b = ()\nx = ()", exp3
+        "module A = a = ()\n           b = ()\nx = ()", exp3
+        "module A = { a = { () }; b = { () } }; x = ()", exp3
+        "module A = {\na = ()\nb = ()\n}\nx = ()", exp3
     ]
 )
 
@@ -89,110 +95,29 @@ test syntaxDiff expression [
     "a\n b", S.apply2 !!"a" !!"b"
 ]
 
-errorTest (Layout.fileStart >>. expression .>> eof) [
-    "  a\n  b"
-]
+//errorTest (Layout.fileStart >>. expression .>> eof) [
+//    "  a\n  b"
+//]
 
 test syntaxDiff moduleFunctionOrValueDefinition (
     let exp = S.moduleFun2 "a" !@"x" !@"y" (S.apply2 !!"x" !!"y")
+    let exp2 = S.moduleFun2 "apply" !@"f" !@"x" (S.apply2 !!"f" !!"x")
     [
         "a x y = x y", exp
         "a x y =\n  x y", exp
         "a x y =\n  x\n  y", exp
         "a x y =\n  x\n   y", exp
+
+        "apply f x =\n  f x", exp2
+        "apply f x =\n  f\n   x", exp2
+        "seq unit a =\n  unit;\n  a", S.moduleFun2 "seq" !@"unit" !@"a" (S.seq !!"unit" !!"a")
+
+        "apply2 f x y =\n  f x y", S.moduleFun3 "apply2" !@"f" !@"x" !@"y" (S.apply3 !!"f" !!"x" !!"y")
+        "seqApply action x y =\n  action x;\n  y", S.moduleFun3 "seqApply" !@"action" !@"x" !@"y" (S.seq (S.apply2 !!"action" !!"x") !!"y")
+        "seq2 unit1 unit2 a =\n  unit1;\n  unit2; a", S.moduleFun3 "seq2" !@"unit1" !@"unit2" !@"a" (S.seq !!"unit1" (S.seq !!"unit2" !!"a"))
+        "seqApply unit f x =\n  unit;\n  f x", S.moduleFun3 "seqApply" !@"unit" !@"f" !@"x" (S.seq !!"unit" (S.apply2 !!"f" !!"x"))
     ]
 )
-
-parse (opt (Layout.fileStart >>. anonymousModule)) "
-    a = 'a'
-    b = 'b'
-"
-
-parse start "
-module A =
-    a = ()
-    b = ()
-x = ()"            
-
-parse type' "(t1, t2)"
-
-parse typeDefinitions "type ValueTuple2 t1 t2 = (t1, t2)"
-
-//    apply f x =
-//        f x
-//    
-//    apply f x =
-//        f
-//         x
-//    
-//    seq unit b =
-//        unit;
-//        b
-//
-//    apply2 f x y =
-//        f x y
-//
-//    seqApply action x y =
-//        action x;
-//        y
-//
-//    seq2 unit1 unit2 y =
-//        unit1;
-//        unit2;
-//        y
-//
-//    seqApply unit f x =
-//        unit;
-//        f x
-//
-//    opApply c1 (@) c2 =
-//        c1 @ c2
-//
-//    opApply c1 (@) c2 =
-//        c1 @
-//        c2
-//
-//    opApply c1 (@) c2 =
-//        c1
-//        @
-//        c2
-//
-//    opApply c1 (@) c2 =
-//        c1
-//        @ c2
-
-let e1 f x =
-    f
-    x
-
-let e2 f x =
-    f
-    + x
-
-let e3 f x =
-    f +
-    x
-
-let
-    a f
-    x
-    = f
-        x
-        x
-   
-// module A = a = ()
-//            b = ()
-// x = ()
-
-// module A = { a = (); b = () }; x = ()
-
-// module A = {
-// a = ();
-// b = ()
-// };
-// x = ()
-
-parse longIdentifier "a.b.c"
 
 parse start "module Alpa
 
@@ -201,13 +126,15 @@ type ValueTuple3 t1 t2 t3 = (t1, t2, t3)
 type ValueTuple4 t1 t2 t3 t4 = (t1, t2, t3, t4)
 type Slice a = (Pointer a, Int32)
 type Position = (Int32, Int32, Int32)
-type Symbol = string
+type Symbol = String
 
 type Special = Character
 module Specials =
     ``D,`` = ','
     ``D;`` = ';'
 "
+
+lex "\n//    In = 'D'\n;"
 
 let xs = """module Alpa
 
@@ -216,7 +143,7 @@ type ValueTuple3 t1 t2 t3 = (t1, t2, t3)
 type ValueTuple4 t1 t2 t3 t4 = (t1, t2, t3, t4)
 type Slice a = (Pointer a, Int32)
 type Position = (Int32, Int32, Int32)
-type Symbol = string
+type Symbol = String
 
 type Special = Character
 module Specials =

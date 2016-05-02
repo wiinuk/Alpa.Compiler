@@ -235,7 +235,8 @@ module Token =
         _value2 = null
         End = Position()
     }
-    let var n = { zero with Kind = TokenKind.Id; _value2 = box<Symbol> n }
+    let ident n = { zero with Kind = TokenKind.Id; _value2 = box<Symbol> n }
+    let op n = { zero with Kind = TokenKind.Op; _value2 = box<Symbol> n }
     let rop s = { zero with Kind = TokenKind.Rop; _value = int <| LanguagePrimitives.EnumToValue<Special,_> s }
     let delim s = { zero with Kind = TokenKind.D; _value = int <| LanguagePrimitives.EnumToValue<Special,_> s }
     let rid s = { zero with Kind = TokenKind.Rid; _value = int <| LanguagePrimitives.EnumToValue<Special,_> s }
@@ -248,15 +249,23 @@ module Token =
     let ``(`` = delim Special.``D(``
     let ``)`` = delim Special.``D)``
 
-let (!) v = Token.var v
-let (~+) n = NamedType(LongIdentifier([], !n), [])
+let (!) id = Token.ident id
+let (!%) op = Token.op op
+let (~+) var = LongIdentifier([], var)
+let (!+) id = + !id
+let (!+%) op = + !%op
 
-let (!~) var = LongIdentifier([], !var)
-let (!!) var = LookupExpression !~var
-let (!@) pat = LongIdentifierPattern !~pat
+let (!-) n = NamedType(+ !n, [])
+let (!-%) n = NamedType(+ !%n, [])
+
+let (!!) id = LookupExpression !+id
+let (!!%) op = LookupExpression !+%op
+let (!@) id = LongIdentifierPattern !+id
+let (!@%) op = LongIdentifierPattern !+%op
 
 module Syntax =
-    let cUnit = ConstantExpression(UnitConstant(Token.``(``, Token.``)``))
+    module Constants =
+        let unit = ConstantExpression(UnitConstant(Token.``(``, Token.``)``))
 
     // -- TypeName --
 
@@ -279,6 +288,8 @@ module Syntax =
 
     let applicationsExpression e1 e2 es = ApplicationsExpression(e1, e2, Seq.toList es)
     let apply2 e1 e2 = applicationsExpression e1 e2 []
+    let apply3 e1 e2 e3 = applicationsExpression e1 e2 [e3]
+    let seq e1 e2 = SequentialExpression(e1, Token.``;``, e2)
 
 
     // -- ModuleElement --
@@ -296,6 +307,7 @@ module Syntax =
     let moduleLetElement name pats body = ModuleLetElement(LetHeader(!name, pats), Token.``d=``, Token.``{``, body, Token.``}``)
     let moduleVal name body = moduleLetElement name [] body
     let moduleFun2 name pat1 pat2 body = moduleLetElement name [pat1; pat2] body
+    let moduleFun3 name pat1 pat2 pat3 body = moduleLetElement name [pat1; pat2; pat3] body
 
 
     // -- ImplementationFile --
