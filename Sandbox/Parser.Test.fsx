@@ -37,14 +37,6 @@ let errorTest p xs =
 
 let lex s = CharStream.run Lexer.start s |> Option.map (Buffer.toSeq >> tokenInfos s)
 
-
-parse start "
-module X = {
-    x = ()
-    y = ()
-}
-"
-
 test syntaxDiff typeDefinition [
     "ValueTuple2 t1 t2 = t1, t2",
         S.abbreviationTypeDefinition (S.typeName2 !"ValueTuple2" !"t1" !"t2") (S.tupleType2 !-"t1" !-"t2")
@@ -114,10 +106,21 @@ test syntaxDiff moduleFunctionOrValueDefinition (
 
         "apply2 f x y =\n  f x y", S.moduleFun3 "apply2" !@"f" !@"x" !@"y" (S.apply3 !!"f" !!"x" !!"y")
         "seqApply action x y =\n  action x;\n  y", S.moduleFun3 "seqApply" !@"action" !@"x" !@"y" (S.seq (S.apply2 !!"action" !!"x") !!"y")
-        "seq2 unit1 unit2 a =\n  unit1;\n  unit2; a", S.moduleFun3 "seq2" !@"unit1" !@"unit2" !@"a" (S.seq !!"unit1" (S.seq !!"unit2" !!"a"))
+        "seq2 unit1 unit2 a =\n  unit1;\n  unit2; a", S.moduleFun3 "seq2" !@"unit1" !@"unit2" !@"a" (S.seq (S.seq !!"unit1" !!"unit2") !!"a")
         "seqApply unit f x =\n  unit;\n  f x", S.moduleFun3 "seqApply" !@"unit" !@"f" !@"x" (S.seq !!"unit" (S.apply2 !!"f" !!"x"))
     ]
 )
+
+parse start "
+
+infix_left 100 |>
+x |> f = f x
+
+f a b c =
+    a
+        |> b
+        |> c
+"
 
 parse start "module Alpa
 
@@ -134,7 +137,7 @@ module Specials =
     ``D;`` = ';'
 "
 
-lex "\n//    In = 'D'\n;"
+lex " //\n;"
 
 let xs = """module Alpa
 
@@ -182,22 +185,3 @@ module Specials =
     Let = 'K'"""
 
 parse start xs
-
-//let path0 = many (attempt (Parser.identifier .>> Delimiters.``.``))
-//run path0 "a.b. "
-//
-//let longIdentifier = path0 .>>.? Parser.identifier 
-//run longIdentifier "a.b. "
-//
-//let p = Parser.identifier >>. many longIdentifier
-//run p "a a.b = -10"
-//
-//let path0 = many (Parser.identifier .>>? Delimiters.``.``)
-//let longIdentifier = tuple2 path0 Parser.identifier
-//run longIdentifier "a"
-//
-//run letHeader "a = 10"
-//
-//let letDefinition = letHeader .>>? Delimiters.``d=`` .>>. expression
-//run letDefinition "a = 10"
-//run start "a = 10"

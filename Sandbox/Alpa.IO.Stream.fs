@@ -8,6 +8,11 @@ type Stream<'t,'u> = {
     mutable Index: int32
     mutable UserState: 'u
 }
+
+module Stream =
+    let canRead xs = xs.Items.size <= xs.Index
+    let get xs i = xs.Items.items.[xs.Index + i]
+
 type ReplyError = AnyError = 0 | RequireEof = -2
 type ReplyStatus = Ok = 1 | Error = 0
 

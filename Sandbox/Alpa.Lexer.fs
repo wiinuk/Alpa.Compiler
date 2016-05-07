@@ -496,7 +496,10 @@ let trivia xs =
         | _, '/', '/' -> lineComment xs && aux()
         | _, '/', '*' -> multiComment xs && aux()
         | _, Whitespace false, _ -> true
-        | _, _, Whitespace false -> skip xs
+        | _, _, Whitespace false ->
+            ignore(skip xs)
+            aux()
+
         | _ ->
             ignore(skip2 xs)
             aux()

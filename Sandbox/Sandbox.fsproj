@@ -75,6 +75,7 @@
     <None Include="Type.alpa" />
     <None Include="Alpa.Parser.Helpers.fsx" />
     <None Include="Parser.Test.fsx" />
+    <None Include="IkaTune.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

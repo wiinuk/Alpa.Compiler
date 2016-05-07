@@ -2,6 +2,7 @@
 #load "./Alpa.Parser.Types.fsx"
 
 open Alpa.IO
+open Alpa.IO.Stream
 open Alpa.Token
 open Alpa.ParserCombinator
 
@@ -80,30 +81,29 @@ module Layout =
         }
 
     let lineSeparator (Stream xs) =
-        if xs.Items.size <= xs.Index then Reply((), RequireLineSeparator)
+        if canRead xs then Reply((), RequireLineSeparator)
         else
             let offside = xs.UserState.Item1
-            let p = xs.Items.items.[xs.Index].Start
+            let p = (get xs 0).Start
             if not (offside.Line < p.Line && offside.Column = p.Column) then Reply((), RequireLineSeparator)
             else
                 xs.UserState.Item1 <- p
                 Reply lineSeparatorToken
 
-
     let applicationSeparator (Stream xs) =
-        if xs.Items.size <= xs.Index then Reply((), RequireApplicationSeparator)
+        if canRead xs then Reply((), RequireApplicationSeparator)
         else
             let offside = xs.UserState.Item1
-            let p = xs.Items.items.[xs.Index].Start
+            let p = (get xs 0).Start
             if not (offside.Line <= p.Line && offside.Column <= p.Column) then Reply((), RequireBlockBegin)
             else
                 Reply(())
 
     let blockBegin (Stream xs) =
-        if xs.Items.size <= xs.Index then Reply((), RequireBlockBegin)
+        if canRead xs then Reply((), RequireBlockBegin)
         else
             let offside = xs.UserState.Item1
-            let p = xs.Items.items.[xs.Index].Start
+            let p = (get xs 0).Start
             if not (offside.Line <= p.Line && offside.Column < p.Column) then Reply((), RequireBlockBegin)
             else
                 let offsideStack = xs.UserState.Item2
@@ -120,13 +120,12 @@ module Layout =
             Reply blockEndLayoutToken
 
     let fileStart (Stream xs) =
-        if xs.Items.size <= xs.Index then Reply((), RequireFileStart)
+        if canRead xs then Reply((), RequireFileStart)
         else
             match xs.UserState.Item2 with
             | _::_ -> Reply((), RequireFileStart)
             | [] ->
-                let x = xs.Items.items.[xs.Index]
-                xs.UserState.Item1 <- x.Start
+                xs.UserState.Item1 <- (get xs 0).Start
                 Reply(())
 
 module S = Specials
