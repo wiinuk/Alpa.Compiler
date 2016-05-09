@@ -2,7 +2,7 @@
 #r "./bin/debug/Alpa.Compiler.dll"
 
 type Identifier = Token
-type LongIdentifier = LongIdentifier of Identifier list * Identifier
+type LongIdentifier = LongIdentifier of (Identifier * Token) list * Identifier
 
 type Pattern =
     | WildcardPattern of ``_``: Token
@@ -16,13 +16,22 @@ type Constant =
 
 type Expression =
     | ConstantExpression of Constant
-    | LookupExpression of LongIdentifier
     | DotLookupExpression of Expression * ``.``: Token * LongIdentifier
+    | LookupExpression of LongIdentifier
+
+    /// reduce to OperatorExpression
     | ApplicationsExpression of Expression * Expression * Expression list
+
+    | OperatorExpression of Operator
+
     | BlockExpression of ``(``: Token * Expression * ``)``: Token
     | SequentialExpression of Expression * ``;``: Token * Expression
     | LetExpression of LetHeader * ``=``: Token * Expression * ``;``: Token * Expression
 
+and Operator =
+    | InfixOperator of Expression * operator: LongIdentifier * Expression
+    | PrefixOperator of operator: LongIdentifier * Expression
+    | SuffixOperator of Expression * operator: LongIdentifier
 
 type Type = 
     | ParenthesizedType of ``(``: Token * Type * ``)``: Token
@@ -36,6 +45,7 @@ type TypeName = TypeName of identifier: Token * TypeArgument list
 
 type TypeDefinition =
     | AbbreviationTypeDefinition of TypeName * ``=``: Token * Type
+    | EmptyTypeDefinition of TypeName
 
 type ModuleElement = 
     | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements> * blockEnd: Token

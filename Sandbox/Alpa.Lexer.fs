@@ -48,6 +48,7 @@ let (|Whitespace|) = function
     | _ -> false
     
 let (|FloatingPointE|) = function 'e' | 'E' -> true | _ -> false
+let delimiters = [','; ';'; '['; ']'; '{'; '}'; '('; ')']
 let (|Delimiter|) = function
     | ',' | ';' | '[' | ']' | '{' | '}' | '(' | ')' -> true
     | _ -> false

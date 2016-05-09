@@ -135,7 +135,7 @@ let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBegin p Layout.b
 let identifier = satisfyE isId RequireIdentifer
 let operator = satisfyE isOp RequireOperator
 
-let path0 = many (identifier .>> S.``.``)
+let path0 = many (identifier .>>. S.``.``)
 
 let longIdentifier = pipe2 path0 identifier <| fun xs x -> LongIdentifier(xs, x)
 let longIdentifierOrOperator = pipe2 path0 (identifier <|> operator) <| fun xs x -> LongIdentifier(xs, x)
@@ -286,6 +286,7 @@ _type' := (
 )
 
 let abbreviationTypeDefinition = pipe3 typeName S.``d=`` type' <| fun a b c -> AbbreviationTypeDefinition(a, b, c)
+let emptyTypeDefinition = typeName |>> EmptyTypeDefinition
 let typeDefinition =
     choice [
         abbreviationTypeDefinition
@@ -298,6 +299,7 @@ let typeDefinition =
 //        enum-type-defn
 //        delegate-type-defn
 //        type-extension
+        emptyTypeDefinition
     ]
 
 let typeDefinitions = pipe2 S.``type`` typeDefinition <| fun a b -> ModuleTypeDefinition(a, b)

@@ -161,41 +161,37 @@ let chainL1 (Parser p) (Parser op) f =
             Reply((), r.Error)
     p
 
-let (<|>) (Parser p1) (Parser p2) xs =
-    let i = xs.Index
-    let u = xs.UserState
-    let r = p1 xs
-    if r.Status = Ok then r
-    else
-        xs.Index <- i
-        xs.UserState <- u
-        p2 xs
-
 let choice = function
     | [] -> fun _ -> Reply((), (), ReplyError.AnyError)
     | [p] -> p
     | p::ps ->
         let p xs =
-            let startIndex = xs.Index
-            let startState = xs.UserState
-            let r = p xs
-            let rec aux r' i' u' = function
+            let initIndex = xs.Index
+            let initState = xs.UserState
+
+            let rec aux (maxResult: Reply<_,_>) maxIndex maxUserState = function
                 | [] ->
-                    xs.Index <- i'
-                    xs.UserState <- u'
-                    r'
+                    xs.Index <- maxIndex
+                    xs.UserState <- maxUserState
+                    maxResult
 
                 | (Parser p)::ps ->
-                    xs.Index <- startIndex
-                    xs.UserState <- startState
+                    xs.Index <- initIndex
+                    xs.UserState <- initState
+
                     let r = p xs
                     let i = xs.Index
                     let u = xs.UserState
-                    if r.Status = Ok && i' < i then aux r i u ps else aux r' i' u' ps
 
-            aux r xs.Index xs.UserState ps
+                    if maxResult.Status <> Ok || (r.Status = Ok && maxIndex < i)
+                    then aux r i u ps 
+                    else aux maxResult maxIndex maxUserState ps
+
+            aux (p xs) xs.Index xs.UserState ps
         p
     
+let (<|>) l r = choice [l; r]
+
 let opt (Parser p) xs =
     let i = xs.Index
     let u = xs.UserState

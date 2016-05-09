@@ -1,11 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 14
-VisualStudioVersion = 14.0.24720.0
+VisualStudioVersion = 14.0.25123.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Sandbox", "Sandbox\Sandbox.fsproj", "{9F7D10C2-7D42-41C0-B88B-0FDB89B43D83}"
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Alpa.Compiler", "Sandbox\Alpa.Compiler.fsproj", "{9F7D10C2-7D42-41C0-B88B-0FDB89B43D83}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConsoleApplication1", "ConsoleApplication1\ConsoleApplication1.csproj", "{B99649D5-20DE-492B-B6D0-1E10FBAD5DD6}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Alpa.Compiler.Test", "Alpa.Compiler.Test\Alpa.Compiler.Test.fsproj", "{65822F6D-21E7-4535-906C-7FCB5A5BB7EF}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -21,6 +23,10 @@ Global
 		{B99649D5-20DE-492B-B6D0-1E10FBAD5DD6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B99649D5-20DE-492B-B6D0-1E10FBAD5DD6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B99649D5-20DE-492B-B6D0-1E10FBAD5DD6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{65822F6D-21E7-4535-906C-7FCB5A5BB7EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{65822F6D-21E7-4535-906C-7FCB5A5BB7EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{65822F6D-21E7-4535-906C-7FCB5A5BB7EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{65822F6D-21E7-4535-906C-7FCB5A5BB7EF}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
