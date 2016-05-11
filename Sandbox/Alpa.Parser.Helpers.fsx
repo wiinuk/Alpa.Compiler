@@ -249,14 +249,14 @@ module Token =
     let ``(`` = delim Special.``D(``
     let ``)`` = delim Special.``D)``
 
-let (!) id = Token.ident id
-let (!%) op = Token.op op
+let (!) id = Name <| Token.ident id
+let (!%) op = Name <| Token.op op
 let (~+) var = LongIdentifier([], var)
 let (!+) id = + !id
 let (!+%) op = + !%op
 
-let (!-) n = NamedType(+ !n, [])
-let (!-%) n = NamedType(+ !%n, [])
+let (!-) n = NamedType(!+n, [])
+let (!-%) n = NamedType(!+%n, [])
 
 let (!!) id = LookupExpression !+id
 let (!!%) op = LookupExpression !+%op
@@ -286,14 +286,15 @@ module Syntax =
 
     // -- Expression --
 
-    let applicationsExpression e1 e2 es = ApplicationsExpression(e1, e2, Seq.toList es)
-    let apply2 e1 e2 = applicationsExpression e1 e2 []
-    let apply3 e1 e2 e3 = applicationsExpression e1 e2 [e3]
+    let applicationsExpression kind e1 e2 es = ApplicationsExpression(kind, e1, e2, Seq.toList es)
+    let apply2 e1 e2 = applicationsExpression IdentifierApply e1 e2 []
+    let apply3 e1 e2 e3 = applicationsExpression IdentifierApply e1 e2 [e3]
     let seq' e1 e2 = SequentialExpression(e1, Token.``;``, e2)    
-    let infix l op r = InfixApplicationExpression(l, op, r)
-    let prefix op e = PrefixApplicationExpression(op, e)
-    let postfix e op = PostfixApplicationExpression(e, op)
-
+    let infixL l op r = applicationsExpression InfixLeftApply op l [r]
+    let infixN l op r = applicationsExpression InfixNoneApply op l [r]
+    let infixR l op r = applicationsExpression InfixRightApply op l [r]
+    let prefix op e = applicationsExpression PrefixApply op e []
+    let postfix e op = applicationsExpression PostfixApply op e []
 
 
     // -- ModuleElement --

@@ -181,6 +181,46 @@ module Specials =
 
 // let (Success(Some file)) = parse start xs
 
+
+//type dot = Dot of char
+//type name = char
+//type e = 
+//    | Member of e * dot * name
+//    | Lookup of (name * dot) list * name
+//
+//let rec takeMember e dot ls r =
+//    match ls with
+//    | [] -> Member(e, dot, r)
+//    | (ln,ld)::ls -> takeMember (Member(e, dot, ln)) ld ls r
+//
+//let rec takeLookup env rns rs ms r =
+//    match ms with
+//    | [] ->
+//        let rns' = r::rns
+//        if Set.contains (List.rev rns') env then Lookup(List.rev rs, r)
+//        else failwithf "error %A %A" (List.rev rs) r
+//
+//    | (mn,md) as i::ms ->
+//        let rns' = mn::rns
+//
+//        if Set.contains (List.rev rns') env
+//        then takeMember (Lookup(List.rev rs, mn)) md ms r
+//        else takeLookup env rns' (i::rs) ms r
+//
+//let take env = takeLookup env [] []
+//          
+//let env = Set [['A';'a']; ['B';'C';'b']]
+//  
+//take env ['A', Dot '.'] 'a' = Lookup(['A', Dot '.'], 'a')
+//take env ['B', Dot '.'; 'C', Dot '#'; 'b', Dot ','; 'x', Dot ':'] 'y' =
+//    Member(Member(Lookup(['B', Dot '.'; 'C', Dot '#'], 'b'), Dot ',', 'x'), Dot ':', 'y')
+//
+//take env ['A', Dot '.'] 'x'
+//take env ['X', Dot '.'; 'A', Dot ','] 'a'
+//take env ['B', Dot '.'] 'C'
+
+
+
     
 // <haskell>
 // prec,    left assoc,                 non assoc,                      right assoc
@@ -243,12 +283,12 @@ let (.==), (.===) = !!%"==", !!%"==="
 
 let (+.) l r = l @ (.+)::r
 
-let (.+.) l r = S.infix l (.+) r
-let (.*.) l r = S.infix l (.*) r
-let (.**.) l r = S.infix l (.**) r
-let (.***.) l r = S.infix l (.***) r
-let (.==.) l r = S.infix l (.==) r
-let (.===.) l r = S.infix l (.==) r
+let (.+.) l r = S.infixL l (.+) r
+let (.*.) l r = S.infixL l (.*) r
+let (.**.) l r = S.infixR l (.**) r
+let (.***.) l r = S.infixR l (.***) r
+let (.==.) l r = S.infixN l (.==) r
+let (.===.) l r = S.infixN l (.==) r
 
 
 //let add a b = a + b
@@ -268,6 +308,7 @@ let (.===.) l r = S.infix l (.==) r
 // `1 * 2 * 3 + 4 + 5` -> `(((1 * 2) * 3) + 4) + 5`
 // `+ - a ++ --` -> `(+(-((a++)--)))`
 // `a !b++ -c-- + d` -> `(a (!(b++)) (-(c--))) + d`
+// `- a ! b` -> `-(a(!b))`
 //
 // `a * b ** c ** d * e` -> `(a * (b ** (c ** d))) * e`
 // `a == b + c` -> `a == (b + c)`
@@ -285,15 +326,15 @@ let (.===.) l r = S.infix l (.==) r
 let (==>) l r = l, Some r
 let error e = e, None
 let testOp src exp =
-    let act = parseApplications env src
+    let act = parseApplicationsExpression env src
     match exp with
     | Some exp ->
-        if act <> Choice1Of2 exp then
+        if act <> Ok exp then
             printfn "source: %A;\nactual: %A;\nexpected: %A;" src act exp
 
     | None ->
         match act with
-        | Choice1Of2 _ -> printfn "source: %A;\nactual: %A" src act
+        | Ok _ -> printfn "source: %A;\nactual: %A" src act
         | _ -> ()
 
 Seq.iter ((<||) testOp) [
@@ -302,6 +343,7 @@ Seq.iter ((<||) testOp) [
     [a; (.+); b; (.+); c; (.*); d; (.*); e] ==> ((a .+. b) .+. ((c .*. d) .*. e))
     [a; (.*); b; (.*); c; (.+); d; (.+); e] ==> ((((a .*. b) .*. c) .+. d) .+. e)
     [(@!); (.-); a; (.++); (.--)] ==> (S.prefix (@!) (S.prefix (.-) (S.postfix (S.postfix a (.++)) (.--))))
+    [(.-); a; (@!); b] ==> (S.apply2 (S.prefix (.-) a) (S.prefix (@!) b))
 
     [a; (@!); b; (.++); (.-); c; (.--); (.+); d] ==> ((S.apply3 a (S.prefix (@!) (S.postfix b (.++))) (S.prefix (.-) (S.postfix c (.--))))) .+. d
 
@@ -318,8 +360,6 @@ Seq.iter ((<||) testOp) [
 
     error [a; (.==); b; (.+); c; (.==); d]
 ]
-
-parseApplications env [a; (.***); b; (.*); c], (a .***. (b .*. c))
 
 let infer = ()
 

@@ -41,6 +41,8 @@ type ParseError =
     | UnknownOperator of Expression
     | AmbiguousAssociativeOperator of prevOp: Expression * prevAssoc: Associativity * nowOp: Expression * nowAssoc: Associativity
 
+    | LookupError of LongIdentifier
+
 type Parser<'a> = Parser<Token, State, ParseError, 'a>
 let (|Parser|) (p: Parser<_>) = p
 let (|Stream|) (xs: Stream<_,State>) = xs
@@ -150,13 +152,20 @@ module S = Specials
 let lineSeparator = S.``;`` <|> Layout.lineSeparator
 let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBegin p Layout.blockEnd f
 
-let identifier = satisfyE isId RequireIdentiferToken
+// ++, `div`
 let operator = satisfyE isOp RequireOperatorToken
+
+/// id, Id, ``i d``, (+), (`div`)
+let identifier =
+    (satisfyE isId RequireIdentiferToken |>> Name) <|>
+    (pipe3 S.``(`` operator S.``)`` <| fun a b c -> ParenthesizedIdentifier(a, b, c))
+
+let identifierOrOperator = identifier <|> (operator |>> Name)
 
 let path0 = many (identifier .>>. S.``.``)
 
 let longIdentifier = pipe2 path0 identifier <| fun xs x -> LongIdentifier(xs, x)
-let longIdentifierOrOperator = pipe2 path0 (identifier <|> operator) <| fun xs x -> LongIdentifier(xs, x)
+let longIdentifierOrOperator = pipe2 path0 identifierOrOperator <| fun xs x -> LongIdentifier(xs, x)
 
 let constant =
     (satisfyE (fun t -> match t.Kind with I | F | C | S -> true | _ -> false) RequireLiteralToken |>> Constant) <|>
@@ -199,7 +208,7 @@ _pattern :=
     ]
 
 let letHeader =
-    let opHead = pipe4 atomicPattern operator atomicPattern (many atomicPattern) <| fun p1 n p2 ps -> LetHeader(n, p1::p2::ps)
+    let opHead = pipe4 atomicPattern operator atomicPattern (many atomicPattern) <| fun p1 n p2 ps -> LetHeader(Name n, p1::p2::ps)
     let idHead = pipe2 identifier (many atomicPattern) <| fun n ps -> LetHeader(n, ps)
     opHead <|> idHead
 
@@ -258,8 +267,12 @@ _expression := (
         ]
 
     let p = primitiveExpression
-    let p = pipe2 p (opt (S.``.`` .>>. longIdentifierOrOperator)) <| fun e n -> match n with None -> e | Some(a, b) -> DotLookupExpression(e, a, b) // -- dot lookup expression
-    let p = sepBy1 p Layout.applicationSeparator |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(e1, e2, es)
+    let p = pipe2 p (many (S.``.`` .>>. identifier)) <| fun e ns -> // -- dot lookup expression
+        match ns with 
+        | [] -> e 
+        | _ -> List.fold (fun e (d, n) -> DotLookupExpression(e, d, n)) e ns
+
+    let p = sepBy1 p Layout.applicationSeparator |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(RawApply, e1, e2, es)
     
     let p =
         let pipe a b c d e = LetExpression(a, b, c, d, e)
@@ -276,10 +289,12 @@ let moduleFunctionOrValueDefinition =
 //        doExpression
     ]
 
-let typar = (S.``_`` <|> identifier) |>> TypeArgument
+let typar = (S.``_`` |>> TypeArgumentHole) <|> (identifier |>> TypeArgument)
 let typarDefinition = (* attributesopt *) typar
-let typarDefinitions1 = many1 typarDefinition
-let typeName = pipe2 (* attributes opt access opt *) identifier (opt typarDefinitions1) <| fun a b -> TypeName(a, match b with None -> [] | Some(x,xs) -> x::xs)
+let typeName =
+    let idTypeName = pipe2 (* attributes opt access opt *) identifier (many typarDefinition) <| fun a b -> TypeName(a, b)
+    let opTypeName = pipe3 typarDefinition operator (many1 typarDefinition) <| fun l op (r, rs) -> TypeName(Name op, l::r::rs)
+    idTypeName <|> opTypeName
 
 let type', _type' = createParserForwardedToRef()
 _type' := (    
