@@ -19,19 +19,16 @@ type Expression =
     | DotLookupExpression of Expression * ``.``: Token * LongIdentifier
     | LookupExpression of LongIdentifier
 
-    /// reduce to OperatorExpression
+    /// reduce to *ApplicationExpression
     | ApplicationsExpression of Expression * Expression * Expression list
 
-    | OperatorExpression of Operator
+    | InfixApplicationExpression of Expression * operator: Expression * Expression
+    | PrefixApplicationExpression of operator: Expression * Expression
+    | PostfixApplicationExpression of Expression * operator: Expression
 
     | BlockExpression of ``(``: Token * Expression * ``)``: Token
     | SequentialExpression of Expression * ``;``: Token * Expression
     | LetExpression of LetHeader * ``=``: Token * Expression * ``;``: Token * Expression
-
-and Operator =
-    | InfixOperator of Expression * operator: LongIdentifier * Expression
-    | PrefixOperator of operator: LongIdentifier * Expression
-    | SuffixOperator of Expression * operator: LongIdentifier
 
 type Type = 
     | ParenthesizedType of ``(``: Token * Type * ``)``: Token

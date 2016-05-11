@@ -105,41 +105,49 @@ type Special =
 
 type TokenKind =
     /// delimiter;
+    /// ex: "(" ")" ";";
     /// Value = int (char Special);
     /// Value2 = null;
     | D
     
     /// received identifier;
+    /// ex: "type" "class" "module";
     /// Value = int (char Special);
     /// Value2 = null;
     | Rid
     
     /// received operator;
+    /// ex: "=" "->" ":";
     /// Value = int (char Special);
     /// Value2 = null;
     | Rop
     
     /// identifier;
+    /// ex: "a" "_123" "Test" "or";
     /// Value = 0;
     /// Value2 = box (Symbol ..);
     | Id
     
     /// quoted identifier;
+    /// ex: "``++``" "`` id ! ``";
     /// Value = 0;
     /// Value2 = box (Symbol ..);
     | Qid
     
     /// operator;
+    /// ex: "*" "!" "++";
     /// Value = 0;
     /// Value2 = box (Symbol ..);
     | Op
     
     /// quoted operator;
+    /// ex: "`div`" "`mod`";
     /// Value = 0;
     /// Value2 = box (Symbol ..);
     | Qop
     
     /// integer literal;
+    /// ex: "123" "0b11_00";
     /// Value = 0;
     /// Value2 = box(bigint ..);
     /// |
@@ -148,6 +156,7 @@ type TokenKind =
     | I
 
     /// floating literal;
+    /// ex: "0.1e-12_34" "123e12_34";
     /// Value = 0;
     /// Value2 = box(bigint .., bigint .., bigint ..);
     /// |
@@ -156,11 +165,13 @@ type TokenKind =
     | F
     
     /// character literal;
+    /// ex: "'a'" "'\\u{20}'";
     /// Value = int '...';
     /// Value2 = null;
     | C
 
     /// string literal;
+    /// ex: "\"a\"" "\"\\u{20}\"";
     /// Value = 0;
     /// Value2 = Symbol ..;
     | S

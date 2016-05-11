@@ -3,8 +3,9 @@
 open Alpa
 open Alpa.IO
 open Alpa.Parser
-open Alpa.Parser.Helpers
 open Alpa.ParserCombinator
+open Alpa.Parser.Operator
+open Alpa.Parser.Helpers
 
 module P = Alpa.Parser
 module S = Alpa.Parser.Helpers.Syntax
@@ -102,12 +103,12 @@ test syntaxDiff moduleFunctionOrValueDefinition (
 
         "apply f x =\n  f x", exp2
         "apply f x =\n  f\n   x", exp2
-        "seq unit a =\n  unit;\n  a", S.moduleFun2 "seq" !@"unit" !@"a" (S.seq !!"unit" !!"a")
+        "seq unit a =\n  unit;\n  a", S.moduleFun2 "seq" !@"unit" !@"a" (S.seq' !!"unit" !!"a")
 
         "apply2 f x y =\n  f x y", S.moduleFun3 "apply2" !@"f" !@"x" !@"y" (S.apply3 !!"f" !!"x" !!"y")
-        "seqApply action x y =\n  action x;\n  y", S.moduleFun3 "seqApply" !@"action" !@"x" !@"y" (S.seq (S.apply2 !!"action" !!"x") !!"y")
-        "seq2 unit1 unit2 a =\n  unit1;\n  unit2; a", S.moduleFun3 "seq2" !@"unit1" !@"unit2" !@"a" (S.seq (S.seq !!"unit1" !!"unit2") !!"a")
-        "seqApply unit f x =\n  unit;\n  f x", S.moduleFun3 "seqApply" !@"unit" !@"f" !@"x" (S.seq !!"unit" (S.apply2 !!"f" !!"x"))
+        "seqApply action x y =\n  action x;\n  y", S.moduleFun3 "seqApply" !@"action" !@"x" !@"y" (S.seq' (S.apply2 !!"action" !!"x") !!"y")
+        "seq2 unit1 unit2 a =\n  unit1;\n  unit2; a", S.moduleFun3 "seq2" !@"unit1" !@"unit2" !@"a" (S.seq' (S.seq' !!"unit1" !!"unit2") !!"a")
+        "seqApply unit f x =\n  unit;\n  f x", S.moduleFun3 "seqApply" !@"unit" !@"f" !@"x" (S.seq' !!"unit" (S.apply2 !!"f" !!"x"))
     ]
 )
 
@@ -178,148 +179,8 @@ module Specials =
 
 // typing
 
-let (Success(Some f)) = parse start xs
+// let (Success(Some file)) = parse start xs
 
-type Fixity =
-    | Nonfix
-    | Prefix
-    | Infix
-    | Suffix
-
-type Associativity =
-    | NonAssoc
-    | Left
-    | Right
-
-type sorted_table<'k,'v> = list<'k * list<'v>>
-type Operator = Operator of Fixity * Associativity * precedence: int * FullPath: list<Symbol>
-type VarInfo = VarInfo of option<Operator> * FullPath: list<Symbol>
-type Node<'K,'V when 'K : comparison> =
-    | Leaf of 'V
-    | Node of Map<'K, Node<'K,'V>>
-
-type Tree<'K,'V when 'K : comparison> = Map<'K, Node<'K,'V>>
-type SymbolTree = Tree<Symbol, VarInfo>
-
-type ResolveEnv = {
-    InfixOpsTable: sorted_table<int, Operator>
-    Vars: SymbolTree
-}
-module Env =
-    let contains n env =
-        match Map.tryFind n env.Vars with
-        | Some(Leaf _) -> true
-        | _ -> false
-
-    let tryFind (LongIdentifier(ls, r)) env =
-        let rec aux ls r vars =
-            match ls with
-            | [] ->
-                match Map.tryFind (r._value2 :?> Symbol) vars with
-                | Some(Leaf v) -> Some v
-                | _ -> None
-
-            | (l, _)::ls ->
-                match Map.tryFind (l._value2 :?> Symbol) vars with
-                | Some(Node vars) -> aux ls r vars
-                | _ -> None
-
-        aux ls r env.Vars
-
-type Result<'a> = NoChange | Update of 'a
-
-let (|Op|_|) env = function
-    | LookupExpression(LongIdentifier(ns, n) as name) ->
-        match Token.kind n with
-        | TokenKind.Id
-        | TokenKind.Op
-        | TokenKind.Qid ->
-            match Env.tryFind name env with
-            | Some(VarInfo(Some op, fp)) -> Some(op, name, fp)
-            | _ -> None
-        | _ -> None
-    | _ -> None
-    
-// prefix --; infixL 10 *; infixL 5 +; infixR 10 **; nonfix 10 ==;
-// `1 + 2 + 3 * 4 * 5` -> `(1 + 2) + ((3 * 4) * 5)`
-// `1 * 2 * 3 + 4 + 5` -> `(((1 * 2) * 3) + 4) + 5`
-
-let parseApplications env es =
-    let parseTerm = function
-        | Op env e::_ -> failwithf "parseTerm %A" e
-        | e::es -> Some(e, es)
-        | [] -> failwith "empty"
-
-    let parseOp infixOps = function
-        | Op env (_,name,fp) as e::es ->
-            if List.exists (fun (Operator(_,_,_,fp')) -> fp = fp') infixOps
-            then Some(name, es)
-            else failwithf "parseOp %A" e
-        | _ -> failwith "parseOp"
-
-    let rec parseInfixOpTable infixOpTable es =
-        match infixOpTable with
-        | [] -> parseTerm es
-        | (_, infixOps)::infixOpTable ->
-            parseInfixOps infixOps infixOpTable es
-
-    and parseInfixOps infixOps infixOpTable es =
-        match parseInfixOpTable infixOpTable es with
-        | None -> None
-        | Some(l, es) ->
-            
-            let rec parseManyInfixOps l es =
-                try parseOp infixOps es with _ -> None
-
-                |> function
-                | None -> l, es
-                | Some(op, es) ->
-                    try parseInfixOpTable infixOpTable es with _ -> None
-
-                    |> function
-                    | None -> l, es
-                    | Some(r, es) -> parseManyInfixOps (OperatorExpression(InfixOperator(l, op, r))) es
-
-            Some <| parseManyInfixOps l es
-
-    match parseInfixOpTable env.InfixOpsTable es with
-    | Some(e, []) -> Some e
-    | _ -> None
-
-let add fullPath op env =
-    let rec addTree l rs v tree =
-        match Map.tryFind l tree, rs with
-        | Some(Node ltree), r::rs -> Map.add l (Node(addTree r rs v ltree)) tree
-        | _, r::rs -> Map.add l (Node(addTree r rs v Map.empty)) tree
-        | _, [] -> Map.add l (Leaf v) tree
-
-    let rec addSortedTable key x = function
-        | [] -> [key, [x]]
-        | (k,xs) as kxs::table ->
-            if key < k then (key,[x])::kxs::table
-            elif key = k then (k,x::xs)::table
-            else kxs::addSortedTable key x table
-
-    match fullPath with
-    | [] -> failwith "empty path"
-    | p::ps ->
-        let vars = addTree p ps (VarInfo(op, fullPath)) env.Vars
-        match op with
-        | None -> { env with Vars = vars }
-        | Some(Operator(_,_,prec,_) as op) ->
-            { env with 
-                Vars = vars
-                InfixOpsTable = addSortedTable prec op env.InfixOpsTable
-            }
-            
-
-
-let make xs =
-    let env = { InfixOpsTable = []; Vars = Map.empty }
-    Seq.fold (fun env (fullPath, op) ->
-        let op = Option.map(fun (f, a, p) -> Operator(f, a, p, fullPath)) op
-        add fullPath op env
-    ) env xs
     
 // <haskell>
 // prec,    left assoc,                 non assoc,                      right assoc
@@ -348,44 +209,131 @@ let make xs =
 // 0,       (),                         (),                             (:=)
 
 let env =
-    make [
-        ["a"], None
-        ["b"], None
-        ["c"], None
-        ["d"], None
-        ["e"], None
-        ["+"], Some(Infix, Left, 60)
-        ["*"], Some(Infix, Left, 70)
-    ]
+    let makeEnv = List.map (fun (n,op) -> [n], op) >> Env.make
+    makeEnv [
+        "a", None
+        "b", None
+        "c", None
+        "d", None
+        "e", None
+        "f", None
 
-let infix l op r = OperatorExpression(InfixOperator(l, op, r))
+        "**", Some(Infix, Right, 80)
+
+        "*", Some(Infix, Left, 70)
+        "===", Some(Infix, NonAssoc, 70)
+        "***", Some(Infix, Right, 70)
+        
+        "+", Some(Infix, Left, 60)
+
+        "==", Some(Infix, NonAssoc, 40)
+
+        "!", Some(Prefix, NonAssoc, 0)
+        "-", Some(Prefix, NonAssoc, 0)
+
+        "++", Some(Postfix, NonAssoc, 0)
+        "--", Some(Postfix, NonAssoc, 0)
+    ]
 
 let a, b, c, d, e = !!"a", !!"b", !!"c", !!"d", !!"e"
 
-parseApplications env [a; !!"+"; b] = Some(infix a !+"+" b)
-parseApplications env [a; !!"+"; b; !!"+"; c; !!"*"; d; !!"*"; e] =
-    Some(infix (infix a !+"+" b) !+"+" (infix (infix c !+"*" d) !+"*" e))
+let (.+), (.*), (.-), (.**), (.***) = !!%"+", !!%"*", !!%"-", !!%"**", !!%"***"
+let (@!), (.++), (.--) = !!%"!", !!%"++", !!%"--"
+let (.==), (.===) = !!%"==", !!%"==="
 
-parseApplications env [a; !!"*"; b; !!"*"; c; !!"+"; d; !!"+"; e] =
-    Some(infix (infix (infix (infix a !+"*" b) !+"*" c) !+"+" d) !+"+" e)
+let (+.) l r = l @ (.+)::r
 
-type Resolved<'a> = Resolved of Fixity * int * 'a
-let nonfix x = Resolved(Nonfix, 0, x)
+let (.+.) l r = S.infix l (.+) r
+let (.*.) l r = S.infix l (.*) r
+let (.**.) l r = S.infix l (.**) r
+let (.***.) l r = S.infix l (.***) r
+let (.==.) l r = S.infix l (.==) r
+let (.===.) l r = S.infix l (.==) r
 
-let rec resolveNameOfExpr env e =
-    match e with
-    | ApplicationsExpression(e1, e2, es) -> 
-            
 
-open System
-open System.Reflection 
-open System.Reflection.Emit
+//let add a b = a + b
+//let (!!) a = -a
+//
+//add !! 10 !! 5
 
-System.AppDomain.CurrentDomain.DefineDynamicAssembly(.AssemblyName(), )
+// postfix -- ++
+// prefix - !
+//
+// infixR 80 **
+// infixL 70 *, infixR 70 ***, infixN 70 ===
+// infixL 60 + 
+// infixN 40 ==
+//
+// `1 + 2 + 3 * 4 * 5` -> `(1 + 2) + ((3 * 4) * 5)`
+// `1 * 2 * 3 + 4 + 5` -> `(((1 * 2) * 3) + 4) + 5`
+// `+ - a ++ --` -> `(+(-((a++)--)))`
+// `a !b++ -c-- + d` -> `(a (!(b++)) (-(c--))) + d`
+//
+// `a * b ** c ** d * e` -> `(a * (b ** (c ** d))) * e`
+// `a == b + c` -> `a == (b + c)`
+//
+// `a == b == c` -> error
+// `a * b === c` -> error
+// `a === b * c` -> error
+// `a * b *** c` -> error
+// `a *** b * c` -> error
+// `a *** b === c` -> error
+// `a === b *** c` -> error
+//
+// `a == b + c == d` -> error
 
-let emitNamedModule (LongIdentifier(ns, n)) es =
-    es
+let (==>) l r = l, Some r
+let error e = e, None
+let testOp src exp =
+    let act = parseApplications env src
+    match exp with
+    | Some exp ->
+        if act <> Choice1Of2 exp then
+            printfn "source: %A;\nactual: %A;\nexpected: %A;" src act exp
 
-let emitImplementationFile = function
-    | AnonymousModule _ -> failwithf ""
-    | NamedModule(_,n,xs) -> emitNamedModule n xs
+    | None ->
+        match act with
+        | Choice1Of2 _ -> printfn "source: %A;\nactual: %A" src act
+        | _ -> ()
+
+Seq.iter ((<||) testOp) [
+    [a; (.+); b] ==> (a .+. b)
+    [a; b; (.+); c; d] ==> (S.apply2 a b .+. S.apply2 c d)
+    [a; (.+); b; (.+); c; (.*); d; (.*); e] ==> ((a .+. b) .+. ((c .*. d) .*. e))
+    [a; (.*); b; (.*); c; (.+); d; (.+); e] ==> ((((a .*. b) .*. c) .+. d) .+. e)
+    [(@!); (.-); a; (.++); (.--)] ==> (S.prefix (@!) (S.prefix (.-) (S.postfix (S.postfix a (.++)) (.--))))
+
+    [a; (@!); b; (.++); (.-); c; (.--); (.+); d] ==> ((S.apply3 a (S.prefix (@!) (S.postfix b (.++))) (S.prefix (.-) (S.postfix c (.--))))) .+. d
+
+    [a; (.*); b; (.**); c; (.**); d; (.*); e] ==> ((a .*. (b .**. (c .**. d))) .*. e)
+    [a; (.==); b; (.+); c] ==> (a .==. (b .+. c))
+
+    error [a; (.==); b; (.==); c]
+    error [a; (.*); b; (.===); c]
+    error [a; (.===); b; (.*); c]
+    error [a; (.*); b; (.***); c]
+    error [a; (.***); b; (.*); c]
+    error [a; (.***); b; (.===); c]
+    error [a; (.===); b; (.***); c]
+
+    error [a; (.==); b; (.+); c; (.==); d]
+]
+
+parseApplications env [a; (.***); b; (.*); c], (a .***. (b .*. c))
+
+let infer = ()
+
+
+
+//open System
+//open System.Reflection 
+//open System.Reflection.Emit
+//
+//AppDomain.CurrentDomain.DefineDynamicAssembly(.AssemblyName(), )
+//
+//let emitNamedModule (LongIdentifier(ns, n)) es =
+//    es
+//
+//let emitImplementationFile = function
+//    | AnonymousModule _ -> failwithf ""
+//    | NamedModule(_,n,xs) -> emitNamedModule n xs

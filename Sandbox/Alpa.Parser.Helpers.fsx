@@ -1,6 +1,6 @@
 ﻿module Alpa.Parser.Helpers
 
-#load "./Alpa.Parser.fsx"
+#load "./Alpa.Parser.Operator.fsx"
 
 open Alpa
 open Alpa.IO
@@ -284,12 +284,16 @@ module Syntax =
     let abbreviationTypeDefinition typeName type' = AbbreviationTypeDefinition(typeName, Token.``d=``, type')
 
 
-    // -- expression --
+    // -- Expression --
 
     let applicationsExpression e1 e2 es = ApplicationsExpression(e1, e2, Seq.toList es)
     let apply2 e1 e2 = applicationsExpression e1 e2 []
     let apply3 e1 e2 e3 = applicationsExpression e1 e2 [e3]
-    let seq e1 e2 = SequentialExpression(e1, Token.``;``, e2)
+    let seq' e1 e2 = SequentialExpression(e1, Token.``;``, e2)    
+    let infix l op r = InfixApplicationExpression(l, op, r)
+    let prefix op e = PrefixApplicationExpression(op, e)
+    let postfix e op = PostfixApplicationExpression(e, op)
+
 
 
     // -- ModuleElement --

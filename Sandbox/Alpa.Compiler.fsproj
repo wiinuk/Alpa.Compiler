@@ -71,6 +71,7 @@
     <Compile Include="Alpa.ParserCombinator.fs" />
     <None Include="Alpa.Parser.Types.fsx" />
     <None Include="Alpa.Parser.fsx" />
+    <None Include="Alpa.Parser.Operator.fsx" />
     <None Include="Lexer.Test.fsx" />
     <None Include="Type.alpa" />
     <None Include="Alpa.Parser.Helpers.fsx" />

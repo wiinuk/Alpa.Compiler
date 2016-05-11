@@ -9,25 +9,43 @@ open Alpa.ParserCombinator
 type State = ValueTuple3<Position, list<Position>, unit>
 let initialState: State = ValueTuple3(Item1 = Position(0<_>, 1<_>, 1<_>), Item2 = [], Item3 = ())
 
-type Error =
+type Fixity =
+    | Prefix
+    | Infix
+    | Postfix
+
+type Associativity =
+    | NonAssoc
+    | Left
+    | Right
+
+type ParseError =
     | ErrorNone
-    | RequireR of Special
-    | RequireIdentifer
-    | RequireOperator
+
+    | RequireSpecialToken of Special
+    | RequireIdentiferToken
+    | RequireOperatorToken
 
     /// Char, Int, Float, String
-    | RequireLiteral
+    | RequireLiteralToken
     | RequireLineSeparator
     | RequireBlockBegin
     | RequireBlockEnd
     | RequireFileStart
     | RequireApplicationSeparator
+    
+    | RequireAnyExpression
+    | RequireExpressionsEnd
+    | RequireOperatorExpression of Expression
+    | RequireNonOperatorExpression of Expression
+    | UnknownOperator of Expression
+    | AmbiguousAssociativeOperator of prevOp: Expression * prevAssoc: Associativity * nowOp: Expression * nowAssoc: Associativity
 
-type Parser<'a> = Parser<Token, State, Error, 'a>
+type Parser<'a> = Parser<Token, State, ParseError, 'a>
 let (|Parser|) (p: Parser<_>) = p
 let (|Stream|) (xs: Stream<_,State>) = xs
 
-let rParser s = satisfyE (isR s) (RequireR s)
+let rParser s = satisfyE (isR s) (RequireSpecialToken s)
 
 module Specials =
     let ``(`` = rParser Special.``D(``
@@ -132,8 +150,8 @@ module S = Specials
 let lineSeparator = S.``;`` <|> Layout.lineSeparator
 let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBegin p Layout.blockEnd f
 
-let identifier = satisfyE isId RequireIdentifer
-let operator = satisfyE isOp RequireOperator
+let identifier = satisfyE isId RequireIdentiferToken
+let operator = satisfyE isOp RequireOperatorToken
 
 let path0 = many (identifier .>>. S.``.``)
 
@@ -141,7 +159,7 @@ let longIdentifier = pipe2 path0 identifier <| fun xs x -> LongIdentifier(xs, x)
 let longIdentifierOrOperator = pipe2 path0 (identifier <|> operator) <| fun xs x -> LongIdentifier(xs, x)
 
 let constant =
-    (satisfyE (fun t -> match t.Kind with I | F | C | S -> true | _ -> false) RequireLiteral |>> Constant) <|>
+    (satisfyE (fun t -> match t.Kind with I | F | C | S -> true | _ -> false) RequireLiteralToken |>> Constant) <|>
     pipe2 S.``(`` S.``)`` (fun a b -> UnitConstant(a, b))
 
 let pattern, _pattern = createParserForwardedToRef()
