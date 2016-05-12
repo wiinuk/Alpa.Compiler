@@ -21,7 +21,7 @@ type ApplicationKind = RawApply | PrefixApply | InfixLeftApply | InfixNoneApply 
 type Expression =
     | ConstantExpression of Constant
 
-    /// reduce to (LookupExpression and DotLookupExpression)
+    // reduce to (LookupExpression and DotLookupExpression)
     | LookupExpression of LongIdentifier
 
     | DotLookupExpression of Expression * ``.``: Token * Identifier
@@ -38,7 +38,7 @@ type Type =
     | TupleType of Type * ``,``: Token * Type * ``(, Type)*``: (Token * Type) list
     | ListType of ``[``: Token * Type * ``]``: Token
     | NamedType of LongIdentifier * typeArguments: Type list
-    
+
 type TypeArgument = 
     | TypeArgumentHole of ``_``: Token
     | TypeArgument of identifier: Identifier
@@ -49,13 +49,13 @@ type TypeDefinition =
     | AbbreviationTypeDefinition of TypeName * ``=``: Token * Type
     | EmptyTypeDefinition of TypeName
 
-type ModuleElement = 
-    | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements> * blockEnd: Token
-    | ModuleLetElement of LetHeader * ``=``: Token * blockBegin: Token * Expression * blockEnd: Token
+type ModuleElement<'E> =
+    | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements<'E>> * blockEnd: Token
+    | ModuleLetElement of LetHeader * ``=``: Token * blockBegin: Token * 'E * blockEnd: Token
     | ModuleTypeDefinition of ``type``: Token * TypeDefinition
 
-and ModuleElements = ModuleElement * list<Token * ModuleElement>
+and ModuleElements<'E> = ModuleElement<'E> * list<Token * ModuleElement<'E>>
 
-type ImplementationFile =
-    | NamedModule of ``module``: Token * LongIdentifier * ModuleElements
-    | AnonymousModule of ModuleElements
+type ImplementationFile<'E> =
+    | NamedModule of ``module``: Token * LongIdentifier * ModuleElements<'E>
+    | AnonymousModule of ModuleElements<'E>

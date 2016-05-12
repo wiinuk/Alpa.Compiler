@@ -249,7 +249,7 @@ module Specials =
 // 0,       (),                         (),                             (:=)
 
 let env =
-    let makeEnv = List.map (fun (n,op) -> [n], op) >> Env.make
+    let makeEnv = List.map (fun (n,op) -> [n], op) >> Env.makeVars
     makeEnv [
         "a", None
         "b", None
@@ -360,6 +360,15 @@ Seq.iter ((<||) testOp) [
 
     error [a; (.==); b; (.+); c; (.==); d]
 ]
+
+let source = "
+x = 0
+x = x
+"
+
+let (Success f) = parse start source
+let (Ok f) = solve Env.empty f
+
 
 let infer = ()
 

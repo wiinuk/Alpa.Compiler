@@ -1,6 +1,6 @@
 ﻿module Alpa.Parser.Helpers
 
-#load "./Alpa.Parser.Operator.fsx"
+#load "./Alpa.Parser.Solve.fsx"
 
 open Alpa
 open Alpa.IO

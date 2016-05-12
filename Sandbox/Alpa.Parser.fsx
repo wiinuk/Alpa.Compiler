@@ -36,12 +36,14 @@ type ParseError =
     
     | RequireAnyExpression
     | RequireExpressionsEnd
-    | RequireOperatorExpression of Expression
-    | RequireNonOperatorExpression of Expression
-    | UnknownOperator of Expression
-    | AmbiguousAssociativeOperator of prevOp: Expression * prevAssoc: Associativity * nowOp: Expression * nowAssoc: Associativity
+    | RequireOperator of Token
+    | RequireNonOperator of Token
+    | AmbiguousAssociativeOperator of prevOp: Token * prevAssoc: Associativity * nowOp: Token * nowAssoc: Associativity
 
-    | LookupError of LongIdentifier
+    | UnsolvedIdentifier of LongIdentifier
+    | UnsolvedType of list<Symbol> * Token
+
+    | DuplicatedArgument of Identifier
 
 type Parser<'a> = Parser<Token, State, ParseError, 'a>
 let (|Parser|) (p: Parser<_>) = p
