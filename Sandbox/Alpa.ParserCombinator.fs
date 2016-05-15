@@ -1,5 +1,6 @@
 ﻿[<AutoOpen>]
 module Alpa.ParserCombinator.Primitives
+open Alpa
 open Alpa.IO
 
 type Parser<'c,'u,'e,'a> = Stream<'c, 'u> -> Reply<'a, 'e>
@@ -205,7 +206,7 @@ let opt (Parser p) xs =
 let createParserForwardedToRef() =
     let r = ref <| fun _ -> failwith "not initialized"
     (fun xs -> !r xs), r
-
+    
 let satisfyE p e =
     let e = Reply((), e)
     fun xs ->
@@ -216,6 +217,11 @@ let satisfyE p e =
                 Reply t
             else e
         else e
+
+let specialE r e = satisfyE (Token.isR r) e
+let operatorE e = satisfyE Token.isOp e
+let identifierE e = satisfyE Token.isId e
+let constantE e = satisfyE Token.isConstant e
 
 let eof xs =
     if xs.Items.size <= xs.Index then Reply(())

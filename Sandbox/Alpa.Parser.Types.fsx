@@ -6,13 +6,14 @@ type Identifier =
     | ParenthesizedIdentifier of ``(``: Token * op: Token * ``)``: Token
 
 type LongIdentifier = LongIdentifier of (Identifier * Token) list * Identifier
+type FixityDeclaration = FixityDeclaration of fixityKeyword: Token * precedenceInteger: Token
 
 type Pattern =
     | WildcardPattern of ``_``: Token
     | ParenthesizedPattern of ``(``: Token * Pattern * ``)``: Token
     | LongIdentifierPattern of LongIdentifier
 
-type LetHeader = LetHeader of Identifier * Pattern list
+type LetHeader = LetHeader of option<FixityDeclaration> * Identifier * Pattern list
 type Constant =
     | UnitConstant of ``(``: Token * ``)``: Token
     | Constant of Token

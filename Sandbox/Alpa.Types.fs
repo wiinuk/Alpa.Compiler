@@ -102,6 +102,67 @@ type Special =
     | For = 'I'
     | Where = 'J'
     | Let = 'K'
+    
+    | Prefix = 'L'
+    | Infixl = 'M'
+    | Infix = 'N'
+    | Infixr = 'O'
+    | Postfix = 'P'
+    
+module Specials =
+    
+    /// '→', '\u2192', "RIGHTWARDS ARROW", UnicodeCategory.MathSymbol
+    let rightwardsArrow = "\u2192"
+
+    /// '←', '\u2190', "LEFTWARDS ARROW", UnicodeCategory.MathSymbol
+    let leftwardsArrow = "\u2190"
+
+    /// '‥', '\u2025', "TWO DOT LEADER", UnicodeCategory.OtherPunctuation
+    let twoDotLeader = "\u2025"
+
+    /// '∷', '\u2237', "PROPORTION", UnicodeCategory.MathSymbol
+    let proportion = "\u2237"
+
+    /// '…', '\u2026', "HORIZONTAL ELLIPSIS", UnicodeCategory.OtherPunctuation
+    let horizontalEllipsis = "\u2026"
+
+    let receivedNames =
+        let xs = System.Collections.Generic.Dictionary()
+
+        xs.Add("_", Special.``I_``)
+        xs.Add("alias", Special.Alias)
+        xs.Add("case", Special.Case)
+        xs.Add("class", Special.Class)
+    //    xs.Add("in", Special.In)
+        xs.Add("type", Special.Type)
+        xs.Add("with", Special.With)
+        xs.Add("import", Special.Import)
+        xs.Add("module", Special.Module)
+        xs.Add("for", Special.For)
+        xs.Add("where", Special.Where)
+        xs.Add("let", Special.Let)
+
+        xs.Add("prefix", Special.Prefix)
+        xs.Add("infixl", Special.Infixl)
+        xs.Add("infix", Special.Infix)
+        xs.Add("infixr", Special.Infixr)
+        xs.Add("postfix", Special.Postfix)
+
+        xs.Add("=", Special.``O=``)
+        xs.Add("->", Special.``O->``)
+        xs.Add(rightwardsArrow, Special.``O->``)
+        xs.Add("<-", Special.``O<-``)
+        xs.Add(leftwardsArrow, Special.``O<-``)
+        xs.Add(".", Special.``O.``)
+        xs.Add(":", Special.``O:``)
+        xs.Add("::", Special.``O::``)
+        xs.Add(proportion, Special.``O::``) 
+        xs.Add("|", Special.``O|``)
+        xs.Add("..", Special.``O..``)
+        xs.Add(twoDotLeader, Special.``O..``) 
+        xs.Add("...", Special.``O...``)
+        xs.Add(horizontalEllipsis, Special.``O...``) 
+        xs
 
 type TokenKind =
     /// delimiter;
@@ -219,6 +280,14 @@ module Token =
         match t.Kind with
         | Op
         | Qop -> true
+        | _ -> false
+         
+    let isConstant t = 
+        match t.Kind with 
+        | I 
+        | F 
+        | C 
+        | S -> true
         | _ -> false
     
 namespace Alpa.IO

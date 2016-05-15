@@ -213,7 +213,7 @@ module Env =
                 add path (VarOp op) env
         ) empty xs
         
-let emptyExpressionsParser =
+let expressionsParser =
     let idToken (Name t | ParenthesizedIdentifier(_,t,_)) = t
     let longIdToken (LongIdentifier(_, n)) = idToken n
 
@@ -239,7 +239,8 @@ let emptyExpressionsParser =
         | ApplicationsExpression(_, e, _, _)
         | SequentialExpression(e, _, _) -> getToken e
 
-        | LetExpression(LetHeader(n, _), _, _, _, _) -> idToken n
+        | LetExpression(LetHeader(Some(FixityDeclaration(t, _)), _, _), _, _, _, _) -> t
+        | LetExpression(LetHeader(None, n, _), _, _, _, _) -> idToken n
 
     let parseNonOp env = function
         | LookupExpression name as e::es ->
@@ -428,39 +429,6 @@ let parseApplicationsExpression env es =
     | Succ _ -> raise <| SolveException RequireExpressionsEnd
     | Fail e -> raise <| SolveException e
 
-let assocR80 = { Associativity = Right; Fixity = Infix; Precedence = 80 }
-let assocL70 = { Associativity = Left; Fixity = Infix; Precedence = 70 }
-let assocL60 = { Associativity = Left; Fixity = Infix; Precedence = 60 }
-let assocL40 = { Associativity = Left; Fixity = Infix; Precedence = 40 }
-let assocL30 = { Associativity = Left; Fixity = Infix; Precedence = 30 }
-let assocL20 = { Associativity = Left; Fixity = Infix; Precedence = 20 }
-let defaultOp1 = function
-    | '*'
-    | '/'
-    | '%' -> assocL70
-    | '+'
-    | '-' -> assocL60
-    | '='
-    | '<'
-    | '>'
-    | '|'
-    | '&' -> assocL40
-    | _ -> assocL60
-
-let defaultOp (s: Symbol) =
-    match s with
-    | "&&" -> assocL30
-    | "||" -> assocL20
-    | _ ->
-        if 2 <= s.Length then
-            match s.[0], s.[1] with
-            | '*', '*' -> assocR80
-            | '/', '=' -> assocL40
-            | _ -> defaultOp1 s.[0]
-
-        elif 1 <= s.Length then defaultOp1 s.[0]
-        else
-            assocL60
             
 // id (a, a) = a // error
 // id (a | a) = a // ok
@@ -555,6 +523,84 @@ let rec solveType env = function
         else
             let targs = List.map (fun t -> let t, _ = solveType env t in t) targs
             NamedType(path, targs), name
+            
+let assocR80 = { Fixity = Infix; Associativity = Right; Precedence = 80 }
+let assocL70 = { Fixity = Infix; Associativity = Left; Precedence = 70 }
+let assocL60 = { Fixity = Infix; Associativity = Left; Precedence = 60 }
+let assocL40 = { Fixity = Infix; Associativity = Left; Precedence = 40 }
+let assocL30 = { Fixity = Infix; Associativity = Left; Precedence = 30 }
+let assocL20 = { Fixity = Infix; Associativity = Left; Precedence = 20 }
+let defaultOp1 = function
+    | '*'
+    | '/'
+    | '%' -> assocL70
+    | '+'
+    | '-' -> assocL60
+    | '='
+    | '<'
+    | '>'
+    | '|'
+    | '&' -> assocL40
+    | _ -> assocL60
+
+let defaultOp (s: Symbol) =
+    match s with
+    | "&&" -> assocL30
+    | "||" -> assocL20
+    | _ ->
+        if 2 <= s.Length then
+            match s.[0], s.[1] with
+            | '*', '*' -> assocR80
+            | '/', '=' -> assocL40
+            | _ -> defaultOp1 s.[0]
+
+        elif 1 <= s.Length then defaultOp1 s.[0]
+        else
+            assocL60
+
+// a + b = ()
+// (+) a b = ()
+// a `div` b = ()
+// ``test`` a b = ()
+
+let symbolInfoOfName = function
+    | ParenthesizedIdentifier(_,t,_) ->
+        t._value2
+        :?> Symbol
+        |> defaultOp
+        |> VarOp
+
+    | Name t ->
+        match t.Kind with
+        | TokenKind.Op
+        | TokenKind.Qop ->
+            t._value2
+            :?> Symbol
+            |> defaultOp
+            |> VarOp
+
+        // or, and
+        | TokenKind.Id -> Var
+        | _ -> Var
+
+
+let symbolInfo fixity name =
+    match fixity with
+    | Some(FixityDeclaration({ Kind = TokenKind.Rid; _value = v }, { Kind = TokenKind.I; _value = i1; _value2 = i2 })) ->
+        let prec =
+            match i2 with
+            | null -> i1
+            | _ -> int <| unbox<bigint> i2
+
+        let c = LanguagePrimitives.EnumOfValue<_,Special>(char<int> v)
+        match c with
+        | Special.Prefix -> VarOp { Fixity = Prefix; Associativity = NonAssoc; Precedence = prec }
+        | Special.Infixl -> VarOp { Fixity = Infix; Associativity = Left; Precedence = prec }
+        | Special.Infix -> VarOp { Fixity = Infix; Associativity = NonAssoc; Precedence = prec }
+        | Special.Infixr -> VarOp { Fixity = Infix; Associativity = Right; Precedence = prec }
+        | Special.Postfix -> VarOp { Fixity = Postfix; Associativity = NonAssoc; Precedence = prec }
+        | _ -> symbolInfoOfName name
+    | _ -> symbolInfoOfName name
 
 let rec solveExpr env = function
 | ConstantExpression _ as e -> e
@@ -563,16 +609,16 @@ let rec solveExpr env = function
 | BlockExpression(openD, e, closeD) -> BlockExpression(openD, solveExpr env e, closeD)
 | SequentialExpression(l, d, r) -> SequentialExpression(solveExpr env l, d, solveExpr env r)
 
-| LetExpression(LetHeader(name, pats), eqD, value, d, body) ->
+| LetExpression(LetHeader(fixity, name, pats), eqD, value, d, body) ->
     let pats, env' = solvePats env pats
     let value = solveExpr env' value
-    let env = Env.add [Ident.symbol name] Var env
+    let env = Env.add [Ident.symbol name] (symbolInfo fixity name) env
     let body = solveExpr env body
-    LetExpression(LetHeader(name, pats), eqD, value, d, body)
+    LetExpression(LetHeader(fixity, name, pats), eqD, value, d, body)
 
 | LookupExpression name -> parseLookupExpression env name
 | ApplicationsExpression(_, l, r, rs) ->
-    let p = { emptyExpressionsParser with Env = env }
+    let p = { expressionsParser with Env = env }
     parseApplicationsExpression p (l::r::rs)
 
 let solveTypeDefinition env = function
@@ -667,29 +713,11 @@ let addScope env path si exports =
     exports, env
 
 
-let solveModuleLetElement env (LetHeader(name, pats), eq, blockBegin, body, blockEnd) =
+let solveModuleLetElement env (LetHeader(fixity, name, pats), eq, blockBegin, body, blockEnd) =
     let pats, env = solvePats env pats
-
     let body = solveExpr env body
-    let si =
-        match name with
-        | ParenthesizedIdentifier(_,t,_) ->
-            let s = t._value2 :?> Symbol
-            VarOp <| defaultOp s
-
-        | Name t ->
-            match t.Kind with
-            | TokenKind.Op
-            | TokenKind.Qop ->
-                let s = t._value2 :?> Symbol
-                VarOp <| defaultOp s
-
-            // or, and
-            | TokenKind.Id -> Var
-            | _ -> Var
-
-    let e = ModuleLetElement(LetHeader(name, pats), eq, blockBegin, body, blockEnd)
-    e, Ident.symbol name, si, []
+    let e = ModuleLetElement(LetHeader(fixity, name, pats), eq, blockBegin, body, blockEnd)
+    e, Ident.symbol name, symbolInfo fixity name, []
 
 let rec solveModuleElement env = function
     | ModuleDefinition(_,n,_,_,None,_) as e -> e, Ident.symbol n, Module, []

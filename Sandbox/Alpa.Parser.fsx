@@ -23,6 +23,7 @@ type ParseError =
     | ErrorNone
 
     | RequireSpecialToken of Special
+    | RequireSpecialTokens of list<Special>
     | RequireIdentiferToken
     | RequireOperatorToken
 
@@ -45,11 +46,13 @@ type ParseError =
 
     | DuplicatedArgument of Identifier
 
+    | RequirePrecedenceInteger
+
 type Parser<'a> = Parser<Token, State, ParseError, 'a>
 let (|Parser|) (p: Parser<_>) = p
 let (|Stream|) (xs: Stream<_,State>) = xs
 
-let rParser s = satisfyE (isR s) (RequireSpecialToken s)
+let rParser s = specialE s (RequireSpecialToken s)
 
 module Specials =
     let ``(`` = rParser Special.``D(``
@@ -155,11 +158,11 @@ let lineSeparator = S.``;`` <|> Layout.lineSeparator
 let block p f = pipe3 S.``{`` p S.``}`` f <|> pipe3 Layout.blockBegin p Layout.blockEnd f
 
 // ++, `div`
-let operator = satisfyE isOp RequireOperatorToken
+let operator = operatorE RequireOperatorToken
 
 /// id, Id, ``i d``, (+), (`div`)
 let identifier =
-    (satisfyE isId RequireIdentiferToken |>> Name) <|>
+    (identifierE RequireIdentiferToken |>> Name) <|>
     (pipe3 S.``(`` operator S.``)`` <| fun a b c -> ParenthesizedIdentifier(a, b, c))
 
 let identifierOrOperator = identifier <|> (operator |>> Name)
@@ -170,7 +173,7 @@ let longIdentifier = pipe2 path0 identifier <| fun xs x -> LongIdentifier(xs, x)
 let longIdentifierOrOperator = pipe2 path0 identifierOrOperator <| fun xs x -> LongIdentifier(xs, x)
 
 let constant =
-    (satisfyE (fun t -> match t.Kind with I | F | C | S -> true | _ -> false) RequireLiteralToken |>> Constant) <|>
+    (constantE RequireLiteralToken |>> Constant) <|>
     pipe2 S.``(`` S.``)`` (fun a b -> UnitConstant(a, b))
 
 let pattern, _pattern = createParserForwardedToRef()
@@ -208,10 +211,44 @@ _pattern :=
 //        null -- null-test pattern
 //        attributes pat -- pattern with attributes
     ]
+    
+let precedence =
+    satisfyE (fun t ->
+        isI t &&
+            match t._value2 with
+            | null -> 0 <= t._value && t._value <= 100
+            | _ ->
+                let v = unbox<bigint> t._value2
+                0I <= v && v <= 100I
+    ) RequirePrecedenceInteger
+
+let fixityDeclaration =
+    let keywords = [
+        Special.Infixl
+        Special.Infixr
+        Special.Infix
+        Special.Prefix
+        Special.Postfix
+    ]
+
+    let isFixityKeyword t =
+        match t.Kind with 
+        | TokenKind.Rid ->
+             let sp = LanguagePrimitives.EnumOfValue<_,Special>(char<int> t._value)
+             match sp with
+             | Special.Infixl
+             | Special.Infixr
+             | Special.Infix
+             | Special.Prefix
+             | Special.Postfix -> true
+             | _ -> false
+        | _ -> false
+
+    pipe2 (satisfyE isFixityKeyword (RequireSpecialTokens keywords)) precedence <| fun fixityK prec -> FixityDeclaration(fixityK, prec)
 
 let letHeader =
-    let opHead = pipe4 atomicPattern operator atomicPattern (many atomicPattern) <| fun p1 n p2 ps -> LetHeader(Name n, p1::p2::ps)
-    let idHead = pipe2 identifier (many atomicPattern) <| fun n ps -> LetHeader(n, ps)
+    let opHead = pipe5 (opt fixityDeclaration, atomicPattern, operator, atomicPattern, many atomicPattern, fun f p1 n p2 ps -> LetHeader(f, Name n, p1::p2::ps))
+    let idHead = pipe3 (opt fixityDeclaration) identifier (many atomicPattern) <| fun f n ps -> LetHeader(f, n, ps)
     opHead <|> idHead
 
 let expression, _expression = createParserForwardedToRef()

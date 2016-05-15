@@ -97,56 +97,6 @@ let (|OpU|) x =
 
 let (|HighSurrogate|) c = Char.IsHighSurrogate c
 let (|LowSurrogate|) c = Char.IsLowSurrogate c
-    
-[<AutoOpen>]
-module Specials =
-    
-    /// '→', '\u2192', "RIGHTWARDS ARROW", UnicodeCategory.MathSymbol
-    let rightwardsArrow = "\u2192"
-
-    /// '←', '\u2190', "LEFTWARDS ARROW", UnicodeCategory.MathSymbol
-    let leftwardsArrow = "\u2190"
-
-    /// '‥', '\u2025', "TWO DOT LEADER", UnicodeCategory.OtherPunctuation
-    let twoDotLeader = "\u2025"
-
-    /// '∷', '\u2237', "PROPORTION", UnicodeCategory.MathSymbol
-    let proportion = "\u2237"
-
-    /// '…', '\u2026', "HORIZONTAL ELLIPSIS", UnicodeCategory.OtherPunctuation
-    let horizontalEllipsis = "\u2026"
-
-let receivedNames =
-    let xs = System.Collections.Generic.Dictionary()
-
-    xs.Add("_", Special.``I_``)
-    xs.Add("alias", Special.Alias)
-    xs.Add("case", Special.Case)
-    xs.Add("class", Special.Class)
-//    xs.Add("in", Special.In)
-    xs.Add("type", Special.Type)
-    xs.Add("with", Special.With)
-    xs.Add("import", Special.Import)
-    xs.Add("module", Special.Module)
-    xs.Add("for", Special.For)
-    xs.Add("where", Special.Where)
-    xs.Add("let", Special.Let)
-
-    xs.Add("=", Special.``O=``)
-    xs.Add("->", Special.``O->``)
-    xs.Add(rightwardsArrow, Special.``O->``)
-    xs.Add("<-", Special.``O<-``)
-    xs.Add(leftwardsArrow, Special.``O<-``)
-    xs.Add(".", Special.``O.``)
-    xs.Add(":", Special.``O:``)
-    xs.Add("::", Special.``O::``)
-    xs.Add(proportion, Special.``O::``) 
-    xs.Add("|", Special.``O|``)
-    xs.Add("..", Special.``O..``)
-    xs.Add(twoDotLeader, Special.``O..``) 
-    xs.Add("...", Special.``O...``)
-    xs.Add(horizontalEllipsis, Special.``O...``) 
-    xs
 
 let digits1 isDigit charToInteger carry xs =
     let c = satisfy isDigit xs
@@ -303,7 +253,7 @@ let nameOrReceived (head, tail, nameTag, receivedTag) (result: byref<ValueTuple3
         skipManySatisfyU tail xs
         let s = String(xs.buffer, int index, int (xs.index - index))
         let mutable r = Unchecked.defaultof<_>
-        if receivedNames.TryGetValue(s, &r) then
+        if Specials.receivedNames.TryGetValue(s, &r) then
             result.Item1 <- receivedTag
             result.Item2 <- int (LanguagePrimitives.EnumToValue r : char)
             result.Item3 <- null
