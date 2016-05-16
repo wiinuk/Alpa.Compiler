@@ -3,11 +3,14 @@
 open Alpa
 open Alpa.Token
 open Alpa.Lexer
+open Alpa.Specials
 open Alpa.IO
 open Alpa.IO.CharStream
+open FsCheck.Xunit
+open System
 open Xunit
 open Xunit.Sdk
-open FsCheck.Xunit
+
 
 let tokenInfo (source: string) t =
     let i1, i2 = range t
@@ -45,7 +48,6 @@ let lex s = CharStream.run Lexer.start s |> Option.map (Buffer.toSeq >> Seq.map 
 //        | Some xs -> printfn "failure %A => %A" x xs
 //        | _ -> ()
 
-open System
 let allChars = seq {for c in 0x000000..0x10ffff do if not (0x00d800 <= c && c <= 0x00dfff) then yield Char.ConvertFromUtf32 c}
 //for c in allChars do
 //    if Char.IsControl(c, 0) then

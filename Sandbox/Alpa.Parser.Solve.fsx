@@ -1,24 +1,24 @@
-﻿module internal Alpa.Parser.Operator
+﻿module Alpa.Parser.Operator
 #load "./Alpa.Parser.fsx"
 
 open Alpa
 
 type Result<'T,'E> = Ok of 'T | Error of 'E
 
-type PathRev = list<Symbol>
 type Operator = {
-    Fixity: Fixity
-    Associativity: Associativity
-    Precedence: int
-    //FullPath: PathRev
+    fixity: Fixity
+    associativity: Associativity
+    precedence: int
+    //fullPath: PathRev
 }
 type SymbolKind = Module | Var | Type | Pattern
+
 type SymbolInfo = 
     | Module
     | Var
     | VarOp of Operator
-    | Type of list<PathRev * SymbolInfo>
-    | TypeOp of Operator * list<PathRev * SymbolInfo>
+    | Type of TypeRef * list<PathRev * SymbolInfo>
+    | TypeOp of TypeRef * Operator * list<PathRev * SymbolInfo>
     | Pattern
 
 type Node<'K,'V when 'K : comparison> =
@@ -31,28 +31,29 @@ type OperatorMap = Assoc<PathRev * SymbolKind, Operator>
 type SymbolTree = Map<PathRev * SymbolKind, SymbolInfo>
 
 type OperatorTable = {
-    PrecedenceKey: int
-    AssocLOps: OperatorMap
-    AssocNOps: OperatorMap
-    AssocROps: OperatorMap
+    precedenceKey: int
+    assocLOps: OperatorMap
+    assocNOps: OperatorMap
+    assocROps: OperatorMap
 }
 type Reply<'a,'c,'e> = Succ of 'a * list<'c> | Fail of 'e
 type SolveEnv = {
-    InfixOpTables: list<OperatorTable>
-    PostfixOps: OperatorMap
-    PrefixOps: OperatorMap
-    Symbols: SymbolTree
+    infixOpTables: list<OperatorTable>
+    postfixOps: OperatorMap
+    prefixOps: OperatorMap
+    symbols: SymbolTree
+    current: PathRev
 }
 type ExprParser<'a> = {
-    OpParser: OperatorMap -> list<'a> -> Reply<'a * Operator, 'a, ParseError>
-    TermParser: SolveEnv -> list<'a> -> Reply<'a, 'a, ParseError>
-    Prefix: 'a -> 'a -> 'a
-    Postfix: 'a -> 'a -> 'a
-    Infix: Associativity -> 'a -> 'a -> 'a -> 'a
-    FunctionApply: 'a -> 'a -> list<'a> -> 'a
-    GetToken: 'a -> Token
+    operatorParser: OperatorMap -> list<'a> -> Reply<'a * Operator, 'a, ParseError>
+    termParser: SolveEnv -> list<'a> -> Reply<'a, 'a, ParseError>
+    prefix: 'a -> 'a -> 'a
+    postfix: 'a -> 'a -> 'a
+    infix: Associativity -> 'a -> 'a -> 'a -> 'a
+    functionApply: 'a -> 'a -> list<'a> -> 'a
+    getToken: 'a -> Token
 
-    Env: SolveEnv
+    env: SolveEnv
 }
 module Assoc =
     let empty = []
@@ -75,27 +76,32 @@ module Assoc =
 
 module OpTable =
     let empty = {
-        PrecedenceKey = 0
-        AssocLOps = Assoc.empty
-        AssocNOps = Assoc.empty
-        AssocROps = Assoc.empty
+        precedenceKey = 0
+        assocLOps = Assoc.empty
+        assocNOps = Assoc.empty
+        assocROps = Assoc.empty
     }
-    let add path x xs =
-        match x.Associativity with
-        | NonAssoc -> { xs with AssocNOps = Assoc.add path x xs.AssocNOps }
-        | Left -> { xs with AssocLOps = Assoc.add path x xs.AssocLOps }
-        | Right -> { xs with AssocROps = Assoc.add  path x xs.AssocROps }
+    let add path ({ associativity = assoc } as x) ({ assocNOps = ns; assocLOps = ls; assocROps = rs } as xs) =
+        match assoc with
+        | NonAssoc -> { xs with assocNOps = Assoc.add path x ns }
+        | Left -> { xs with assocLOps = Assoc.add path x ls }
+        | Right -> { xs with assocROps = Assoc.add  path x rs }
 
-    let singleton path x =
-        match x.Associativity with
-        | NonAssoc -> { empty with PrecedenceKey = x.Precedence; AssocNOps = Assoc.make1 path x }
-        | Left -> { empty with PrecedenceKey = x.Precedence; AssocLOps = Assoc.make1 path x }
-        | Right -> { empty with PrecedenceKey = x.Precedence; AssocROps = Assoc.make1 path x }
+    let singleton path ({ associativity = assoc; precedence = prec } as x) =
+        match assoc with
+        | NonAssoc -> { empty with precedenceKey = prec; assocNOps = Assoc.make1 path x }
+        | Left -> { empty with precedenceKey = prec; assocLOps = Assoc.make1 path x }
+        | Right -> { empty with precedenceKey = prec; assocROps = Assoc.make1 path x }
     
 module Ident =
     let symbol = function
         | Name r
-        | ParenthesizedIdentifier(_,r,_) -> r._value2 :?> Symbol
+        | ParenthesizedIdentifier(_,r,_) -> 
+            let { _value2 = v } = r 
+            v :?> Symbol
+
+    let startToken (Name t | ParenthesizedIdentifier(t,_,_)) = t
+    let endToken (Name t | ParenthesizedIdentifier(_,_,t)) = t
 
 module LongId =
     let rec appendRev ls rs =
@@ -103,7 +109,7 @@ module LongId =
         | [] -> rs
         | (l,_)::ls -> appendRev ls (Ident.symbol l::rs)
 
-    let path (LongIdentifier(ls, r)) =
+    let pathRev (LongIdentifier(ls, r)) =
         match ls with
         | [] -> [Ident.symbol r]
         | [l,_] -> [Ident.symbol r; Ident.symbol l]
@@ -114,6 +120,9 @@ module LongId =
         | Name n
         | ParenthesizedIdentifier(_,n,_) -> Token.kind n
 
+    let startToken (LongIdentifier([], e) | LongIdentifier((e,_)::_, _)) = Ident.startToken e
+    let endToken (LongIdentifier(_, e)) = Ident.endToken e
+
 module List =
     /// appendRev [1;2] [3;4] = [2;1;3;4]
     let rec appendRev ls rs =
@@ -122,18 +131,18 @@ module List =
         | l::ls -> appendRev ls (l::rs)
 
 module Env =
-    let contains path env = Map.containsKey path env.Symbols
-    let tryFind path env = Map.tryFind path env.Symbols
-    let find path env = Map.find path env.Symbols
-    let tryFindVar path env = tryFind (LongId.path path, SymbolKind.Var) env
+    let contains path { symbols = syms } = Map.containsKey path syms
+    let tryFind path { symbols = syms } = Map.tryFind path syms
+    let find path env = Map.find path env.symbols
+    let tryFindVar path env = tryFind (LongId.pathRev path, SymbolKind.Var) env
         
     let containsVarOp path env =
         match tryFindVar path env with
         | Some (VarOp _ | TypeOp _) -> true
         | _ -> false
 
-    let containsVar path env = contains (LongId.path path, SymbolKind.Var) env
-    let containsPat path env = contains (LongId.path path, SymbolKind.Pattern) env
+    let containsVar path env = contains (LongId.pathRev path, SymbolKind.Var) env
+    let containsPat path env = contains (LongId.pathRev path, SymbolKind.Pattern) env
 
     let rec addTree l rs v tree =
         match Map.tryFind l tree, rs with
@@ -141,16 +150,21 @@ module Env =
         | _, r::rs -> Map.add l (Node(addTree r rs v Map.empty)) tree
         | _, [] -> Map.add l (Leaf v) tree
 
-    let rec addOpTables path x = function
+    let rec addOpTables path ({ precedence = precedence } as x) = function
         | [] -> [OpTable.singleton path x]
-        | { PrecedenceKey = k } as kxs::table ->
-            let key = x.Precedence
-
-            if key < k then OpTable.singleton path x::kxs::table
-            elif key = k then OpTable.add path x kxs::table
+        | { precedenceKey = k } as kxs::table ->
+            if precedence < k then OpTable.singleton path x::kxs::table
+            elif precedence = k then OpTable.add path x kxs::table
             else kxs::addOpTables path x table
 
     let add path symbolInfo env =
+        let {
+                symbols = symbols
+                infixOpTables = infixOps
+                postfixOps = postfixOps
+                prefixOps = prefixOps
+            } = env
+
         let symbolKind = function
             | Type _
             | TypeOp _ -> SymbolKind.Type
@@ -160,33 +174,34 @@ module Env =
             | Module -> SymbolKind.Module
 
         let path = path, symbolKind symbolInfo
-        let symbols = Map.add path symbolInfo env.Symbols
+        let symbols = Map.add path symbolInfo symbols
 
         match symbolInfo with
         | VarOp op
-        | TypeOp(op, _) ->
+        | TypeOp(_, op, _) ->
             match op with
-            | { Fixity = Infix } ->
+            | { fixity = Infix } ->
                 { env with 
-                    Symbols = symbols
-                    InfixOpTables = addOpTables path op env.InfixOpTables }
+                    symbols = symbols
+                    infixOpTables = addOpTables path op infixOps }
 
-            | { Fixity = Postfix } ->
+            | { fixity = Postfix } ->
                 { env with
-                    Symbols = symbols
-                    PostfixOps = Assoc.add path op env.PostfixOps }
+                    symbols = symbols
+                    postfixOps = Assoc.add path op postfixOps }
 
-            | { Fixity = Prefix } ->
+            | { fixity = Prefix } ->
                 { env with
-                    Symbols = symbols
-                    PrefixOps = Assoc.add path op env.PrefixOps }
+                    symbols = symbols
+                    prefixOps = Assoc.add path op prefixOps }
         
         | Type _
         | Var
         | Pattern
-        | Module -> env
+        | Module -> { env with symbols = symbols }
             
-    //let fullPath (LongIdentifier(ls,r)) env = Ident.symbol r::LongId.appendRev ls env.Current
+    let fullPath name { current = current } = name::current
+    let enter name ({ current = current } as env) = { env with current = name::current }
 
     let addModule path env = add path Module env
 
@@ -198,21 +213,21 @@ module Env =
 //        | _::current -> { env with Current = current }
 
     let empty = {
-        Symbols = Map.empty
-        InfixOpTables = []
-        PostfixOps = Assoc.empty
-        PrefixOps = Assoc.empty
-//            Current = []
+        symbols = Map.empty
+        infixOpTables = []
+        postfixOps = Assoc.empty
+        prefixOps = Assoc.empty
+        current = []
     }
     let makeVars xs =
         Seq.fold (fun env (path, op) ->
             match op with
             | None -> add path Var env
             | Some(f, a, p) ->
-                let op = { Fixity = f; Associativity = a; Precedence = p }
+                let op = { fixity = f; associativity = a; precedence = p }
                 add path (VarOp op) env
         ) empty xs
-        
+
 let expressionsParser =
     let idToken (Name t | ParenthesizedIdentifier(_,t,_)) = t
     let longIdToken (LongIdentifier(_, n)) = idToken n
@@ -223,9 +238,10 @@ let expressionsParser =
             | TokenKind.Id
             | TokenKind.Op
             | TokenKind.Qop ->
-                match Assoc.tryFind (LongId.path name, SymbolKind.Var) ops with
+                let path = LongId.pathRev name
+                match Assoc.tryFind (path, SymbolKind.Var) ops with
                 | Some op -> Succ((e, op), es) // Some(op, e, fp)
-                | _ -> Fail(UnsolvedIdentifier name)
+                | _ -> Fail(UnsolvedIdentifier(path, LongId.startToken name, LongId.endToken name))
 
             | _ -> Fail(RequireOperator(longIdToken name))
         | _ -> Fail RequireAnyExpression
@@ -239,8 +255,8 @@ let expressionsParser =
         | ApplicationsExpression(_, e, _, _)
         | SequentialExpression(e, _, _) -> getToken e
 
-        | LetExpression(LetHeader(Some(FixityDeclaration(t, _)), _, _), _, _, _, _) -> t
-        | LetExpression(LetHeader(None, n, _), _, _, _, _) -> idToken n
+        | LetExpression(header = LetHeader(fixity = Some(FixityDeclaration(t, _)))) -> t
+        | LetExpression(header = LetHeader(None, n, _)) -> idToken n
 
     let parseNonOp env = function
         | LookupExpression name as e::es ->
@@ -267,23 +283,23 @@ let expressionsParser =
         ApplicationsExpression(assoc, op, l, [r])
 
     {
-        OpParser = parseOp
-        TermParser = parseNonOp
-        Prefix = prefix
-        Postfix = postfix
-        Infix = infix
-        FunctionApply = funapp
-        GetToken = getToken
-        Env = Env.empty
+        operatorParser = parseOp
+        termParser = parseNonOp
+        prefix = prefix
+        postfix = postfix
+        infix = infix
+        functionApply = funapp
+        getToken = getToken
+        env = Env.empty
     }
 
-let parseOp env ops es = env.OpParser ops es
-let parseNonOp env es = env.TermParser env.Env es
-let postfix env e op = env.Postfix e op
-let prefix env op e = env.Prefix e op
-let funapp env l r rs = env.FunctionApply l r rs
-let infix env assoc l op r = env.Infix assoc l op r
-let getToken env x = env.GetToken x
+let parseOp { operatorParser = operatorParser } ops es = operatorParser ops es
+let parseNonOp { termParser = termParser; env = env } es = termParser env es
+let postfix { postfix = postfix } e op = postfix e op
+let prefix { prefix = prefix } op e = prefix op e
+let funapp { functionApply = functionApply } l r rs = functionApply l r rs
+let infix { infix = infix } assoc l op r = infix assoc l op r
+let getToken { getToken = getToken } x = getToken x
 
 let parseOps env ops es =
     let rec aux ns es =
@@ -292,20 +308,20 @@ let parseOps env ops es =
         | Succ((op, _), es) -> aux (op::ns) es
     aux [] es
 
-let parsePrefixPostOps env es =
-    let prefixOps, es = parseOps env env.Env.PrefixOps es
-    match parseNonOp env es with
+let parsePrefixPostOps ({ env = { prefixOps = prefixOps; postfixOps = postfixOps } } as parser) es =
+    let prefixOps, es = parseOps parser prefixOps es
+    match parseNonOp parser es with
     | Fail _ as r -> r
     | Succ(e, es) ->
-        let postfixOps, es = parseOps env env.Env.PostfixOps es
+        let postfixOps, es = parseOps parser postfixOps es
         match prefixOps, postfixOps with
         | [], [] -> Succ(e, es)
         | _ ->
             // postfix apply
-            let e = List.foldBack (fun op e -> postfix env e op) postfixOps e
+            let e = List.foldBack (fun op e -> postfix parser e op) postfixOps e
 
             // prefix apply
-            let e = List.fold (fun e op -> prefix env op e) e prefixOps
+            let e = List.fold (fun e op -> prefix parser op e) e prefixOps
             Succ(e, es)
                 
 let parseIdApplications env es =
@@ -345,8 +361,8 @@ and parseAssocR env infixROps infixOpTable l es =
             // infix right apply
             Succ(infix env Right l opE r, es)
             
-and parseAssocN env { AssocLOps = infixLOps; AssocNOps = infixNOps; AssocROps = infixROps } infixOpTable l es =
-    let assoc { Associativity = a } = a
+and parseAssocN env { assocLOps = infixLOps; assocNOps = infixNOps; assocROps = infixROps } infixOpTable l es =
+    let assoc { associativity = a } = a
 
     match parseOp env infixNOps es with
     | Fail e -> Fail e
@@ -382,7 +398,7 @@ and parseAssocL env infixLOps infixOpTable l es =
             | r -> r
 
 and parseSamePrecedenceInfixOps env infixOps infixOpTable es =
-    let { AssocLOps = infixLOps; AssocROps = infixROps } = infixOps
+    let { assocLOps = infixLOps; assocROps = infixROps } = infixOps
 
     match parseInfixOpTable env infixOpTable es with
     | Fail e -> Fail e
@@ -399,6 +415,14 @@ and parseSamePrecedenceInfixOps env infixOps infixOpTable es =
                 
 exception SolveException of ParseError
 
+let makeSolveException path =
+    UnsolvedIdentifier(
+        LongId.pathRev path, 
+        LongId.startToken path,
+        LongId.endToken path
+    )
+    |> SolveException
+
 let parseLookupExpression env (LongIdentifier(ls, r)) =
     let rec takeMember left leftDelimiter names rightName =
         match names with
@@ -411,7 +435,7 @@ let parseLookupExpression env (LongIdentifier(ls, r)) =
             let path = LongIdentifier(List.rev readedNames, rightName)
             match Env.tryFindVar path env with
             | Some Var -> LookupExpression path
-            | _ -> raise <| SolveException(UnsolvedIdentifier path)
+            | _ -> raise <| makeSolveException path
 
         | (name, delimiter) as n::names ->
             let readedNames' = n::readedNames
@@ -423,8 +447,8 @@ let parseLookupExpression env (LongIdentifier(ls, r)) =
 
     takeLookup [] ls r
 
-let parseApplicationsExpression env es =
-    match parseInfixOpTable env env.Env.InfixOpTables es with
+let parseApplicationsExpression ({ env = { infixOpTables = infixOpTables } } as parser) es =
+    match parseInfixOpTable parser infixOpTables es with
     | Succ(e, []) -> e
     | Succ _ -> raise <| SolveException RequireExpressionsEnd
     | Fail e -> raise <| SolveException e
@@ -452,7 +476,7 @@ let rec solvePat env = function
             // var
             match path with
             | LongIdentifier([], local) -> p, [local]
-            | _ -> raise <| SolveException(UnsolvedIdentifier path)
+            | _ -> raise <| makeSolveException path
 
 let addLocals locals env = List.fold (fun env local -> Env.add [Ident.symbol local] Var env) env locals
 
@@ -471,32 +495,36 @@ let solvePats env pats =
     let locals, pats = List.fold (foldPats env) ([], []) pats
     List.rev pats, addLocals locals env
             
-let emptyExportsType = Type []
-let notContainsIfRaise env name token =
+let notContainsIfRaise env name type' =
     if not <| Env.contains (name, SymbolKind.Type) env then
-        raise <| SolveException(UnsolvedType(name, token))
+        raise <| SolveException(UnsolvedType(name, type'))
 
 let rec solveType env = function
-    | FunctionType(l,arrow,r) ->
+    | FunctionType(l,arrow,r) as t ->
         let name = ["->"]
-
-        notContainsIfRaise env name arrow
+        
+        notContainsIfRaise env name t
 
         let l, _ = solveType env l
         let r, _ = solveType env r
         FunctionType(l, arrow, r), name
 
+    | UnitType _ as t ->
+        let name = ["()"]
+        notContainsIfRaise env name t
+        t, name
+
     | ParenthesizedType(beginP, t, endP) ->
         let t, path = solveType env t
         ParenthesizedType(beginP, t, endP), path
 
-    | TupleType(t1, d, t2, tds) ->
+    | TupleType(t1, d, t2, tds) as t ->
         let name =
             match tds with
             | [] -> [","]
             | _ -> [List.fold (fun s _ -> s + ",") "," tds]
             
-        notContainsIfRaise env name d
+        notContainsIfRaise env name t
 
         let t1, _ = solveType env t1
         let t2, _ = solveType env t2
@@ -507,29 +535,29 @@ let rec solveType env = function
 
         TupleType(t1, d, t2, tds), name
 
-    | ListType(openP, t, closeP) ->
+    | ListType(openP, t, closeP) as t' ->
         let name = ["[]"]
         
-        notContainsIfRaise env name openP
+        notContainsIfRaise env name t'
         
         let t, _ = solveType env t
         ListType(openP, t, closeP), name
 
-    | NamedType(path, targs) ->
-        let name = LongId.path path
+    | NamedType(path, targs) as t ->
+        let name = LongId.pathRev path
 
         if not <| Env.contains (name, SymbolKind.Type) env then
-            raise <| SolveException(UnsolvedIdentifier path)
+            raise <| SolveException(UnsolvedType(name, t))
         else
             let targs = List.map (fun t -> let t, _ = solveType env t in t) targs
             NamedType(path, targs), name
             
-let assocR80 = { Fixity = Infix; Associativity = Right; Precedence = 80 }
-let assocL70 = { Fixity = Infix; Associativity = Left; Precedence = 70 }
-let assocL60 = { Fixity = Infix; Associativity = Left; Precedence = 60 }
-let assocL40 = { Fixity = Infix; Associativity = Left; Precedence = 40 }
-let assocL30 = { Fixity = Infix; Associativity = Left; Precedence = 30 }
-let assocL20 = { Fixity = Infix; Associativity = Left; Precedence = 20 }
+let assocR80 = { fixity = Infix; associativity = Right; precedence = 80 }
+let assocL70 = { fixity = Infix; associativity = Left; precedence = 70 }
+let assocL60 = { fixity = Infix; associativity = Left; precedence = 60 }
+let assocL40 = { fixity = Infix; associativity = Left; precedence = 40 }
+let assocL30 = { fixity = Infix; associativity = Left; precedence = 30 }
+let assocL20 = { fixity = Infix; associativity = Left; precedence = 20 }
 let defaultOp1 = function
     | '*'
     | '/'
@@ -548,7 +576,7 @@ let defaultOp (s: Symbol) =
     | "&&" -> assocL30
     | "||" -> assocL20
     | _ ->
-        if 2 <= s.Length then
+        if 2 <= String.length s then
             match s.[0], s.[1] with
             | '*', '*' -> assocR80
             | '/', '=' -> assocL40
@@ -564,17 +592,17 @@ let defaultOp (s: Symbol) =
 // ``test`` a b = ()
 
 let symbolInfoOfName = function
-    | ParenthesizedIdentifier(_,t,_) ->
-        t._value2
+    | ParenthesizedIdentifier(_,{ _value2 = v2 },_) ->
+        v2
         :?> Symbol
         |> defaultOp
         |> VarOp
 
-    | Name t ->
-        match t.Kind with
+    | Name { Kind = kind; _value2 = v2 } ->
+        match kind with
         | TokenKind.Op
         | TokenKind.Qop ->
-            t._value2
+            v2
             :?> Symbol
             |> defaultOp
             |> VarOp
@@ -583,6 +611,13 @@ let symbolInfoOfName = function
         | TokenKind.Id -> Var
         | _ -> Var
 
+module Types =
+    let unitType =
+        UnitType(
+            Tokens.makeS TokenKind.D Special.``D(``,
+            Tokens.makeS TokenKind.D Special.``D)``
+        )
+    let characterType = []
 
 let symbolInfo fixity name =
     match fixity with
@@ -594,36 +629,109 @@ let symbolInfo fixity name =
 
         let c = LanguagePrimitives.EnumOfValue<_,Special>(char<int> v)
         match c with
-        | Special.Prefix -> VarOp { Fixity = Prefix; Associativity = NonAssoc; Precedence = prec }
-        | Special.Infixl -> VarOp { Fixity = Infix; Associativity = Left; Precedence = prec }
-        | Special.Infix -> VarOp { Fixity = Infix; Associativity = NonAssoc; Precedence = prec }
-        | Special.Infixr -> VarOp { Fixity = Infix; Associativity = Right; Precedence = prec }
-        | Special.Postfix -> VarOp { Fixity = Postfix; Associativity = NonAssoc; Precedence = prec }
+        | Special.Prefix -> VarOp { fixity = Prefix; associativity = NonAssoc; precedence = prec }
+        | Special.Infixl -> VarOp { fixity = Infix; associativity = Left; precedence = prec }
+        | Special.Infix -> VarOp { fixity = Infix; associativity = NonAssoc; precedence = prec }
+        | Special.Infixr -> VarOp { fixity = Infix; associativity = Right; precedence = prec }
+        | Special.Postfix -> VarOp { fixity = Postfix; associativity = NonAssoc; precedence = prec }
         | _ -> symbolInfoOfName name
     | _ -> symbolInfoOfName name
 
+let rec occur var = function
+    | TypeRef(_, ts) -> List.exists (occur var) ts
+    | TypeVar v when obj.ReferenceEquals(var, v) -> true
+    | TypeVar { contents = None } -> false
+    | TypeVar { contents = Some v } -> occur var v
+
+let rec unify l r =
+    match l, r with
+    | TypeRef(l, ls), TypeRef(r, rs) when l = r && List.length ls = List.length rs ->
+        List.iter2 unify ls rs
+
+    | TypeVar l, TypeVar r when obj.ReferenceEquals(l, r) -> ()
+    | TypeVar { contents = Some l }, _ -> unify l r
+    | _, TypeVar { contents = Some r } -> unify l r
+    | TypeVar({ contents = None } as lv), _ ->
+        if occur lv r then raise <| SolveException(UnifyFailure(l, r))
+        lv := Some r
+
+    | _, TypeVar({ contents = None} as rv) ->
+        if occur rv l then raise <| SolveException(UnifyFailure(l, r))
+        rv := Some l
+
+    | _ -> raise <| SolveException(UnifyFailure(l, r))
+        
+
+let solveNamedType env name startToken endToken =
+    match Env.tryFind (name, SymbolKind.Type) env with
+    | Some(SymbolInfo.Type(tr, _))
+    | Some(SymbolInfo.TypeOp(tr, _, _)) -> tr
+    | _ -> raise <| SolveException(UnsolvedTypeOfSource(name, startToken, endToken))
+
+let solveConstant env = function
+        
+    // TODO: IsUnit a => a
+    | UnitConstant(startP, endP) ->
+        let name = ["()"]
+        let tr = solveNamedType env name startP endP
+        if not <| Env.contains (name, SymbolKind.Var) env then
+            raise <| SolveException(UnsolvedIdentifier(name, startP, endP))
+        else
+            tr
+
+    | Constant({ Kind = k } as t) ->
+        match k with
+
+        // TODO: IsCharacterLiteral a => a
+        | TokenKind.C -> solveNamedType env ["Character"] t t
+
+        // TODO: IsFloatLiteral a => a
+        | TokenKind.F -> solveNamedType env ["Float"] t t
+
+        // TODO: IsIntegerLiteral a => a
+        | TokenKind.I -> solveNamedType env ["Int"] t t
+        
+        // TODO: IsStringLiteral a => a
+        | TokenKind.S -> solveNamedType env ["String"] t t
+
+        // unreachable
+        | _ -> solveNamedType env ["()"] t t
+
 let rec solveExpr env = function
-| ConstantExpression _ as e -> e
+    | ConstantExpression c as e -> e, solveConstant env c
+    | DotLookupExpression(e, dotD, name) ->
+        // TODO: DotLookupExpression(solveExpr env e, dotD, name)
+        failwith "not implemented"
 
-| DotLookupExpression(e, dotD, name) -> DotLookupExpression(solveExpr env e, dotD, name)
-| BlockExpression(openD, e, closeD) -> BlockExpression(openD, solveExpr env e, closeD)
-| SequentialExpression(l, d, r) -> SequentialExpression(solveExpr env l, d, solveExpr env r)
+    | BlockExpression(openD, e, closeD) ->
+        let e, et = solveExpr env e
+        BlockExpression(openD, e, closeD), et
 
-| LetExpression(LetHeader(fixity, name, pats), eqD, value, d, body) ->
-    let pats, env' = solvePats env pats
-    let value = solveExpr env' value
-    let env = Env.add [Ident.symbol name] (symbolInfo fixity name) env
-    let body = solveExpr env body
-    LetExpression(LetHeader(fixity, name, pats), eqD, value, d, body)
+    | SequentialExpression(l, d, r) ->
+        let l, lt = solveExpr env l
+        let r, rt = solveExpr env r
+        
+        // TODO: startToken l 
+        let tr = solveNamedType env ["()"] d d
+        unify lt tr
+        SequentialExpression(l, d, r), rt
 
-| LookupExpression name -> parseLookupExpression env name
-| ApplicationsExpression(_, l, r, rs) ->
-    let p = { expressionsParser with Env = env }
-    parseApplicationsExpression p (l::r::rs)
+    | LetExpression(LetHeader(fixity, name, pats), type', eqD, value, d, body) ->
+        let pats, env' = solvePats env pats
+        let value = solveExpr env' value
+        let env = Env.add [Ident.symbol name] (symbolInfo fixity name) env
+        let body = solveExpr env body
+        LetExpression(LetHeader(fixity, name, pats), type', eqD, value, d, body)
+
+    | LookupExpression name -> parseLookupExpression env name
+    | ApplicationsExpression(_, l, r, rs) ->
+        let p = { expressionsParser with env = env }
+        parseApplicationsExpression p (l::r::rs)
 
 let solveTypeDefinition env = function
-    | EmptyTypeDefinition(TypeName(name, args)) as d ->
-        d, Ident.symbol name, emptyExportsType, []
+    | EmptyTypeDefinition(TypeName(name, _)) as d ->
+        let name = Ident.symbol name
+        d, name, Type(Env.fullPath name env, []), []
 
     // type Bool = true | false
     // // type Bool, Bool.true, Bool.false, true, false
@@ -634,7 +742,10 @@ let solveTypeDefinition env = function
         let env =
             List.fold (fun env targ ->
                 match targ with
-                | TypeArgument a -> Env.add [Ident.symbol a] emptyExportsType env
+                | TypeArgument a ->
+                    let path = [Ident.symbol a]
+                    Env.add path (Type(path, [])) env
+
                 | TypeArgumentHole _ -> env
             ) env args
         
@@ -642,26 +753,26 @@ let solveTypeDefinition env = function
 
         let exports =
             match Env.find (path, SymbolKind.Type) env with
-            | Type exports
-            | TypeOp(_, exports) -> exports
+            | Type(_, exports)
+            | TypeOp(_, _, exports) -> exports
             | _ -> []
 
         let d = AbbreviationTypeDefinition(typeName, eqD, typeValue)
-        d, Ident.symbol name, Type exports, exports
+        let name = Ident.symbol name
+        d, name, Type(Env.fullPath name env, exports), exports
 
-module M =
-    
-    module X =
-        let mx0 = 0
-
-        // mx0
-        let mx1 = 1
-
-    // X.mx0; X.mx1
-    let m0 = 0
-
-    // X.mx0; X.mx1
-    let m1 = 1
+//module M =
+//    module X =
+//        mx0 = 0
+//
+//        // mx0
+//        mx1 = 1
+//
+//    // X.mx0; X.mx1
+//    m0 = 0
+//
+//    // X.mx0; X.mx1
+//    m1 = 1
 
 // function
 //    | AbbreviationTypeDefinition(TypeName(n, targs),eq,ty) ->
@@ -705,37 +816,44 @@ type SymbolRose = SymbolRose of SymbolInfo * list<Symbol * SymbolRose>
 type Exports = Symbol * SymbolRose
 
 let addExports path si exports =
-    (path, si)::List.map (fun (pathRev, si) -> List.appendRev path pathRev, si) exports
+    if List.exists (fun (pathRev, si) -> pathRev = path) exports then exports
+    else
+        (path, si)::List.map (fun (pathRev, si) -> List.appendRev path pathRev, si) exports
 
 let addScope env path si exports =
     let exports = addExports path si exports
     let env = List.fold (fun env (pathRev, si) -> Env.add pathRev si env) env exports
     exports, env
 
-
-let solveModuleLetElement env (LetHeader(fixity, name, pats), eq, blockBegin, body, blockEnd) =
-    let pats, env = solvePats env pats
-    let body = solveExpr env body
-    let e = ModuleLetElement(LetHeader(fixity, name, pats), eq, blockBegin, body, blockEnd)
-    e, Ident.symbol name, symbolInfo fixity name, []
-
 let rec solveModuleElement env = function
     | ModuleDefinition(_,n,_,_,None,_) as e -> e, Ident.symbol n, Module, []
     | ModuleDefinition(moduleK,n,eq,blockBegin,Some es,blockEnd) ->
+        let env = Env.enter (Ident.symbol n) env
         let es, exports = solveModuleInner env es
-        let exports = List.map (fun (pathRev, si) -> (Ident.symbol n::pathRev), si) exports
-        let e = ModuleDefinition(moduleK,n,eq,blockBegin,Some es,blockEnd)
-        e, Ident.symbol n, Module, exports
+        ModuleDefinition(moduleK, n, eq, blockBegin, Some es, blockEnd),
+            Ident.symbol n,
+            Module,
+            exports
 
-    | ModuleLetElement(head, eq, blockBegin, body, blockEnd) -> solveModuleLetElement env (head, eq, blockBegin, body, blockEnd)
+    | ModuleLetElement(LetHeader(fixity, name, pats), type', eq, blockBegin, value, blockEnd) ->
+        let pats, env = solvePats env pats
+        let value = solveExpr env value
+        //let value, valueType = solveExpr env value
+        //unify type' valueType
+
+        ModuleLetElement(LetHeader(fixity, name, pats), type', eq, blockBegin, value, blockEnd),
+            Ident.symbol name,
+            symbolInfo fixity name,
+            []
+
     | ModuleTypeDefinition(typeK, def) ->
         let def, n, si, exports = solveTypeDefinition env def
         ModuleTypeDefinition(typeK, def), n, si, exports
 
 and solveModuleInner env (e, es) =
-    let e, name, si, exports = solveModuleElement env e
-    let exports, env = addScope env [name] si exports
-
+    let e, name, si, exports' = solveModuleElement env e
+    let exports, env = addScope env [name] si exports'
+    
     let rec solveTail env rs exports = function
         | [] -> List.rev rs, exports
         | (d,e)::es ->
@@ -752,11 +870,22 @@ let solveImplementationFile env = function
         AnonymousModule es, exports
 
     | NamedModule(moduleK, name, es) ->
+        let env = { env with current = LongId.pathRev name }
+
         let es, exports = solveModuleInner env es
-        let exports = addExports (LongId.path name) Module exports
+        let exports = addExports (LongId.pathRev name) Module exports
         NamedModule(moduleK, name, es), exports
 
+let trySolve solve env f =
+    try solve env f |> Ok with
+    | SolveException e -> Error e
+
 let solve env f =
-    try Option.map (solveImplementationFile env) f |> Ok
+    try 
+        match f with
+        | None -> Ok(None, [])
+        | Some f ->
+            let f, es = solveImplementationFile env f
+            Ok(Some f, es)
     with
     | SolveException e -> Error e

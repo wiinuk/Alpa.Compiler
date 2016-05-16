@@ -9,16 +9,6 @@ open Alpa.ParserCombinator
 type State = ValueTuple3<Position, list<Position>, unit>
 let initialState: State = ValueTuple3(Item1 = Position(0<_>, 1<_>, 1<_>), Item2 = [], Item3 = ())
 
-type Fixity =
-    | Prefix
-    | Infix
-    | Postfix
-
-type Associativity =
-    | NonAssoc
-    | Left
-    | Right
-
 type ParseError =
     | ErrorNone
 
@@ -41,12 +31,16 @@ type ParseError =
     | RequireNonOperator of Token
     | AmbiguousAssociativeOperator of prevOp: Token * prevAssoc: Associativity * nowOp: Token * nowAssoc: Associativity
 
-    | UnsolvedIdentifier of LongIdentifier
-    | UnsolvedType of list<Symbol> * Token
+    | UnsolvedIdentifier of list<Symbol> * startToken: Token * endToken: Token
+    | UnsolvedType of list<Symbol> * Type
+    | UnsolvedTypeOfExpression of list<Symbol> * Expression
+    | UnsolvedTypeOfSource of list<Symbol> * startToken: Token * endToken: Token
 
     | DuplicatedArgument of Identifier
 
     | RequirePrecedenceInteger
+
+    | UnifyFailure of TypeRef * TypeRef
 
 type Parser<'a> = Parser<Token, State, ParseError, 'a>
 let (|Parser|) (p: Parser<_>) = p
@@ -74,37 +68,22 @@ module Specials =
 //    let ``let`` = RParser Special.Let
 //    let ``in`` = RParser Special.In
 
+module Tokens =
+    let makeS kind special =
+        {
+            TriviaStart = Position()
+            Start = Position()
+            Kind = kind
+            _value = int (LanguagePrimitives.EnumToValue<Special,_> special)
+            _value2 = null
+            End = Position()
+        }
+
+    let lineSeparatorToken = makeS TokenKind.D Special.``D;``
+    let blockBeginLayoutToken = makeS TokenKind.D Special.``D{``
+    let blockEndLayoutToken = makeS TokenKind.D Special.``D}``
+
 module Layout =
-    let lineSeparatorToken =
-        {
-            TriviaStart = Position()
-            Start = Position()
-            Kind = D
-            _value = int (LanguagePrimitives.EnumToValue Special.``D;``)
-            _value2 = null
-            End = Position()
-        }
-
-    let blockBeginLayoutToken =
-        {
-            TriviaStart = Position()
-            Start = Position()
-            Kind = D
-            _value = int (LanguagePrimitives.EnumToValue Special.``D{``)
-            _value2 = null
-            End = Position()
-        }
-
-    let blockEndLayoutToken =
-        {
-            TriviaStart = Position()
-            Start = Position()
-            Kind = D
-            _value = int (LanguagePrimitives.EnumToValue Special.``D}``)
-            _value2 = null
-            End = Position()
-        }
-
     let lineSeparator (Stream xs) =
         if canRead xs then Reply((), RequireLineSeparator)
         else
@@ -113,7 +92,7 @@ module Layout =
             if not (offside.Line < p.Line && offside.Column = p.Column) then Reply((), RequireLineSeparator)
             else
                 xs.UserState.Item1 <- p
-                Reply lineSeparatorToken
+                Reply Tokens.lineSeparatorToken
 
     let applicationSeparator (Stream xs) =
         if canRead xs then Reply((), RequireApplicationSeparator)
@@ -134,7 +113,7 @@ module Layout =
                 let offsideStack = xs.UserState.Item2
                 xs.UserState.Item1 <- p
                 xs.UserState.Item2 <- offside::offsideStack
-                Reply blockBeginLayoutToken
+                Reply Tokens.blockBeginLayoutToken
 
     let blockEnd (Stream xs) =
         match xs.UserState.Item2 with
@@ -142,7 +121,7 @@ module Layout =
         | offside::offsideStack ->
             xs.UserState.Item1 <- offside
             xs.UserState.Item2 <- offsideStack
-            Reply blockEndLayoutToken
+            Reply Tokens.blockEndLayoutToken
 
     let fileStart (Stream xs) =
         if canRead xs then Reply((), RequireFileStart)
@@ -314,7 +293,7 @@ _expression := (
     let p = sepBy1 p Layout.applicationSeparator |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(RawApply, e1, e2, es)
     
     let p =
-        let pipe a b c d e = LetExpression(a, b, c, d, e)
+        let pipe a b c d e = LetExpression(a, TypeVar(ref None), b, c, d, e)
         let letExpression = pipe5(letHeader, S.``d=``, primitiveExpression, lineSeparator, p, pipe) // –- function definition expression
         letExpression <|> p
 
@@ -324,7 +303,7 @@ _expression := (
 
 let moduleFunctionOrValueDefinition =
     choice [
-        pipe3 letHeader S.``d=`` (block expression (fun a b c -> a, b, c)) <| fun a b (c,d,e) -> ModuleLetElement(a, b, c, d, e)
+        pipe3 letHeader S.``d=`` (block expression (fun a b c -> a, b, c)) <| fun a b (c,d,e) -> ModuleLetElement(a, TypeVar(ref None), b, c, d, e)
 //        doExpression
     ]
 

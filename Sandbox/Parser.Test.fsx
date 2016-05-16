@@ -51,7 +51,7 @@ test syntaxDiff start (
     let exp = S.anonymousModule [S.moduleVal "a" C.unit]
     let exp2 =
         S.anonymousModule [
-            S.moduleFun2 "a" !@"x" !@"y" (S.apply3 !!"x" !!%"+" !!"y")
+            S.moduleFun2 "a" !@"x" !@"y" (S.apply3Raw !!"x" !!%"+" !!"y")
         ]
     let exp3 =
         S.anonymousModule [
@@ -84,8 +84,8 @@ test syntaxDiff start (
 )
 
 test syntaxDiff expression [
-    "a\nb", S.apply2 !!"a" !!"b"
-    "a\n b", S.apply2 !!"a" !!"b"
+    "a\nb", S.apply2Raw !!"a" !!"b"
+    "a\n b", S.apply2Raw !!"a" !!"b"
 ]
 
 //errorTest (Layout.fileStart >>. expression .>> eof) [
@@ -93,8 +93,8 @@ test syntaxDiff expression [
 //]
 
 test syntaxDiff moduleFunctionOrValueDefinition (
-    let exp = S.moduleFun2 "a" !@"x" !@"y" (S.apply2 !!"x" !!"y")
-    let exp2 = S.moduleFun2 "apply" !@"f" !@"x" (S.apply2 !!"f" !!"x")
+    let exp = S.moduleFun2 "a" !@"x" !@"y" (S.apply2Raw !!"x" !!"y")
+    let exp2 = S.moduleFun2 "apply" !@"f" !@"x" (S.apply2Raw !!"f" !!"x")
     [
         "a x y = x y", exp
         "a x y =\n  x y", exp
@@ -105,10 +105,10 @@ test syntaxDiff moduleFunctionOrValueDefinition (
         "apply f x =\n  f\n   x", exp2
         "seq unit a =\n  unit;\n  a", S.moduleFun2 "seq" !@"unit" !@"a" (S.seq' !!"unit" !!"a")
 
-        "apply2 f x y =\n  f x y", S.moduleFun3 "apply2" !@"f" !@"x" !@"y" (S.apply3 !!"f" !!"x" !!"y")
-        "seqApply action x y =\n  action x;\n  y", S.moduleFun3 "seqApply" !@"action" !@"x" !@"y" (S.seq' (S.apply2 !!"action" !!"x") !!"y")
+        "apply2 f x y =\n  f x y", S.moduleFun3 "apply2" !@"f" !@"x" !@"y" (S.apply3Raw !!"f" !!"x" !!"y")
+        "seqApply action x y =\n  action x;\n  y", S.moduleFun3 "seqApply" !@"action" !@"x" !@"y" (S.seq' (S.apply2Raw !!"action" !!"x") !!"y")
         "seq2 unit1 unit2 a =\n  unit1;\n  unit2; a", S.moduleFun3 "seq2" !@"unit1" !@"unit2" !@"a" (S.seq' (S.seq' !!"unit1" !!"unit2") !!"a")
-        "seqApply unit f x =\n  unit;\n  f x", S.moduleFun3 "seqApply" !@"unit" !@"f" !@"x" (S.seq' !!"unit" (S.apply2 !!"f" !!"x"))
+        "seqApply unit f x =\n  unit;\n  f x", S.moduleFun3 "seqApply" !@"unit" !@"f" !@"x" (S.seq' !!"unit" (S.apply2Raw !!"f" !!"x"))
     ]
 )
 
@@ -325,19 +325,32 @@ let (.===.) l r = S.infixN l (.==) r
 
 let (==>) l r = l, Some r
 let error e = e, None
-let testOp src exp =
-    let act = parseApplicationsExpression env src
+
+let testSolveCore diff solve env src exp =
+    let act = solve env src
     match exp with
     | Some exp ->
-        if act <> Ok exp then
-            printfn "source: %A;\nactual: %A;\nexpected: %A;" src act exp
+        match diff act (Ok exp) with
+        | Diff _ as d -> printfn "source: %A;\nactual: %A;\nexpected: %A; diff: %A" src act exp d
+        | _ -> ()
 
     | None ->
         match act with
         | Ok _ -> printfn "source: %A;\nactual: %A" src act
         | _ -> ()
 
-Seq.iter ((<||) testOp) [
+let testSolveExpr diff = testSolveCore diff <| trySolve solveExpr
+
+let testApps diff env src exp =
+    let src =
+        match src with
+        | [] -> C.unit
+        | [l] -> l
+        | l::r::rs -> ApplicationsExpression(ApplicationKind.RawApply, l, r, rs)
+
+    testSolveExpr diff env src exp
+
+Seq.iter ((<||) (testApps syntaxDiff env)) [
     [a; (.+); b] ==> (a .+. b)
     [a; b; (.+); c; d] ==> (S.apply2 a b .+. S.apply2 c d)
     [a; (.+); b; (.+); c; (.*); d; (.*); e] ==> ((a .+. b) .+. ((c .*. d) .*. e))
@@ -361,16 +374,93 @@ Seq.iter ((<||) testOp) [
     error [a; (.==); b; (.+); c; (.==); d]
 ]
 
-let source = "
-x = 0
-x = x
-"
+//let (Success f) = parse start "module A = a = ()"
+//solve env f
+//
+//[a; (@!); b; (.++); (.-); c; (.--); (.+); d] ==>
+//    ((S.apply3 a (S.prefix (@!) (S.postfix b (.++))) (S.prefix (.-) (S.postfix c (.--))))) .+. d
+//
+//ApplicationsExpression(
+//    PrefixApply,
+//    ApplicationsExpression(
+//        PrefixApply,
+//        ApplicationsExpression(
+//            PostfixApply,
+//            (.--),
+//            ApplicationsExpression(PostfixApply, (.++), a, []),
+//            []
+//        ),
+//        (.-),
+//        []
+//    ),
+//    (@!),
+//    []
+//)
 
-let (Success f) = parse start source
-let (Ok f) = solve Env.empty f
+module Result =
+    let map f = function
+        | Ok x -> Ok(f x)
+        | Error e -> Error e
+
+let testSolve diff = testSolveCore diff <| fun env src ->
+    match parse start src with
+    | Failure(e,_,_,_) -> Error e
+    | Success f -> solve env f
+
+let solve env src =
+    match parse start src with
+    | Failure(e,_,_,_) -> Error e
+    | Success f -> solve env f
+
+Seq.iter ((<||) (testSolve syntaxDiff Env.empty)) [
+    "x = ()\nx = x" ==> (
+        S.anonymousModule [
+            S.moduleVal "x" C.unit
+            S.moduleVal "x" !!"x"
+        ],
+        [
+            ["x"], SymbolInfo.Var
+            ["x"], SymbolInfo.Var
+        ]
+    )
+
+    "module A =\n  a = ()\na = ()" ==> (
+        S.anonymousModule [
+            S.module' !"A" [
+                S.moduleVal "a" C.unit
+            ]
+            S.moduleVal "a" C.unit
+        ],
+        [
+            ["a"], SymbolInfo.Var
+            ["A"], SymbolInfo.Module
+            ["A";"a"], SymbolInfo.Var
+        ]
+    )
+]
+
+exception UnifyException of ParseError * Type * Type
+
+let typingModuleInner env (e, es) =
+    let e = typingModuleElement env e
+    failwith ""
+
+let typingImplementationFile env = function
+    | AnonymousModule es -> AnonymousModule(typingModuleInner env es)
+    | NamedModule(moduleK, name, es) -> NamedModule(moduleK, name, typingModuleInner env es)
 
 
-let infer = ()
+let tryTyping typing env x =
+    try typing env x |> Ok with
+    | UnifyException(e, t1, t2) -> Error(e, t1, t2)
+
+let typing env f =
+    try
+        match f with
+        | None -> Ok None
+        | Some f -> typingImplementationFile env f |> Some |> Ok
+    with 
+    | UnifyException(e, t1, t2) -> Error(e, t1, t2)
 
 
 

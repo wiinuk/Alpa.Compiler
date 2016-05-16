@@ -1,6 +1,22 @@
 ﻿namespace Alpa
 #r "./bin/debug/Alpa.Compiler.dll"
 
+type PathRev = list<Symbol>
+
+type TypeRef =
+    | TypeRef of fullPath: PathRev * typeArgs: list<TypeRef>
+    | TypeVar of ref<option<TypeRef>>
+
+type Fixity =
+    | Prefix
+    | Infix
+    | Postfix
+
+type Associativity =
+    | NonAssoc
+    | Left
+    | Right
+
 type Identifier = 
     | Name of idOrOp: Token
     | ParenthesizedIdentifier of ``(``: Token * op: Token * ``)``: Token
@@ -8,12 +24,21 @@ type Identifier =
 type LongIdentifier = LongIdentifier of (Identifier * Token) list * Identifier
 type FixityDeclaration = FixityDeclaration of fixityKeyword: Token * precedenceInteger: Token
 
+type Type = 
+    | UnitType of ``(``: Token * ``)``: Token
+    | ParenthesizedType of ``(``: Token * Type * ``)``: Token
+    | FunctionType of Type * ``->``: Token * Type
+    | TupleType of Type * ``,``: Token * Type * ``(, Type)*``: (Token * Type) list
+    | ListType of ``[``: Token * Type * ``]``: Token
+    | NamedType of LongIdentifier * typeArguments: Type list
+
 type Pattern =
     | WildcardPattern of ``_``: Token
     | ParenthesizedPattern of ``(``: Token * Pattern * ``)``: Token
     | LongIdentifierPattern of LongIdentifier
 
-type LetHeader = LetHeader of option<FixityDeclaration> * Identifier * Pattern list
+type LetHeader = LetHeader of fixity: option<FixityDeclaration> * Identifier * Pattern list
+
 type Constant =
     | UnitConstant of ``(``: Token * ``)``: Token
     | Constant of Token
@@ -31,14 +56,7 @@ type Expression =
 
     | BlockExpression of ``(``: Token * Expression * ``)``: Token
     | SequentialExpression of Expression * ``;``: Token * Expression
-    | LetExpression of LetHeader * ``=``: Token * Expression * ``;``: Token * Expression
-
-type Type = 
-    | ParenthesizedType of ``(``: Token * Type * ``)``: Token
-    | FunctionType of Type * ``->``: Token * Type
-    | TupleType of Type * ``,``: Token * Type * ``(, Type)*``: (Token * Type) list
-    | ListType of ``[``: Token * Type * ``]``: Token
-    | NamedType of LongIdentifier * typeArguments: Type list
+    | LetExpression of header: LetHeader * TypeRef * ``=``: Token * Expression * ``;``: Token * Expression
 
 type TypeArgument = 
     | TypeArgumentHole of ``_``: Token
@@ -50,13 +68,13 @@ type TypeDefinition =
     | AbbreviationTypeDefinition of TypeName * ``=``: Token * Type
     | EmptyTypeDefinition of TypeName
 
-type ModuleElement<'E> =
-    | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements<'E>> * blockEnd: Token
-    | ModuleLetElement of LetHeader * ``=``: Token * blockBegin: Token * 'E * blockEnd: Token
+type ModuleElement =
+    | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements<ModuleElement>> * blockEnd: Token
+    | ModuleLetElement of LetHeader * TypeRef * ``=``: Token * blockBegin: Token * Expression * blockEnd: Token
     | ModuleTypeDefinition of ``type``: Token * TypeDefinition
 
-and ModuleElements<'E> = ModuleElement<'E> * list<Token * ModuleElement<'E>>
+and ModuleElements<'M> = 'M * list<Token * 'M>
 
-type ImplementationFile<'E> =
-    | NamedModule of ``module``: Token * LongIdentifier * ModuleElements<'E>
-    | AnonymousModule of ModuleElements<'E>
+type ImplementationFile<'M> =
+    | NamedModule of ``module``: Token * LongIdentifier * ModuleElements<'M>
+    | AnonymousModule of ModuleElements<'M>

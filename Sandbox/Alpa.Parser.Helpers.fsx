@@ -20,7 +20,7 @@ let untypeSeqToObjSeq (xs: IEnumerable) = seq {
     while e.MoveNext() do yield e.Current
 }
 
-/// Unit, List<'T>, Record, Union, Tuple, Exception
+/// Unit, List<'T>, Record, Union, Tuple, FSharpException, System.String
 let fsValueDiff eqDelegate (l: 'a) (r: 'a) =
     let rec eqs ts ps ls rs =
         let xs = Seq.zip3 ts ps (Seq.zip ls rs)
@@ -37,10 +37,14 @@ let fsValueDiff eqDelegate (l: 'a) (r: 'a) =
     and eqsP ts ls rs path = eqs (Seq.map (fun (p: PropertyInfo) -> p.PropertyType) ts) (ts |> Seq.map (fun p -> sprintf "%s.%s" path p.Name)) ls rs
     and eqsM fs vs t l r = eqsP (fs(t, true) |> Array.toSeq) (vs(l, true) |> Array.toSeq) (vs(r, true) |> Array.toSeq)
     and eq t path l r =
-        match eqDelegate path t l r with
+        match eqDelegate eq path t l r with
         | Some x -> x
         | None ->
             if t = typeof<unit> then Eq
+            elif t = typeof<string> then
+                let l, r = unbox<string> l, unbox<string> r
+                if l = r then Eq else Diff(path, t, l, r)
+
             elif t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<list<_>> then listEq t path l r
             elif T.IsRecord(t, true) then eqsM T.GetRecordFields V.GetRecordFields t l r path
             elif T.IsUnion(t, true) then unionEq t path l r
@@ -51,7 +55,7 @@ let fsValueDiff eqDelegate (l: 'a) (r: 'a) =
             elif T.IsExceptionRepresentation(t, true) then eqsM T.GetExceptionFields V.GetExceptionFields t l r path
             else
                 // Unchecked.equals l r
-                failwith "unionEq"
+                failwithf "fsValueDiff %A" t
         
     and listEq t path l r =
         let t' = t.GetGenericArguments().[0]
@@ -101,13 +105,21 @@ let tokenValueEq l r =
         | TokenKind.Op
         | TokenKind.Qop -> unbox<Symbol> l._value2 = unbox<Symbol> r._value2
 
+type TypeCell = ref<option<Type>>
+let refTypeEq genericEq path (l : TypeCell) (r : TypeCell) =
+    genericEq typeof<option<Type>> (path + ".contents") (box l) (box r)
+    
 let syntaxDiff l r =
     let eq = Some Eq
-    let eq path t l r =
+    let eq genericEq path t l r =
         if t = typeof<Token> then
-            let l = unbox<Token> l
-            let r = unbox<Token> r
+            let l, r = unbox<Token> l, unbox<Token> r
             if tokenValueEq l r then eq else Some <| Diff(path, t, l, r)
+
+        elif t = typeof<TypeCell> then
+            let l, r = unbox<TypeCell> l, unbox<TypeCell> r
+            Some <| refTypeEq genericEq path l r
+
         else None
 
     fsValueDiff eq l r
@@ -236,6 +248,14 @@ module Token =
         End = Position()
     }
     let ident n = { zero with Kind = TokenKind.Id; _value2 = box<Symbol> n }
+    
+    let int32Max = bigint System.Int32.MaxValue
+    let int32Min = bigint System.Int32.MinValue
+    let integer n =
+        if int32Min <= n && n <= int32Max
+        then { zero with Kind = TokenKind.I; _value = int n }
+        else { zero with Kind = TokenKind.I; _value2 = box n }
+
     let op n = { zero with Kind = TokenKind.Op; _value2 = box<Symbol> n }
     let rop s = { zero with Kind = TokenKind.Rop; _value = int <| LanguagePrimitives.EnumToValue<Special,_> s }
     let delim s = { zero with Kind = TokenKind.D; _value = int <| LanguagePrimitives.EnumToValue<Special,_> s }
@@ -248,6 +268,11 @@ module Token =
     let ``}`` = delim Special.``D}``
     let ``(`` = delim Special.``D(``
     let ``)`` = delim Special.``D)``
+    let prefix = rid Special.Prefix
+    let infixl = rid Special.Infixl
+    let infix = rid Special.Infix
+    let infixr = rid Special.Infixr
+    let postfix = rid Special.Postfix
 
 let (!) id = Name <| Token.ident id
 let (!%) op = Name <| Token.op op
@@ -287,8 +312,15 @@ module Syntax =
     // -- Expression --
 
     let applicationsExpression kind e1 e2 es = ApplicationsExpression(kind, e1, e2, Seq.toList es)
-    let apply2 e1 e2 = applicationsExpression IdentifierApply e1 e2 []
-    let apply3 e1 e2 e3 = applicationsExpression IdentifierApply e1 e2 [e3]
+    let apply2Kind k e1 e2 = applicationsExpression k e1 e2 []
+    let apply3Kind k e1 e2 e3 = applicationsExpression k e1 e2 [e3]
+
+    let apply2 e1 e2 = apply2Kind IdentifierApply e1 e2
+    let apply3 e1 e2 e3 = apply3Kind IdentifierApply e1 e2 e3
+
+    let apply2Raw e1 e2 = apply2Kind RawApply e1 e2
+    let apply3Raw e1 e2 e3 = apply3Kind RawApply e1 e2 e3
+
     let seq' e1 e2 = SequentialExpression(e1, Token.``;``, e2)    
     let infixL l op r = applicationsExpression InfixLeftApply op l [r]
     let infixN l op r = applicationsExpression InfixNoneApply op l [r]
@@ -309,10 +341,24 @@ module Syntax =
 
         ModuleDefinition(Token.``module``, name, Token.``d=``, Token.``{``, es, Token.``}``)
 
-    let moduleLetElement name pats body = ModuleLetElement(LetHeader(!name, pats), Token.``d=``, Token.``{``, body, Token.``}``)
-    let moduleVal name body = moduleLetElement name [] body
-    let moduleFun2 name pat1 pat2 body = moduleLetElement name [pat1; pat2] body
-    let moduleFun3 name pat1 pat2 pat3 body = moduleLetElement name [pat1; pat2; pat3] body
+    let fixity fixity assoc prec =
+        let f =
+            match fixity, assoc with
+            | Prefix, _ -> Token.prefix
+            | Infix, Left -> Token.infixl
+            | Infix, NonAssoc -> Token.infix
+            | Infix, Right -> Token.infixr
+            | Postfix, _ -> Token.postfix
+
+        let p = Token.integer <| bigint(prec : int)
+
+        Some(FixityDeclaration(f, p))
+
+    let newType() = ref None
+    let moduleLetElement fixity name pats body = ModuleLetElement(LetHeader(fixity, !name, pats), newType(), Token.``d=``, Token.``{``, body, Token.``}``)
+    let moduleVal name body = moduleLetElement None name [] body
+    let moduleFun2 name pat1 pat2 body = moduleLetElement None name [pat1; pat2] body
+    let moduleFun3 name pat1 pat2 pat3 body = moduleLetElement None name [pat1; pat2; pat3] body
 
 
     // -- ImplementationFile --
