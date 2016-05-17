@@ -293,7 +293,7 @@ _expression := (
     let p = sepBy1 p Layout.applicationSeparator |>> function e, [] -> e | e1, e2::es -> ApplicationsExpression(RawApply, e1, e2, es)
     
     let p =
-        let pipe a b c d e = LetExpression(a, TypeVar(ref None), b, c, d, e)
+        let pipe a b c d e = LetExpression(a, TypeScheme([], TypeVar(ref None)), b, c, d, e)
         let letExpression = pipe5(letHeader, S.``d=``, primitiveExpression, lineSeparator, p, pipe) // –- function definition expression
         letExpression <|> p
 
@@ -303,7 +303,7 @@ _expression := (
 
 let moduleFunctionOrValueDefinition =
     choice [
-        pipe3 letHeader S.``d=`` (block expression (fun a b c -> a, b, c)) <| fun a b (c,d,e) -> ModuleLetElement(a, TypeVar(ref None), b, c, d, e)
+        pipe3 letHeader S.``d=`` (block expression (fun a b c -> a, b, c)) <| fun a b (c,d,e) -> ModuleLetElement(a, TypeScheme([], TypeVar(ref None)), b, c, d, e)
 //        doExpression
     ]
 

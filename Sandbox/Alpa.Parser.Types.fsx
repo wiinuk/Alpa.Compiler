@@ -7,6 +7,9 @@ type TypeRef =
     | TypeRef of fullPath: PathRev * typeArgs: list<TypeRef>
     | TypeVar of ref<option<TypeRef>>
 
+type TypeScheme = 
+    | TypeScheme of list<Symbol> * TypeRef
+
 type Fixity =
     | Prefix
     | Infix
@@ -56,7 +59,7 @@ type Expression =
 
     | BlockExpression of ``(``: Token * Expression * ``)``: Token
     | SequentialExpression of Expression * ``;``: Token * Expression
-    | LetExpression of header: LetHeader * TypeRef * ``=``: Token * Expression * ``;``: Token * Expression
+    | LetExpression of header: LetHeader * TypeScheme * ``=``: Token * Expression * ``;``: Token * Expression
 
 type TypeArgument = 
     | TypeArgumentHole of ``_``: Token
@@ -70,7 +73,7 @@ type TypeDefinition =
 
 type ModuleElement =
     | ModuleDefinition of ``module``: Token * Identifier * ``=``: Token * blockBegin: Token * option<ModuleElements<ModuleElement>> * blockEnd: Token
-    | ModuleLetElement of LetHeader * TypeRef * ``=``: Token * blockBegin: Token * Expression * blockEnd: Token
+    | ModuleLetElement of LetHeader * TypeScheme * ``=``: Token * blockBegin: Token * Expression * blockEnd: Token
     | ModuleTypeDefinition of ``type``: Token * TypeDefinition
 
 and ModuleElements<'M> = 'M * list<Token * 'M>

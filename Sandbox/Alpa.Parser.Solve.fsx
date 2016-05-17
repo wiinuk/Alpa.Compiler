@@ -15,8 +15,8 @@ type SymbolKind = Module | Var | Type | Pattern
 
 type SymbolInfo = 
     | Module
-    | Var
-    | VarOp of Operator
+    | Var of TypeRef
+    | VarOp of TypeRef * Operator
     | Type of TypeRef * list<PathRev * SymbolInfo>
     | TypeOp of TypeRef * Operator * list<PathRev * SymbolInfo>
     | Pattern
@@ -168,7 +168,7 @@ module Env =
         let symbolKind = function
             | Type _
             | TypeOp _ -> SymbolKind.Type
-            | Var
+            | Var _
             | VarOp _ -> SymbolKind.Var
             | Pattern -> SymbolKind.Pattern
             | Module -> SymbolKind.Module
@@ -177,7 +177,7 @@ module Env =
         let symbols = Map.add path symbolInfo symbols
 
         match symbolInfo with
-        | VarOp op
+        | VarOp(_, op)
         | TypeOp(_, op, _) ->
             match op with
             | { fixity = Infix } ->
@@ -196,7 +196,7 @@ module Env =
                     prefixOps = Assoc.add path op prefixOps }
         
         | Type _
-        | Var
+        | Var _
         | Pattern
         | Module -> { env with symbols = symbols }
             
@@ -220,12 +220,12 @@ module Env =
         current = []
     }
     let makeVars xs =
-        Seq.fold (fun env (path, op) ->
+        Seq.fold (fun env (path, op, ty) ->
             match op with
-            | None -> add path Var env
+            | None -> add path (Var(TypeRef ty)) env
             | Some(f, a, p) ->
                 let op = { fixity = f; associativity = a; precedence = p }
-                add path (VarOp op) env
+                add path (VarOp(TypeRef ty, op)) env
         ) empty xs
 
 let expressionsParser =
@@ -434,7 +434,7 @@ let parseLookupExpression env (LongIdentifier(ls, r)) =
         | [] ->
             let path = LongIdentifier(List.rev readedNames, rightName)
             match Env.tryFindVar path env with
-            | Some Var -> LookupExpression path
+            | Some(Var _) -> LookupExpression path
             | _ -> raise <| makeSolveException path
 
         | (name, delimiter) as n::names ->
@@ -442,7 +442,7 @@ let parseLookupExpression env (LongIdentifier(ls, r)) =
             let path = LongIdentifier(List.rev readedNames', name)
 
             match Env.tryFindVar path env with
-            | Some Var -> takeMember (LookupExpression path) delimiter names rightName
+            | Some(Var _) -> takeMember (LookupExpression path) delimiter names rightName
             | _ -> takeLookup readedNames' names rightName
 
     takeLookup [] ls r
@@ -478,7 +478,8 @@ let rec solvePat env = function
             | LongIdentifier([], local) -> p, [local]
             | _ -> raise <| makeSolveException path
 
-let addLocals locals env = List.fold (fun env local -> Env.add [Ident.symbol local] Var env) env locals
+let addLocals locals env =
+    List.fold (fun env (local, t) -> Env.add [Ident.symbol local] (Var t) env) env locals
 
 let solvePats env pats =
     let duplicateIfRaise localSet locals =
@@ -619,7 +620,7 @@ module Types =
         )
     let characterType = []
 
-let symbolInfo fixity name =
+let symbolInfo fixity name type' =
     match fixity with
     | Some(FixityDeclaration({ Kind = TokenKind.Rid; _value = v }, { Kind = TokenKind.I; _value = i1; _value2 = i2 })) ->
         let prec =
@@ -629,13 +630,13 @@ let symbolInfo fixity name =
 
         let c = LanguagePrimitives.EnumOfValue<_,Special>(char<int> v)
         match c with
-        | Special.Prefix -> VarOp { fixity = Prefix; associativity = NonAssoc; precedence = prec }
-        | Special.Infixl -> VarOp { fixity = Infix; associativity = Left; precedence = prec }
-        | Special.Infix -> VarOp { fixity = Infix; associativity = NonAssoc; precedence = prec }
-        | Special.Infixr -> VarOp { fixity = Infix; associativity = Right; precedence = prec }
-        | Special.Postfix -> VarOp { fixity = Postfix; associativity = NonAssoc; precedence = prec }
-        | _ -> symbolInfoOfName name
-    | _ -> symbolInfoOfName name
+        | Special.Prefix -> VarOp(type', { fixity = Prefix; associativity = NonAssoc; precedence = prec })
+        | Special.Infixl -> VarOp(type', { fixity = Infix; associativity = Left; precedence = prec })
+        | Special.Infix -> VarOp(type', { fixity = Infix; associativity = NonAssoc; precedence = prec })
+        | Special.Infixr -> VarOp(type', { fixity = Infix; associativity = Right; precedence = prec })
+        | Special.Postfix -> VarOp(type', { fixity = Postfix; associativity = NonAssoc; precedence = prec })
+        | _ -> symbolInfoOfName name type'
+    | _ -> symbolInfoOfName name type'
 
 let rec occur var = function
     | TypeRef(_, ts) -> List.exists (occur var) ts
@@ -700,6 +701,7 @@ let solveConstant env = function
 let rec solveExpr env = function
     | ConstantExpression c as e -> e, solveConstant env c
     | DotLookupExpression(e, dotD, name) ->
+        
         // TODO: DotLookupExpression(solveExpr env e, dotD, name)
         failwith "not implemented"
 
@@ -711,17 +713,26 @@ let rec solveExpr env = function
         let l, lt = solveExpr env l
         let r, rt = solveExpr env r
         
-        // TODO: startToken l 
+        // TODO: (startToken l) (endToken r)
         let tr = solveNamedType env ["()"] d d
         unify lt tr
         SequentialExpression(l, d, r), rt
 
-    | LetExpression(LetHeader(fixity, name, pats), type', eqD, value, d, body) ->
-        let pats, env' = solvePats env pats
-        let value = solveExpr env' value
-        let env = Env.add [Ident.symbol name] (symbolInfo fixity name) env
+    | LetExpression(LetHeader(fixity, name, []), TypeScheme([], type'), eqD, value, d, body) ->
+        let value, vt = solveExpr env value
+        unify type' vt
+
+        let env = Env.add [Ident.symbol name] (symbolInfo fixity name t) env
         let body = solveExpr env body
         LetExpression(LetHeader(fixity, name, pats), type', eqD, value, d, body)
+
+//    | LetExpression(LetHeader(fixity, name, pats), type', eqD, value, d, body) ->
+//        
+//        let pats, env' = solvePats env pats
+//        let value = solveExpr env' value
+//        let env = Env.add [Ident.symbol name] (symbolInfo fixity name) env
+//        let body = solveExpr env body
+//        LetExpression(LetHeader(fixity, name, pats), type', eqD, value, d, body)
 
     | LookupExpression name -> parseLookupExpression env name
     | ApplicationsExpression(_, l, r, rs) ->
