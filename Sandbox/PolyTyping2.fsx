@@ -1,23 +1,28 @@
 ﻿type Symbol = string
 type Var = string
-
-// Int; Map Int (Set Int); Map a b
+type assoc<'k,'v> = ('k * 'v) list
 
 type Type =
     | Type of Symbol * Type list
-    | TypeVar of TypeVarInfo ref
-
-and TypeVarInfo =
+    | ContextualType of context: Type list * Type
+    | IndefType of IndefType
+    
+and IndefTypeInfo =
     | SomeType of Type
-    | TypeArg of Constraint list
+    | TypeVar
 
-and Constraint =
-    | IsLabel of label: Symbol * fieldType: Type
+and IndefType = IndefTypeInfo ref
 
-type TypeScheme = TypeScheme of TypeVarInfo ref list * Type
-type FieldDef = Symbol * Type
+type TypeVar = IndefType
+
+type TypeScheme = TypeScheme of TypeVar list * Type
+type FieldDefs = assoc<Symbol, Type>
 type TypeDef =
-    | RecordTypeDef of ctor: Symbol * fields: FieldDef list
+    | EmptyTypeDef
+    | ClassDef of assoc<Var, TypeScheme>
+
+type TypeName = TypeName of name: Symbol * typeArgs: Type list
+type TypeSpec = TypeSpec of TypeName * TypeDef
 
 type Expr =
     | Bool of bool
@@ -27,61 +32,14 @@ type Expr =
     | App of Expr * Expr
     | Def of Var * TypeScheme * Expr
     | Let of Var * Expr * Expr
-    | LetRec of (Var * Expr) * (Var * Expr) list * Expr
-
-    | TypeDef of typeName: Symbol * typeArgs: Type list * TypeDef * Expr
-
-    | NewRecord of ctor: Symbol * fields: FieldDef list
-    | FieldGet of Expr * Symbol
-    //| FieldUpdate of Expr * Symbol
+    | LetRec of assoc<Var, Expr> * Expr
     
-fsi.AddPrintTransformer <| fun (x: TypeVarInfo ref) ->
-    box(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode x, x.contents)
-
-let newTypeVar() : TypeVarInfo ref = ref (TypeArg [])
-let newVarT() = TypeVar(newTypeVar())
-
-let refT t = Type("Ref", [t])
-let unitT = Type("()", [])
-let boolT = Type("Bool", [])
-let intT = Type("Int", [])
-let funT v e = Type("->", [v; e])
-let tup2T t1 t2 = Type(",", [t1; t2])
-let listT t = Type("[]", [t])
-let (!!) = TypeVar
-let (.->) = funT
-
-let (|FunT|_|) = function Type("->", [l; r]) -> Some(l, r) | _ -> None
-let (|IntT|_|) = function Type("Int", []) -> Some() | _ -> None
-
-let (==) l r = LanguagePrimitives.PhysicalEquality l r
-let (!=) l r = not (l == r)
-
-let free (TypeScheme(vs, t)) =
-    let vts = List.map (fun v -> v, newVarT()) vs
-
-    let rec free = function
-        | Type(n, ts) -> Type(n, List.map free ts)
-        | TypeVar { contents = SomeType t } -> free t
-        | TypeVar({ contents = TypeArg _ } as v) as t ->
-            match List.tryFind (fun (v',_) -> v == v') vts with
-            | Some(_,t) -> t
-            | None -> t
-    free t
-
-let bind t =
-    let rec collect vs = function
-        | Type(_, ts) -> List.fold collect vs ts
-        | TypeVar { contents = SomeType t } -> collect vs t
-        | TypeVar({ contents = TypeArg _ } as v) ->
-            if List.exists (fun v' -> v == v') vs then vs
-            else v::vs
-
-    TypeScheme(collect [] t |> List.rev, t)
+    | TypeDef of TypeName * TypeDef * Expr
+    | InstanceDef of TypeName * methodImpls: assoc<Var, Expr> * cont: Expr
     
 type Env = {
     vars: Map<Var, TypeScheme>
-    types : Map<Var, TypeDef>
+    types : Map<Var, TypeSpec>
 }
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Env =
@@ -91,57 +49,134 @@ module Env =
     let find v { vars = vars } = Map.find v vars
 
     let addT v t ({ types = types } as env) = { env with types = Map.add v t types }
+    let findT v { types = types } = Map.find v types
 
 type Errors =
     | TypeMismatch of Expr * Type * Type
     | VariableNotFound of Env * Var
-    //| DuplicatedTypeArgument of Expr * Type list
-    | DuplicatedField of Expr * FieldDef list
+    | TypeNotFound of Expr * Env * Symbol
+    | DuplicatedField of Expr * FieldDefs
+    | InvalidTypeArgments of Expr * Type list
+    | DuplicatedMethodDeclare of Expr * assoc<Var, TypeScheme>
+    | InvalidMethodDeclare of Expr * (Var * TypeScheme)
+    | InvalidInstanceDeclare of Expr
 
 exception TypingException of Errors
 
+fsi.AddPrintTransformer <| fun (x: IndefType) ->
+    box(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode x, x.contents)
+
+let newTypeVar() : TypeVar = ref TypeVar
+let newVarT() = IndefType(newTypeVar())
+
+let type0 n = Type(n, [])
+let type1 n t1 = Type(n, [t1])
+let type2 n t1 t2 = Type(n, [t1; t2])
+
+let refT t = type1 "Ref"
+let unitT = type0 "()"
+let boolT = type0 "Bool"
+let intT = type0 "Int"
+let funT = type2 "->"
+let tup2T = type2 ","
+let listT = type1 "[]"
+let (!!) = IndefType
+let (.->) = funT
+
+let (|Type0|Type1|Type2|TypeN|) = function
+    | Type(n, []) -> Type0 n
+    | Type(n, [t1]) -> Type1(n, t1)
+    | Type(n, [t1; t2]) -> Type2(n, t1, t2)
+    | t -> TypeN t
+
+let (|FunT|_|) = function Type2("->", l, r) -> Some(l, r) | _ -> None
+let (|IntT|_|) = function Type0 "Int" -> Some() | _ -> None
+
+let (==) (l: _ ref) r = LanguagePrimitives.PhysicalEquality l r
+let (!=) l r = not (l == r)
+
+let freeVars (TypeScheme(typeVars, t)) =
+    let rec collect vs = function
+        | Type(_, ts) -> List.fold collect vs ts
+        | ContextualType(cs, t) -> collect (List.fold collect vs cs) t
+        | IndefType { contents = SomeType t } -> collect vs t
+        | IndefType({ contents = TypeVar } as v) ->
+            if List.exists ((==) v) typeVars || List.exists ((==) v) vs then vs
+            else v::vs
+
+    collect [] t |> List.rev
+
+// type a. Eq a => a -> a
+// type a b. (Eq a, Show a, Eq b) => [a] -> [b] -> String
+// type f a b. (Eq (f a), Functor f) => (a -> b) -> f a -> f b -> Bool
+
+// class Foo a where { op : Num b => a -> b -> a }
+// op : type a b. (Foo a, Num b) => a -> b -> a
+
+// double : type a. Num a => a -> a
+// double x = x + x 
+
+// free (type a. Num a => a) = Num _flesh0 => _flesh0
+// free (type a b. Num b => a) = Num _flesh0 => _flesh1
+// free (Num Int => Int) = ???
+
+// free (type (Num a => a) b. (Num a => a) -> b) = ((Num _fresh0 => _fresh0) -> _fresh1o)
+// free (type (Num a => a). Num a => a) = ((Num _fresh0 => _fresh0) -> _fresh1o)
+
+let rec subst vts = function
+    | Type(n, ts) -> Type(n, List.map (subst vts) ts)
+    | ContextualType(cs, t) -> ContextualType(List.map (subst vts) cs, subst vts t)
+    | IndefType { contents = SomeType t } -> subst vts t
+    | IndefType({ contents = TypeVar _ } as v) as t ->
+        match List.tryFind (fun (v',_) -> v == v') vts with
+        | Some(_,t) -> IndefType t
+        | None -> t
+
+let newVars vs = 
+    List.choose (function
+        | { contents = SomeType _ } -> None
+        | ({ contents = TypeVar } as v) -> Some(v, newTypeVar())
+    ) vs
+
+let free (TypeScheme(vs, t)) = subst (newVars vs) t
+
+let bind t =
+    let vs = freeVars (TypeScheme([], t))
+    let vts = newVars vs
+    TypeScheme(List.map snd vts, subst vts t)
+    
 let rec occur v = function
     | Type(_, ts) -> List.exists (occur v) ts
-    | TypeVar({ contents = a } as v') ->
+    | ContextualType(cs, t) -> List.exists (occur v) cs || occur v t
+    | IndefType({ contents = a } as v') ->
         v == v' ||
             match a with
-            | TypeArg _ -> false
+            | TypeVar _ -> false
             | SomeType t -> occur v t
 
 let rec unify e l r =
     match l, r with
     | Type(ln, ls), Type(rn, rs) when ln = rn && List.length ls = List.length rs -> List.iter2 (unify e) ls rs
-    | TypeVar l, TypeVar r when l == r -> ()
-    | TypeVar { contents = SomeType l }, _ -> unify e l r
-    | _, TypeVar { contents = SomeType r } -> unify e l r
-    | TypeVar({ contents = TypeArg _ } as lv), _ when not <| occur lv r -> lv := SomeType r
-    | _, TypeVar({ contents = TypeArg _ } as rv) when not <| occur rv l -> rv := SomeType l
+    | IndefType l, IndefType r when l == r -> ()
+    | IndefType { contents = SomeType l }, _ -> unify e l r
+    | _, IndefType { contents = SomeType r } -> unify e l r
+    | IndefType({ contents = TypeVar _ } as lv), _ when not <| occur lv r -> lv := SomeType r
+    | _, IndefType({ contents = TypeVar _ } as rv) when not <| occur rv l -> rv := SomeType l
     | _ -> raise <| TypingException(TypeMismatch(e, l, r))
+    
+let isPureTypeArg = function IndefType { contents = TypeVar } -> true | _ -> false
+let typeArgEq l r =
+    match l, r with
+    | IndefType({ contents = TypeVar } as l), IndefType({ contents = TypeVar } as r) -> l == r
+    | _ -> true
 
-let typingTypeDef env e n vs d =
-    let listIsSet xs = List.distinct xs = xs
-    let rec typeArgs rs = function
-        | [] -> List.rev rs
-        | TypeVar({ contents = TypeArg [] } as r)::xs when List.forall ((!=) r) rs -> typeArgs (r::rs) xs
-        | _::xs -> typeArgs rs xs
-
-    let vs = typeArgs [] vs
-
-    let t = Type(n, List.map TypeVar vs)
-
-    match d with
-    | RecordTypeDef(ctor, fs) ->
-        if not <| listIsSet (List.map fst fs) then raise <| TypingException(DuplicatedField(e, fs))
-
-        let rec ctorT lastT = function
-            | [] -> lastT
-            | (_,ft)::fs -> ft .-> (ctorT lastT fs)
-
-        let env = Env.add ctor (ctorT t fs |> bind) env
-        List.fold (fun env (f, ft) ->
-            Env.add f  env
-
-        ) env fs
+let isSetWith eq xs =
+    let rec check set = function
+        | [] -> true
+        | x::xs ->
+            if List.exists (eq x) set then false
+            else check (x::set) xs
+    check [] xs
 
 let rec typingCore env = function
     | Bool _ -> boolT
@@ -171,28 +206,67 @@ let rec typingCore env = function
         unify e vt bt
         typingCore (Env.add var (bind vt) env) cont
 
-    | LetRec((var, body), varBodys, cont) ->
-        let vt, vbts = newVarT(), List.map (fun vb -> vb, newVarT()) varBodys
-        let env = List.fold (fun env ((v,_),vt) -> Env.add v (bind vt) env) (Env.add var (bind vt) env) vbts
-        unify body vt (typingCore env body)
+    | LetRec(varBodys, cont) ->
+        let vbts = List.map (fun vb -> vb, newVarT()) varBodys
+        let env = List.fold (fun env ((v,_),vt) -> Env.add v (bind vt) env) env vbts
         List.iter (fun ((_,b),vt) -> unify b vt (typingCore env b)) vbts
         typingCore env cont
         
     | Def(v, t, e) -> typingCore (Env.add v t env) e
-    | TypeDef(n, vs, d, cont) as e ->
-        let env = typingTypeDef env e n vs d
-        typingCore (Env.addT n d env) cont
+    
+    | TypeDef(TypeName(name, ts) as n, EmptyTypeDef, cont) as e ->
+        if List.exists (isPureTypeArg >> not) ts then raise <| TypingException(InvalidTypeArgments(e, ts))
+        if not <| isSetWith typeArgEq ts then raise <| TypingException(InvalidTypeArgments(e, ts))
 
-    | FieldGet(r, l) as e ->
-        let rt = typingCore env r
-        let ft = newVarT()
-        unify e rt (TypeVar(ref (TypeArg [IsLabel(l, ft)])))
-        ft
+        typingCore (Env.addT name (TypeSpec(n, EmptyTypeDef)) env) cont
+
+    | TypeDef(TypeName(name, ts) as n, (ClassDef ms as d), cont) as e ->
+        if List.exists (isPureTypeArg >> not) ts then raise <| TypingException(InvalidTypeArgments(e, ts))
+        if not <| isSetWith typeArgEq ts then raise <| TypingException(InvalidTypeArgments(e, ts))
+        if not <| isSetWith (fun l r -> fst l = fst r) ms then raise <| TypingException(DuplicatedMethodDeclare(e, ms))
+
+        let env = Env.addT name (TypeSpec(n, d)) env
+
+        // class Num a where
+        //    add: type. a -> a -> a
+        //    negate: type. a -> a
+        //    zero: type. a
+
+        // add : type a. Num a => a -> a -> a
+        // negate : type a. Num a => a -> a -> a
+        let env =   
+            List.fold (fun env (n, t) ->
+                v := TypeVar [IsTypeClass name]
+                let t = bind (free t)
+                v := TypeVar []
+                Env.add n t env
+
+            ) env ms
+
+        typingCore env cont
+
+    | InstanceDef(TypeName(className, ts), ms, cont) as e ->
+        try
+            match Env.findT className env with
+            | TypeSpec(_, EmptyTypeDef) -> raise <| TypingException(InvalidInstanceDeclare e)
+            | TypeSpec(TypeName(_, vs'), ClassDef ds) ->
+                if List.length ts' <> List.length ts then raise <| TypingException(InvalidInstanceDeclare e)
+                if not <| isSetWith (fun l r -> fst l = fst r) ds then raise <| TypingException(InvalidInstanceDeclare e)
+
+
+                //List.iter2 (fun t t' -> ) ts ts'
+                failwith ""
+                
+
+        with
+        | :? System.Collections.Generic.KeyNotFoundException ->
+            raise <| TypingException(TypeNotFound(e, env, className))
+
         
 let rec deref = function
     | Type(n, ts) -> Type(n, List.map deref ts)
-    | TypeVar { contents = TypeArg _ } as t -> t
-    | TypeVar({ contents = SomeType t } as v) ->
+    | IndefType { contents = TypeVar _ } as t -> t
+    | IndefType({ contents = SomeType t } as v) ->
         let t = deref t
         v := SomeType t
         t
@@ -259,25 +333,22 @@ let sprintType t =
 
             p, map, n + ts
 
-        | TypeVar { contents = SomeType t } -> print map t
-        | TypeVar({ contents = TypeArg _ } as r) ->
+        | IndefType { contents = SomeType t } -> print map t
+        | IndefType({ contents = TypeVar _ } as r) ->
             let n, map = printVar map r
             10, map, n
 
     let printTypeArg map = function
         | { contents = SomeType _ } -> "", map
-        | { contents = TypeArg _ } as r -> printVar map r
+        | { contents = TypeVar _ } as r -> printVar map r
 
     let printConstraint map rs = function
         | { contents = SomeType _ } -> rs, map
-        | { contents = TypeArg cs } as r -> 
+        | { contents = TypeVar cs } as r -> 
             let v, map = printVar map r
             List.fold (fun (rs, map) c ->
                 match c with
-                | IsLabel(l, t) ->
-                    let p = 9
-                    let p', map, t = print map t
-                    sprintf "(%s { %s : %s })" v (printId '"' l) (wrap p p' t)::rs, map
+                | IsTypeClass n -> sprintf "%s %s" (printId '"' n) v::rs, map
 
             ) (rs, map) cs
 
@@ -301,9 +372,9 @@ let sprintType t =
 
         sprintf "type%s.%s%s" ts cs t
         
-    
-typingCore Env.empty (Lam("x", FieldGet(Var("x"), "X")))
-|> sprintType
+
+//typingCore Env.empty (Lam("x", FieldGet(Var("x"), "X")))
+//|> sprintType
 
 type Result<'T,'E> = Ok of 'T | Error of 'E
 
@@ -329,7 +400,7 @@ let (^.) def cont =
     match def with
     | Choice1Of3(v, t) -> Def(v, t, cont)
     | Choice2Of3(v, b) -> Let(v, b, cont)
-    | Choice3Of3 vb -> LetRec(vb, [], cont)
+    | Choice3Of3 vb -> LetRec([vb], cont)
 
 let (!!!) = function
     | Choice1Of3(x, _)
@@ -353,13 +424,13 @@ let (^^.) l r = !"seq" %. l %. r
 // free (type a. a -> a -> b -> Int) = (_flesh0 -> _flesh0 -> b -> Int)
 let a, b = newTypeVar(), newTypeVar()
 match free (TypeScheme([a], !!a .-> (!!a .-> (!!b .-> intT)))) with
-| FunT(TypeVar a', FunT(TypeVar a'', FunT(TypeVar b', IntT))) -> a' != a && a'' != a && a' == a'' && b == b' && a' != b'
+| FunT(IndefType a', FunT(IndefType a'', FunT(IndefType b', IntT))) -> a' != a && a'' != a && a' == a'' && b == b' && a' != b'
 | _ -> false
 
 // bind (x -> y -> Int) = (type x y. x -> y -> Int)
 let x, y = newTypeVar(), newTypeVar()
 match bind (!!x .-> (!!y .-> intT)) with
-| TypeScheme([x'; y'], FunT(TypeVar x'', FunT(TypeVar y'', IntT))) ->
+| TypeScheme([x'; y'], FunT(IndefType x'', FunT(IndefType y'', IntT))) ->
     x == x' && x' == x'' &&
     y == y' && y' == y''
 
