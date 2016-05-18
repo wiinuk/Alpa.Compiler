@@ -267,6 +267,7 @@ seqD ^.
     |> typing 
         = Ok intT
 
+
 ifD ^.
     listIsEmptyD ^.
     succIntD ^.
