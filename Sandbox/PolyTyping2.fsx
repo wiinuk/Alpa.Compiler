@@ -2,9 +2,9 @@
 type Var = string
 type assoc<'k,'v> = ('k * 'v) list
 
+// Map [a] Int; Char -> b
 type Type =
     | Type of Symbol * Type list
-    | ContextualType of context: Type list * Type
     | IndefType of IndefType
     
 and IndefTypeInfo =
@@ -13,9 +13,14 @@ and IndefTypeInfo =
 
 and IndefType = IndefTypeInfo ref
 
+/// require: function { contents = IndefTypeInfo.TypeVar } -> true | _ -> false
 type TypeVar = IndefType
 
-type TypeScheme = TypeScheme of TypeVar list * Type
+// (Num a, Ord a) => Set a -> Option a
+type TypeSign = TypeSign of context: Type list * Type
+
+// type a b. (Eq a, Show b) => [c] -> (c -> a) -> a -> b -> String
+type TypeScheme = TypeScheme of TypeVar list * TypeSign
 type FieldDefs = assoc<Symbol, Type>
 type TypeDef =
     | EmptyTypeDef
@@ -65,15 +70,16 @@ exception TypingException of Errors
 
 fsi.AddPrintTransformer <| fun (x: IndefType) ->
     box(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode x, x.contents)
+    
+let typesign0 t = TypeSign([], t)
+let type0 n = typesign0 <| Type(n, [])
+let type1 n (TypeSign(cs1, t1)) = TypeSign(cs1, Type(n, [t1]))
+let type2 n (TypeSign(cs1, t1)) (TypeSign(cs2, t2)) = TypeSign(cs1 @ cs2, Type(n, [t1; t2]))
 
 let newTypeVar() : TypeVar = ref TypeVar
-let newVarT() = IndefType(newTypeVar())
+let newVarT() = typesign0 <| IndefType(newTypeVar())
 
-let type0 n = Type(n, [])
-let type1 n t1 = Type(n, [t1])
-let type2 n t1 t2 = Type(n, [t1; t2])
-
-let refT t = type1 "Ref"
+let refT = type1 "Ref"
 let unitT = type0 "()"
 let boolT = type0 "Bool"
 let intT = type0 "Int"
@@ -95,16 +101,16 @@ let (|IntT|_|) = function Type0 "Int" -> Some() | _ -> None
 let (==) (l: _ ref) r = LanguagePrimitives.PhysicalEquality l r
 let (!=) l r = not (l == r)
 
-let freeVars (TypeScheme(typeVars, t)) =
+let freeVars (TypeScheme(typeVars, TypeSign(cs, t))) =
     let rec collect vs = function
         | Type(_, ts) -> List.fold collect vs ts
-        | ContextualType(cs, t) -> collect (List.fold collect vs cs) t
         | IndefType { contents = SomeType t } -> collect vs t
         | IndefType({ contents = TypeVar } as v) ->
             if List.exists ((==) v) typeVars || List.exists ((==) v) vs then vs
             else v::vs
 
-    collect [] t |> List.rev
+    collect (List.fold collect [] cs) t
+    |> List.rev
 
 // type a. Eq a => a -> a
 // type a b. (Eq a, Show a, Eq b) => [a] -> [b] -> String
@@ -123,14 +129,17 @@ let freeVars (TypeScheme(typeVars, t)) =
 // free (type (Num a => a) b. (Num a => a) -> b) = ((Num _fresh0 => _fresh0) -> _fresh1o)
 // free (type (Num a => a). Num a => a) = ((Num _fresh0 => _fresh0) -> _fresh1o)
 
-let rec subst vts = function
-    | Type(n, ts) -> Type(n, List.map (subst vts) ts)
-    | ContextualType(cs, t) -> ContextualType(List.map (subst vts) cs, subst vts t)
-    | IndefType { contents = SomeType t } -> subst vts t
-    | IndefType({ contents = TypeVar _ } as v) as t ->
-        match List.tryFind (fun (v',_) -> v == v') vts with
-        | Some(_,t) -> IndefType t
-        | None -> t
+let subst vts (TypeSign(cs, t)) =
+    let rec substType vts = function
+        | Type(n, ts) -> Type(n, List.map (substType vts) ts)
+        //| ContextualType(cs, t) -> ContextualType(List.map (subst vts) cs, subst vts t)
+        | IndefType { contents = SomeType t } -> substType vts t
+        | IndefType({ contents = TypeVar _ } as v) as t ->
+            match List.tryFind (fun (v',_) -> v == v') vts with
+            | Some(_,t) -> IndefType t
+            | None -> t
+
+    TypeSign(List.map (substType vts) cs, substType vts t)
 
 let newVars vs = 
     List.choose (function
@@ -147,7 +156,6 @@ let bind t =
     
 let rec occur v = function
     | Type(_, ts) -> List.exists (occur v) ts
-    | ContextualType(cs, t) -> List.exists (occur v) cs || occur v t
     | IndefType({ contents = a } as v') ->
         v == v' ||
             match a with
