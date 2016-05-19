@@ -137,17 +137,16 @@ let freeVars (TypeScheme(typeVars, TypeSign(cs, t))) =
 // free (type (Num a => a) b. (Num a => a) -> b) = ((Num _fresh0 => _fresh0) -> _fresh1o)
 // free (type (Num a => a). Num a => a) = ((Num _fresh0 => _fresh0) -> _fresh1o)
 
-let subst vts (TypeSign(cs, t)) =
-    let rec substType vts = function
-        | Type(n, ts) -> Type(n, List.map (substType vts) ts)
-        //| ContextualType(cs, t) -> ContextualType(List.map (subst vts) cs, subst vts t)
-        | IndefType { contents = SomeType t } -> substType vts t
-        | IndefType({ contents = TypeVar _ } as v) as t ->
-            match List.tryFind (fun (v',_) -> v == v') vts with
-            | Some(_,t) -> IndefType t
-            | None -> t
 
-    TypeSign(List.map (substType vts) cs, substType vts t)
+let rec substType vts = function
+    | Type(n, ts) -> Type(n, List.map (substType vts) ts)
+    | IndefType { contents = SomeType t } -> substType vts t
+    | IndefType({ contents = TypeVar _ } as v) as t ->
+        match List.tryFind (fun (v',_) -> v == v') vts with
+        | Some(_,t) -> IndefType t
+        | None -> t
+
+let subst vts (TypeSign(cs, t)) = TypeSign(List.map (substType vts) cs, substType vts t)
 
 let newVars vs = 
     List.choose (function
@@ -158,8 +157,7 @@ let newVars vs =
 let free (TypeScheme(vs, t)) = subst (newVars vs) t
 
 let bind t =
-    let vs = freeVars (TypeScheme([], t))
-    let vts = newVars vs
+    let vts = TypeScheme([], t) |> freeVars |> newVars
     TypeScheme(List.map snd vts, subst vts t)
 
 let rebind = free >> bind
@@ -265,7 +263,7 @@ let rec typingCore env = function
 
         typingCore env cont
 
-    | InstanceDef(className, vs, is, cont) as e ->
+    | InstanceDef(className, instanceTypeVars, is, cont) as e ->
         let td =
             try Env.findT className env with
             | :? System.Collections.Generic.KeyNotFoundException ->
@@ -274,21 +272,48 @@ let rec typingCore env = function
         match td with
         | EmptyTypeDef _ -> raise <| TypingException(InvalidInstanceDeclare e)
         | ClassDef(classTypeVars, ds) ->
-            if List.length vs <> List.length classTypeVars then raise <| TypingException(InvalidInstanceDeclare e)
+            if List.length instanceTypeVars <> List.length classTypeVars then raise <| TypingException(InvalidInstanceDeclare e)
             if not <| isSetWith (fun l r -> fst l = fst r) is then raise <| TypingException(InvalidInstanceDeclare e)
 
             List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') is then raise <| TypingException(MethodNotImplemented(e, n))) ds
             List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') ds then raise <| TypingException(MethodMismatch(e, n))) is
             
-            let instanceTypeVars = List.collect (fun t -> freeVars(TypeScheme([], TypeSign([], t)))) vs
+            // class ShowN a where { showN : type b. Num b => b -> a -> String }
+            //
+            // instance ShowN (Vec a) where { show _ _ = "[...]" }
+            //
+            // ``show::Vec(1)`` : type x. ShowN (Vec x) = {
+            //    show : type y. Num y => y -> Vec x -> String = \ _ _ -> "[...]"
+            // }
+
+            let classTypeVarAndInstanceTypeVar = List.zip classTypeVars instanceTypeVars
+
+            let classDef =
+                // classTypeVars :: `a`
+                // classTypeVarToNewVar :: [`a`, `_flesh0`]
+
+                let classTypeVarToNewVar =
+                    List.choose (function
+                        | { contents = SomeType _ } -> None
+                        | ({ contents = TypeVar } as v) -> Some(v, newTypeVar())
+                    ) classTypeVars
+
+                // className = "ShowN"
+                // ds = ["showN", `type b. Num b => b -> _flesh0 -> String`]
+                let ds =
+                    List.map (fun (v, TypeScheme(vs, t)) ->
+                        v,
+                            // TODO: ???
+                            TypeScheme(vs, subst classTypeVarToNewVar t)
+                    ) ds 
+                className, ds
+
+            let instanceTypeVars = List.collect (fun t -> freeVars(TypeScheme([], TypeSign([], t)))) instanceTypeVars
             let methodDefAndImpls = List.map (fun (v,d) -> v, d, List.find (fst >> (=) v) is |> snd) ds
+            
 
-            let subst = newVars classTypeVars
-            // class Show a where { show : a -> String }
-            // instance Show (Vec a) where { show _ = "[...]" }
-            // ``show::Vec(1)`` : type a. Show (Vec a) = { show : List a -> String = \ _ -> "[...]" }
 
-            let env = Env.addI (TypeScheme( className vs env))
+            let env = Env.addI (TypeScheme(instanceTypeVars, TypeSign([], className instanceTypeVars env)))
 
             let its = List.map (fun i -> i, newVarT()) methodDefAndImpls
             let env = List.fold (fun env ((v,_,_),vt) -> Env.add v (bind vt) env) env its
