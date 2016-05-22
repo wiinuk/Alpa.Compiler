@@ -4,7 +4,7 @@ type Symbol = string
 type Var = string
 type assoc<'k,'v> = ('k * 'v) list
 
-// Map [a] Int; Char -> b
+/// ex: Map [a] Int; Char -> b
 [<NoComparison>]
 type Type =
     | Type of Symbol * Type list
@@ -19,11 +19,11 @@ and IndefType = IndefTypeInfo ref
 /// require: function { contents = IndefTypeInfo.TypeVar } -> true | _ -> false
 type TypeVar = IndefType
 
-// (Num a, Ord a) => Set a -> Option a
+/// ex: (Num a, Ord a) => Set a -> Option a
 [<NoComparison>]
 type TypeSign = TypeSign of context: Type list * Type
 
-// type a b. (Eq a, Show b) => [c] -> (c -> a) -> a -> b -> String
+/// ex: type a b. (Eq a, Show b) => [c] -> (c -> a) -> a -> b -> String
 [<NoComparison>]
 type TypeScheme = TypeScheme of TypeVar list * TypeSign
 
@@ -89,6 +89,7 @@ let bind t =
     let vts' = List.map (fun (v,t) -> v, IndefType t) vts
     TypeScheme(List.map snd vts, subst vts' t)
 
+/// rebind t"type a. Eq b => (a, b, Int)" = t"type x b. Eq y => (x, y, Int)
 let rebind = free >> bind
 
 type Result<'T,'E> = Ok of 'T | Error of 'E
@@ -129,7 +130,6 @@ type Errors =
 exception TypingException of Errors
 
 let typesign0 t = TypeSign([], t)
-
 let type0 n = Type(n, [])
 let type1 n t1 = Type(n, [t1])
 let type2 n t1 t2 = Type(n, [t1; t2])
@@ -142,8 +142,7 @@ let forall1 f =
 let forall2 f =
     let v1, v2 = newTypeVar(), newTypeVar()
     TypeScheme([v1; v2], f (IndefType v1) (IndefType v2))
-
-
+    
 let refT = type1 "Ref"
 let unitT = type0 "()"
 let boolT = type0 "Bool"
@@ -172,7 +171,16 @@ let (|Type0|Type1|Type2|TypeN|) = function
     | Type(n, [t1; t2]) -> Type2(n, t1, t2)
     | t -> TypeN t
 
+let rec (|VarT|_|) = function
+    | IndefType({ contents = TypeVar } as v) -> Some v
+    | IndefType { contents = SomeType(VarT t) } -> Some t
+    | _ -> None
+
 let (|LamT|_|) = function Type2("->", l, r) -> Some(l, r) | _ -> None
+let (|Lam3T|_|) = function
+    | LamT(t1, LamT(t2, t3)) -> Some(t1, t2, t3)
+    | _ -> None
+
 let (|IntT|_|) = function Type0 "Int" -> Some() | _ -> None
 
 let unionContext l r = l @ r
@@ -204,7 +212,7 @@ let solveTS l (TypeScheme(_, TypeSign(rcs, r))) =
             | Some(_, IndefType({ contents = SomeType r })) -> solveT assigns l r
             | Some(_, Type _) -> raise <| SolveException(l, r)
 
-        | IndefType({ contents = TypeVar } as lv), Type _ -> raise <| SolveException(l, r)
+        | IndefType { contents = TypeVar }, Type _ -> raise <| SolveException(l, r)
 
     try
         let vts = solveT [] l r
@@ -213,12 +221,7 @@ let solveTS l (TypeScheme(_, TypeSign(rcs, r))) =
     with
     | SolveException(l, r) -> Error(l, r)
 
-let mapT = type2 "Map"
-let vecT = type1 "Vec"
-let numT = type1 "Num"
-let eqT = type1 "Eq"
 let (.=>) cs t = TypeSign(cs, t)
-let (.|) vs t = TypeScheme(vs, t)
 
 let rec appendRev ls rs =
     match ls with
@@ -269,7 +272,10 @@ let resultEq eq1 eq2 l r =
 let solveOrRaise e ({ impls = impls } as env) cs =
     let findOrRaise c =
         match solveI c impls with
-        | Error t -> raise <| TypingException(InstanceNotFound(e, env, c, t))
+        | Error t ->
+            if isFullApply (forall0 <| typesign0 t)
+            then raise <| TypingException(InstanceNotFound(e, env, c, t))
+            else [c]
         | Ok cs -> cs
 
     List.collect findOrRaise cs
@@ -293,10 +299,6 @@ let rec unify e l r =
     | _ -> raise <| TypingException(TypeMismatch(e, l, r))
     
 let isPureTypeArg = function { contents = TypeVar } -> true | _ -> false
-let typeArgEq l r =
-    match l, r with
-    | IndefType({ contents = TypeVar } as l), IndefType({ contents = TypeVar } as r) -> l == r
-    | _ -> true
 
 let isSetWith eq xs =
     let rec check set = function
@@ -305,9 +307,6 @@ let isSetWith eq xs =
             if List.exists (eq x) set then false
             else check (x::set) xs
     check [] xs
-
-let co _ = () 
-let t (_: string) : Type = failwith ""
 
 let unlift (TypeSign(cs, t)) =
     let mutable i = 0
@@ -424,36 +423,19 @@ let rec typingCore env = function
             List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') impls then raise <| TypingException(MethodNotImplemented(e, n))) methodDefs
             List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') methodDefs then raise <| TypingException(MethodMismatch(e, n))) impls
             
-            // classTypeVars :: [`a`]
-            // instanceTypeArgs :: [`Vec x`]
             let typeVars = List.map (!) classTypeVars
             List.iter2 (fun classTypeVar instanceTypeArg -> classTypeVar := SomeType instanceTypeArg) classTypeVars instanceTypeArgs
 
-            // classTypeVars :: [`Vec x`]
-            co <@ classTypeVars, [t"Vec x"] @>
-            co <@ methodDefs, ["showN", t"type b. Num b => b -> Vec x -> String"] @>
-
             List.iter (fun (methodName, methodType) ->
-                co <@ methodType, t"type b. Num b => b -> Vec x -> String" @>
-
                 let _, implBody = List.find (fun (n,_) -> n = methodName) impls
-                co <@ implBody, (fun xs n -> "[...]") @>
-
                 let implType = typingCore env implBody
-                co <@ implType, t"t -> u -> String" @>
-
                 let methodType = free methodType
-                co <@ methodType, t"Num v => v -> Vec x -> String" @>
-
                 unify e (lamT <|| unlift implType) (lamT <|| unlift methodType)
-
-                co <@ implType, t"Num v => v -> Vec x -> String" @>
             ) methodDefs
  
             List.iter2 (:=) classTypeVars typeVars
 
             let instanceFreeVars = List.collect (fun t -> freeVars <| TypeScheme([], TypeSign([], t))) instanceTypeArgs
-            co <@ instanceTypeArgs, [t"x"] @>
 
             let instanceType = TypeScheme(instanceFreeVars, TypeSign([], Type(className, instanceTypeArgs)))
             typingCore (Env.addI instanceType env) cont
@@ -469,7 +451,7 @@ let deref (TypeSign(cs, t)) =
             t
     TypeSign(List.map derefT cs, derefT t)
 
-let sprintType t =
+module Print =
     let wrap p tp t = if tp <= p then sprintf "(%s)" t else t
     let quote q n =
         if not <| Seq.exists (fun c -> c = '\\' || c = q) n then sprintf "%c%s%c" q n q
@@ -566,20 +548,21 @@ let sprintType t =
 
         if List.isEmpty vs then t
         else
-            let ts, map =
+            let ts, _ =
                 List.fold (fun (r, map) v ->
                     let r', map = printTypeArg map v
                     r + " " + r', map
                 ) ("", map) vs
 
             sprintf "type%s.%s" ts t
-        
-    printTypeScheme t
+      
+let sprintType t = Print.printTypeScheme t
 
 let typing e =
     try 
         typingCore Env.empty e 
         |> deref
+        |> bind
         |> Ok 
     with
     | TypingException e -> Error e
@@ -595,12 +578,14 @@ type Decl =
     | ExtDec of Var * TypeScheme
     | LetDec of Var * Expr
     | RecDec of Var * Expr
+    | AndDec of (Var * Expr) list
     | TypDec of Var * TypeDef
 
-let extE var type' = ExtDec(var, type')
+let extD var type' = ExtDec(var, type')
 let letE var body = LetDec(var, body)
 let recE var body = RecDec(var, body)
 let typE var typeDef = TypDec(var, typeDef)
+let andD = AndDec
 let clsE var typeVars methodDefs = typE var (ClassDef(typeVars, methodDefs))
 let cls1E var makeDefs =
     let a = newTypeVar()
@@ -612,61 +597,96 @@ let (^.) def cont =
     | LetDec(v, b) -> Let(v, b, cont)
     | RecDec(v, b) -> LetRec([v,b], cont)
     | TypDec(v, d) -> TypeDef(v, d, cont)
+    | AndDec vds -> LetRec(vds, cont)
 
-let (!!!) = function ExtDec(x, _) | LetDec(x, _) | RecDec(x, _) | TypDec(x, _) -> !x
+let (!!!) = function 
+    | ExtDec(x, _) | LetDec(x, _) | RecDec(x, _) | TypDec(x, _) -> !x
+    | AndDec _ -> failwithf "AndDec"
 
 let trueE = Bool true
+let falseE = Bool false
 let (~+) = Int
 let (^^.) l r = !"seq" %. l %. r
 
-/// free (type a. a -> a -> b -> Int) = (_flesh0 -> _flesh0 -> b -> Int)
-let a, b = newTypeVar(), newTypeVar()
-match free <| TypeScheme([a], [] .=> lam4T !!a !!a !!b intT) with
-| TypeSign([], LamT(IndefType a', LamT(IndefType a'', LamT(IndefType b', IntT)))) ->
-    a' != a && a'' != a && a' == a'' && b == b' && a' != b'
-| _ -> false
+let mapT = type2 "Map"
+let vecT = type1 "Vec"
+let numT = type1 "Num"
+let eqT = type1 "Eq"
 
-/// bind (x -> y -> Int) = (type a b. a -> b -> Int)
-let x, y = newTypeVar(), newTypeVar()
-match bind ([] .=> lam3T !!x !!y intT) with
-| TypeScheme([a; b], TypeSign([], LamT(IndefType a', LamT(IndefType b', IntT)))) ->
-    x != a && a == a' && y != b && b == b'
-| _ -> false
+let ifD = extD "if" <| forall1 (fun a -> [] .=> lam4T boolT a a a)
+let seqD = extD "seq" <| forall1 (fun a -> [] .=> lam3T unitT a a)
 
-let ifD = extE "if" <| forall1 (fun a -> [] .=> lam4T boolT a a a)
-let seqD = extE "seq" <| forall1 (fun a -> [] .=> lam3T unitT a a)
+let addIntD = extD "_+_" <| forall0 ([] .=> lam3T intT intT intT)
+let succIntD = extD "succ" <| forall0 ([] .=> intT .-> intT)
 
-let addIntD = extE "_+_" <| forall0 ([] .=> lam3T intT intT intT)
-let succIntD = extE "succ" <| forall0 ([] .=> intT .-> intT)
+let tup2D = extD "," <| forall2 (fun a b -> [] .=> lam3T a b (tup2T a b))
 
-let tup2D = extE "," <| forall2 (fun a b -> [] .=> lam3T a b (tup2T a b))
-
-let listEmptyD = extE "List.empty" <| forall1 (fun a -> [] .=> listT a)
-let listConsD = extE "List.cons" <| forall1 (fun a -> [] .=> lam3T a (listT a) (listT a))
-let listIsEmptyD = extE "List.isEmpty" <| forall1 (fun a -> [] .=> listT a .-> boolT)
-let listTailD = extE "List.tail" <| forall1 (fun a -> [] .=> listT a .-> listT a)
-let listHeadD = extE "List.head" <| forall1 (fun a -> [] .=> listT a .-> a)
-let listMapD = extE "List.map" <| forall2 (fun a b -> [] .=> lam3T (a .-> b) (listT a) (listT b))
+let listEmptyD = extD "List.empty" <| forall1 (fun a -> [] .=> listT a)
+let listConsD = extD "List.cons" <| forall1 (fun a -> [] .=> lam3T a (listT a) (listT a))
+let listIsEmptyD = extD "List.isEmpty" <| forall1 (fun a -> [] .=> listT a .-> boolT)
+let listTailD = extD "List.tail" <| forall1 (fun a -> [] .=> listT a .-> listT a)
+let listHeadD = extD "List.head" <| forall1 (fun a -> [] .=> listT a .-> a)
+let listMapD = extD "List.map" <| forall2 (fun a b -> [] .=> lam3T (a .-> b) (listT a) (listT b))
 
 let idD = letE "id" ("x" ->. !"x")
     
-let refD = extE "ref" <| forall1 (fun a -> [] .=> a .-> refT a)
-let refSetD = extE ":=" <| forall1 (fun a -> [] .=> lam3T (refT a) a unitT)
-let refGetD = extE "!" <| forall1 (fun a -> [] .=> refT a .-> a)
+let refD = extD "ref" <| forall1 (fun a -> [] .=> a .-> refT a)
+let refSetD = extD ":=" <| forall1 (fun a -> [] .=> lam3T (refT a) a unitT)
+let refGetD = extD "!" <| forall1 (fun a -> [] .=> refT a .-> a)
+
+let eqD = cls1E "Eq" <| fun a -> ["_==_", forall0 ([] .=> lam3T a a boolT)]
+let numD =
+    cls1E "Num" <| fun a ->
+        [
+        "_-_", forall0 ([] .=> lam3T a a a)
+        "_+_", forall0 ([] .=> lam3T a a a)
+        ]
+        
+let errorsEq = (=)
+let typeSchemeEq l r =
+    let TypeScheme(lvs, TypeSign(lcs, l)), TypeScheme(rvs, TypeSign(rcs, r)) = rebind l, rebind r
+    List.length lvs = List.length rvs &&
+    (
+        List.iter2 (fun rv lv -> rv := SomeType(IndefType lv)) rvs lvs
+        listEq typeEq lcs rcs &&
+        typeEq l r
+    )
+
+let assertEq eq l r =
+    if eq l r then printfn "ok"
+    else printfn "assert (==) %A %A" l r
+
+let (==?) l r = assertEq (resultEq typeSchemeEq errorsEq) l r
+
+fun _ ->
+    /// free (type a. a -> a -> b -> Int) = (_flesh0 -> _flesh0 -> b -> Int)
+    let a, b = newTypeVar(), newTypeVar()
+    match free <| TypeScheme([a], [] .=> lam4T !!a !!a !!b intT) with
+    | TypeSign([], LamT(IndefType a', LamT(IndefType a'', LamT(IndefType b', IntT)))) ->
+        a' != a && a'' != a && a' == a'' && b == b' && a' != b'
+    | _ -> false
+
+fun _ ->
+    /// bind (x -> y -> Int) = (type a b. a -> b -> Int)
+    let x, y = newTypeVar(), newTypeVar()
+    match bind ([] .=> lam3T !!x !!y intT) with
+    | TypeScheme([a; b], TypeSign([], LamT(IndefType a', LamT(IndefType b', IntT)))) ->
+        x != a && a == a' && y != b && b == b'
+    | _ -> false
 
 ifD ^.
 letE "f" ("x" ->. !"x") ^.
 ifE (!"f" %. trueE) (!"f" %. + 2) (+ 3)
 |> typing
-    = Ok([] .=> intT)
+    ==? Ok(forall0 ([] .=> intT))
 
 tup2D ^.
 letE "f" ("x" ->. !"x") ^.
 app2E !!!tup2D (!"f" %. + 1) (!"f" %. trueE)
 |> typing
-    = Ok([] .=> tup2T intT boolT)
+    ==? Ok(forall0 ([] .=> tup2T intT boolT))
 
-typing (tup2D ^. "f" ->. app2E !!!tup2D (!"f" %. + 1) (!"f" %. trueE)) =
+typing (tup2D ^. "f" ->. app2E !!!tup2D (!"f" %. + 1) (!"f" %. trueE)) ==?
     Error(TypeMismatch(!"f" %. trueE, intT, boolT))
 
 // TODO: value restriction
@@ -674,14 +694,14 @@ listMapD ^.
     idD ^.
     tup2D ^.
 
-    extE "xs" (forall0 ([] .=> listT intT)) ^.
-    extE "xs2" (forall0 ([] .=> listT boolT)) ^.
+    extD "xs" (forall0 ([] .=> listT intT)) ^.
+    extD "xs2" (forall0 ([] .=> listT boolT)) ^.
 
     letE "f" (!!!listMapD %. !!!idD) ^.
     app2E !!!tup2D (!"f" %. !"xs") (!"f" %. !"xs2")
 
     |> typing 
-        = Ok([] .=> tup2T (listT intT) (listT boolT))
+        ==? Ok(forall0 ([] .=> tup2T (listT intT) (listT boolT)))
 
 
 // TODO: value restriction
@@ -693,14 +713,14 @@ seqD ^.
     listHeadD ^.
     listEmptyD ^.
 
-    extE "xs" (forall0 ([] .=> listT boolT)) ^.
+    extD "xs" (forall0 ([] .=> listT boolT)) ^.
 
     letE "polyref" (!!!refD %. !!!listEmptyD) ^.
     app2E !!!refSetD !"polyref" !"xs" ^^.
     app2E !!!addIntD (+ 123) (!!!listHeadD %. (!!!refGetD %. !"polyref"))
 
     |> typing 
-        = Ok([] .=> intT)
+        ==? Ok(forall0 ([] .=> intT))
 
 
 ifD ^.
@@ -714,64 +734,88 @@ ifD ^.
     !"len" %. (!!!listConsD %. (+ 0) %. !!!listEmptyD)
 
     |> typing 
-        = Ok([] .=> intT)
+        ==? Ok(forall0 ([] .=> intT))
 
-cls1E "Foo" <| fun a -> ["op", forall1 <| fun b -> [numT b] .=> lam3T a b a]
-            
+let fooD = cls1E "Foo" <| fun a -> ["op", forall1 <| fun b -> [numT b] .=> lam3T a b a]
+
+numD ^.
+fooD ^.
+!"op"
+|> typing
+    ==? Ok(forall2 <| fun a b -> [type1 "Foo" a; numT b] .=> lam3T a b a)
+    
+numD ^.
+letE "double" ("x" ->. app2E !"_+_" !"x" !"x") ^.
+!"double"
+|> typing
+    ==? Ok(forall1 <| fun a -> [numT a] .=> a .-> a)
+
 fun _ ->
+    let a = newTypeVar()
+    match free (TypeScheme([a], [numT !!a] .=> !!a)) with
+    | TypeSign([Type1("Num", VarT x)], VarT x') -> a != x && x == x'
+    | _ -> false
+
+fun _ ->
+    let a, b = newTypeVar(), newTypeVar()
+    match free (TypeScheme([a; b], [numT !!a] .=> !!b)) with
+    | TypeSign([Type1("Num", VarT x)], VarT y) -> a != x && a != y && b != x && b != y && x != y
+    | _ -> false
+
+// TODO: ???
+let t' = forall0 ([numT intT] .=> intT)
+typeSchemeEq (forall0 <| free t') t'
 
 // type a. Eq a => a -> a
 // type a b. (Eq a, Show a, Eq b) => [a] -> [b] -> String
 // type f a b. (Eq (f a), Functor f) => (a -> b) -> f a -> f b -> Bool
 
-// class Num a = {}
-// class Foo a = { op : Num b => a -> b -> a }
-// op : type a b. (Foo a, Num b) => a -> b -> a
 
-// double : type a. Num a => a -> a
-// double x = x + x 
+begin
+    let (===?) l r =
+        let eq = resultEq (listEq typeEq) typeEq
+        if not <| eq l r then printfn "assert (==) %A %A" l r
 
-// free (type a. Num a => a) = Num _flesh0 => _flesh0
-// free (type a b. Num b => a) = Num _flesh0 => _flesh1
-// free (Num Int => Int) = ???
-
-// free (type (Num a => a) b. (Num a => a) -> b) = ((Num _fresh0 => _fresh0) -> _fresh1o)
-// free (type (Num a => a). Num a => a) = ((Num _fresh0 => _fresh0) -> _fresh1o)
-
-
-    let eq = resultEq (listEq typeEq) typeEq
-    let (==?) l r = if not <| eq l r then printfn "(==) %A %A" l r
     let isError = function Error _ -> () | x -> printfn "isError %A" x
 
     let a, b = newVarT(), newVarT()
-    solveI (mapT a (vecT b)) [forall2 <| fun x y -> [] .=> mapT x y] ==? Ok []
+    solveI (mapT a (vecT b)) [forall2 <| fun x y -> [] .=> mapT x y] ===? Ok []
     solveI (mapT a (vecT b)) [forall1 <| fun x -> [] .=> mapT x x] |> isError
     solveI (mapT (vecT a) b) [forall1 <| fun x -> [] .=> mapT x x] |> isError
-    solveI (numT a) [forall1 (fun a -> [] .=> numT a)] ==? Ok []
-    solveI (mapT a a) [forall2 <| fun x y -> [] .=> mapT x y] ==? Ok []
+    solveI (numT a) [forall1 (fun a -> [] .=> numT a)] ===? Ok []
+    solveI (mapT a a) [forall2 <| fun x y -> [] .=> mapT x y] ===? Ok []
     solveI (mapT a b) [forall1 <| fun x -> [] .=> mapT x x] |> isError
-    solveI (numT (vecT a)) [forall1(fun x -> [eqT x] .=> numT (vecT x)); forall1(fun x -> [] .=> numT x)] ==? Ok [eqT a]
-    solveI (numT (vecT a)) [forall1(fun x -> [] .=> numT x); forall1(fun x -> [eqT x] .=> numT (vecT x))] ==? Ok []
-    solveI (numT (vecT boolT)) [forall1 <| fun x -> [eqT x] .=> numT (vecT x)] ==? Error(eqT boolT)
-    solveI (numT (vecT boolT)) [forall1 (fun x -> [eqT x] .=> numT (vecT x)); forall0([] .=> eqT boolT)] ==? Ok []
-    solveI (numT (vecT a)) [forall1 <| fun x -> [eqT x] .=> numT (vecT x)] ==? Ok [eqT a]
+    solveI (numT (vecT a)) [forall1(fun x -> [eqT x] .=> numT (vecT x)); forall1(fun x -> [] .=> numT x)] ===? Ok [eqT a]
+    solveI (numT (vecT a)) [forall1(fun x -> [] .=> numT x); forall1(fun x -> [eqT x] .=> numT (vecT x))] ===? Ok []
+    solveI (numT (vecT boolT)) [forall1 <| fun x -> [eqT x] .=> numT (vecT x)] ===? Error(eqT boolT)
+    solveI (numT (vecT boolT)) [forall1 (fun x -> [eqT x] .=> numT (vecT x)); forall0([] .=> eqT boolT)] ===? Ok []
+    solveI (numT (vecT a)) [forall1 <| fun x -> [eqT x] .=> numT (vecT x)] ===? Ok [eqT a]
+end
 
-// solveI t"Map a (Vec b)" t"Map x y" = Ok []
-// solveI t"Map a (Vec b)" t"Map x x" = Error _
-// solveI t"Map (Vec a) b" t"Map x x" = Error _
-// solveI t"Num a" [t"type x. Num x"] = Ok []
-// solveI t"Map a a" [t"type x y. Map x y"] = Ok []
-// solveI t"Map a b" [t"type x. Map x x"] = Error _
-// solveI t"Num (Vec a)" [t"type x. Eq x => Num (Vec x)"; t"type x. Num x"] = Ok [t"Eq a"]
-// solveI t"Num (Vec a)" [t"type x. Num x"; t"type x. Eq x => Num (Vec x)"] = Ok []
-// solveI t"Num (Vec Bool)" [t"type x. Eq x => Num (Vec x)"] = Error [t"Eq Bool"]
-// solveI t"Num (Vec Bool)" [t"type x. Eq x => Num (Vec x)"; t"Eq Bool"] = Ok []
-// solveI t"Num (Vec a)" [t"type x. Eq x => Num (Vec x)"] = Ok [t"Eq a"]
+begin
+    let a, b = newVarT(), newVarT()
+    let unlift t = lamT <|| unlift t
+    let (===?) = assertEq typeEq
+    let (====?) = assertEq typeSchemeEq
 
-// unlift t"Show a => a" = t"Show a -> a"
-// unlift t"Int" = t"_fleshVar -> Int"
-// unlift t"(Show a, Eq b) => (a, b)" = (t"Eq b, Show a) -> (a, b)"
-// unlift t"(Show a, Eq b) => (a, b)" = unlift t"(Eq b, Show a) => (a, b)"
+    unlift ([numT a] .=> a) ===? numT a .-> a
+    forall0 ([] .=> unlift ([] .=> intT)) ====? forall1 (fun a -> [] .=> a .-> intT)
+    unlift ([numT a; eqT b] .=> tup2T a b) ===? tup2T (eqT b) (numT a) .-> tup2T a b
+    unlift ([numT a; eqT b] .=> tup2T a b) ===? unlift ([eqT b; numT a] .=> tup2T a b)
+end
+
+ifD ^.
+eqD ^.
+numD ^.
+extD "0" (forall1 <| fun a -> [numT a] .=> a) ^.
+extD "1" (forall1 <| fun a -> [numT a] .=> a) ^.
+andD [
+    "even", "n" ->. ifE (app2E !"_==_" !"n" !"0") trueE (appE !"odd" (app2E !"_-_" !"n" !"1"))
+    "odd", "n" ->. ifE (app2E !"_==_" !"n" !"0") falseE (appE !"even" (app2E !"_-_" !"n" !"1"))
+] ^.
+!"even"
+    |> typing ==? Ok(forall1 <| fun a -> [eqT a; numT a] .=> a .-> boolT)
+
 // type Bool
 // True : type. () => Bool
 // False : type. () => Bool
@@ -785,8 +829,8 @@ fun _ ->
 // ``0`` : type a. Num a => a
 // ``1`` : type a. Num a => a
 // 
-// rec even = \n. if (n == 0) True (odd (x - 1))
-// and odd = \n. if (n == 0) False (even (x - 1))
+// rec even = \n. if (n == 0) True (odd (n - 1))
+// and odd = \n. if (n == 0) False (even (n - 1))
 // in even
 
     // class Num a ...
