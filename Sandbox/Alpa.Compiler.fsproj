@@ -77,8 +77,9 @@
     <None Include="Alpa.Parser.Helpers.fsx" />
     <None Include="Parser.Test.fsx" />
     <None Include="IkaTune.fsx" />
-    <None Include="PolyTyping2.fsx" />
     <None Include="PolyTyping.fsx" />
+    <None Include="PolyTyping2.fsx" />
+    <None Include="PolyTyping2.Test.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">
