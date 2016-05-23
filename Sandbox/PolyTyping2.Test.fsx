@@ -26,11 +26,11 @@ let (.=>) cs t = TypeSign(cs, t)
 
 let simpleT t = forall0([] .=> t)
 
-let (|Type0|Type1|Type2|TypeN|) = function
+let (|Type0|Type1|Type2|TypeLt2|) = function
     | Type(n, []) -> Type0 n
     | Type(n, [t1]) -> Type1(n, t1)
     | Type(n, [t1; t2]) -> Type2(n, t1, t2)
-    | t -> TypeN t
+    | t -> TypeLt2 t
 
 let rec (|VarT|_|) = function
     | IndefType({ contents = TypeVar } as v) -> Some v
@@ -188,11 +188,11 @@ let ifE c t f = !"if" %. c %. t %. f
 
 type Decl =
     | ExtDec of Var * TypeScheme
-    | LetDec of Var * Expr
-    | RecDec of Var * Expr
+    | LetDec of Var * Exp
+    | RecDec of Var * Exp
     | TypDec of Var * TypeDef
-    | InsDec of Var * Type list * (Var * Expr) list
-    | AndDec of (Var * Expr) list
+    | InsDec of Var * Type list * (Var * Exp) list
+    | AndDec of (Var * Exp) list
 
 let extD var type' = ExtDec(var, type')
 let letE var body = LetDec(var, body)
@@ -228,9 +228,30 @@ let vecT = type1 "Vec"
 let numT = type1 "Num"
 let eqT = type1 "Eq"
 
+let fractionalT = type1 "Fractional"
+
+let intLitT = forall1 <| fun a -> [numT a] .=> a
+let floatLitT = forall1 <| fun a -> [fractionalT a] .=> a
+let floatL _ = Lit floatLitT
+let intL _ = Lit intLitT
+let stringL _ = Lit <| forall0 ([] .=> stringT)
+
+let (=>.) v xs = Mat(v, List.head xs, List.tail xs)
+let numP _ = LitPat intLitT
+let anyP = AnyPat
+
+let dataD n vs ds = TypDec(n, DataDef(vs, ds))
+let data1D n f =
+    let t1 = newTypeVar()
+    dataD n [t1] <| f (IndefType t1)
+
+let con0P n = ConPat(n, [])
+let con1P n p1 = ConPat(n, [p1])
+let con2P n p1 p2 = ConPat(n, [p1; p2])
+
 let trueE = Lit <| simpleT boolT
 let falseE = Lit <| simpleT boolT
-let (~+) (_: int) = Lit <| forall1 (fun a -> [numT a] .=> a)
+let (~+) (_: int) = Lit <| simpleT intT
 let (^^.) l r = !"seq" %. l %. r
 
 let ifD = extD "if" <| forall1 (fun a -> [] .=> lam4T boolT a a a)
@@ -283,21 +304,27 @@ let assertEq eq l r =
 
 let (==?) l r = assertEq (resultEq typeSchemeEq errorsEq) l r
 
-fun _ ->
+let newTypeVar2 f = f (newTypeVar()) (newTypeVar())
+let newTypeVar1 f = f <| newTypeVar()
+
+newTypeVar2 <| fun a b ->
+
     /// free (type a. a -> a -> b -> Int) = (_flesh0 -> _flesh0 -> b -> Int)
-    let a, b = newTypeVar(), newTypeVar()
     match free <| TypeScheme([a], [] .=> lam4T !!a !!a !!b intT) with
     | TypeSign([], LamT(IndefType a', LamT(IndefType a'', LamT(IndefType b', IntT)))) ->
         a' != a && a'' != a && a' == a'' && b == b' && a' != b'
     | _ -> false
 
-fun _ ->
+newTypeVar2 <| fun x y ->
+    
     /// bind (x -> y -> Int) = (type a b. a -> b -> Int)
-    let x, y = newTypeVar(), newTypeVar()
     match bind ([] .=> lam3T !!x !!y intT) with
     | TypeScheme([a; b], TypeSign([], LamT(IndefType a', LamT(IndefType b', IntT)))) ->
         x != a && a == a' && y != b && b == b'
     | _ -> false
+
+// f = \x. x in
+// if (f true) (f 2) 3
 
 ifD ^.
 letE "f" ("x" ->. !"x") ^.
@@ -375,14 +402,12 @@ letE "double" ("x" ->. app2E !"_+_" !"x" !"x") ^.
 |> typing
     ==? Ok(forall1 <| fun a -> [numT a] .=> a .-> a)
 
-fun _ ->
-    let a = newTypeVar()
+newTypeVar1 <| fun a ->
     match free (TypeScheme([a], [numT !!a] .=> !!a)) with
     | TypeSign([Type1("Num", VarT x)], VarT x') -> a != x && x == x'
     | _ -> false
 
-fun _ ->
-    let a, b = newTypeVar(), newTypeVar()
+newTypeVar2 <| fun a b ->
     match free (TypeScheme([a; b], [numT !!a] .=> !!b)) with
     | TypeSign([Type1("Num", VarT x)], VarT y) -> a != x && a != y && b != x && b != y && x != y
     | _ -> false
@@ -480,3 +505,56 @@ ins0D "Num" floatT
 app2E !!!tup2D (appE !"_+_" (Lit <| simpleT intT)) (appE !"_+_" (Lit <| simpleT floatT))
 |> typing
     ==? Ok(simpleT <| tup2T (intT .-> intT) (floatT .-> floatT))
+
+floatL 1.0 =>. [
+    numP 1, stringL "1"
+    anyP, stringL "any"
+]
+|> typing
+    ==? Ok(forall1 <| fun a -> [fractionalT a; numT a] .=> stringT)
+
+data1D "Digit" (fun a ->
+[
+    "Zero", []
+    "One", [a]
+    "Two", [a; a]
+]) ^.
+
+"x" ->.
+    (!"x" =>. [
+        con0P "Zero", intL 0
+        con1P "One" anyP, intL 1
+        con2P "Two" anyP anyP, intL 2
+    ])
+|> typing
+    ==? Ok(forall2 <| fun a b -> [numT b] .=> type1 "Digit" a .-> b)
+
+// case e of { alts } = (\v -> case v of { alts }) e
+// v は新しい変数
+//
+// case v of { p[1] match[1];  ... ; p[n] match[n] }
+// = case v of { p[1] match[1] ;
+//               _  -> ... case v of {
+//                          p[n] match[n] ;
+//                          _  -> error "No match" }... }
+// 各 match[i] は以下の形式をもつ。
+// | g[i], m[1] -> ei, m[1] ; ... ; | g[i], m[i] -> e[i], m[i] where { decls[i] }
+//
+// case v of { p | g[1] -> e[1] ; ...
+//               | g[n] -> e[n] where { decls }
+//             _        -> e' }
+// = case e' of
+//  { y ->  (y は新しい変数)
+//   case v of {
+//         p -> let { decls } in
+//                if g[1] then e[1] ... else if g[n] then e[n] else y ;
+//         _ -> y }}
+//
+// case v of { ~p -> e; _ -> e' }
+// = (\x[1] ... x[n] -> e ) (case v of { p -> x[1] }) ... (case v of { p -> x[n] })
+// x[1], ..., x[n] はすべて p 内の変数
+//
+// case v of { x@p -> e; _ -> e' }
+// = case v of { p -> (\x -> e) v; _ -> e' }
+//
+// case v of { _ -> e; _ -> e' } = e

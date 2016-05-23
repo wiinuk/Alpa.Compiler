@@ -31,38 +31,56 @@ type TypeScheme = TypeScheme of TypeVar list * TypeSign
 
 [<NoComparison>]
 type TypeDef =
-    | EmptyTypeDef of typeArgs: TypeVar list
+    | DataDef of typeArgs: TypeVar list * assoc<Var, Type list>
     | ClassDef of typeArgs: TypeVar list * assoc<Var, TypeScheme>
 
+type Pat =
+    | AnyPat
+    | ConPat of Var * Pat list
+    | LitPat of TypeScheme
+    | AsPat of Pat * Var
+
 [<NoComparison>]
-type Expr =
+type Exp =
     | Lit of TypeScheme
     | Var of Var
-    | Lam of Var * Expr
-    | App of Expr * Expr
-    | Ext of Var * TypeScheme * Expr
-    | Let of Var * Expr * Expr
-    | LetRec of assoc<Var, Expr> * Expr
+    | Lam of Var * Exp
+    | App of Exp * Exp
+    | Ext of Var * TypeScheme * Exp
+    | Let of Var * Exp * Exp
+    | LetRec of assoc<Var, Exp> * Exp
     
-    | TypeDef of name: Symbol * TypeDef * Expr
-    | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Var, Expr> * cont: Expr
+    | Mat of Exp * (Pat * Exp) * (Pat * Exp) list
+
+    | TypeDef of name: Symbol * TypeDef * Exp
+    | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Var, Exp> * cont: Exp
     
 type Env = {
     vars: Map<Var, TypeScheme>
+    pats: Map<Var, TypeScheme>
     types: Map<Var, TypeDef>
     impls: TypeScheme list
 }
 type Errors =
-    | TypeMismatch of Expr * Type * Type
+    | TypeMismatch of Exp * Type * Type
+
     | VariableNotFound of Env * Var
-    | TypeNotFound of Expr * Env * Symbol
-    | InstanceNotFound of Expr * Env * main: Type * sub: Type
-    | InvalidTypeArgments of Expr * TypeVar list
-    | DuplicatedMethodDeclare of Expr * assoc<Var, TypeScheme>
-    | DuplicatedLetRecDecrale of Expr * assoc<Var, Expr>
-    | InvalidInstanceDeclare of Expr
-    | MethodNotImplemented of Expr * Symbol
-    | MethodMismatch of Expr * Symbol
+    | TypeNotFound of Exp * Env * Symbol
+    | InstanceNotFound of Exp * Env * main: Type * sub: Type
+    | PatternNotFound of Exp * Env * Var
+
+    | DuplicatedMethodDeclare of Exp * assoc<Var, TypeScheme> * Var
+    | DuplicatedLetRecDecrale of Exp * assoc<Var, Exp> * Var
+    | DuplicatedPatternVariable of Exp * Var
+    | DuplicatedTypeArgment of Exp * TypeVar list * TypeVar
+    | DuplicatedInstanceImplement of Exp * Var
+
+    | InvalidInstanceDeclare of Exp
+    | InvalidTypeArgments of Exp * TypeVar list
+    | InvalidConstructorPattern of Exp * TypeScheme * Pat
+
+    | MethodNotImplemented of Exp * Symbol
+    | MethodMismatch of Exp * Symbol
 
 exception TypingException of Errors
 
@@ -70,12 +88,16 @@ exception TypingException of Errors
 module Env =
     let empty = {
         vars = Map.empty
+        pats = Map.empty
         types = Map.empty
         impls = []
     }
 
     let add v t ({ vars = vars } as env) = { env with vars = Map.add v t vars }
     let find v { vars = vars } = Map.find v vars
+
+    let addP v t ({ pats = pats } as env) = { env with pats = Map.add v t pats }
+    let tryFindP v { pats = pats } = Map.tryFind v pats
 
     let addT v t ({ types = types } as env) = { env with types = Map.add v t types }
     let findT v { types = types } = Map.find v types
@@ -243,12 +265,13 @@ let rec unify e l r =
     
 let isPureTypeArg = function { contents = TypeVar } -> true | _ -> false
 
-let isSetWith eq xs =
+let tryGetDuplicated eq xs =
     let rec check set = function
-        | [] -> true
+        | [] -> None
         | x::xs ->
-            if List.exists (eq x) set then false
-            else check (x::set) xs
+            match List.tryFind (fun x' -> eq x x') set with
+            | None -> check (x::set) xs
+            | x -> x
     check [] xs
 
 let unlift (TypeSign(cs, t)) =
@@ -282,37 +305,80 @@ let unlift (TypeSign(cs, t)) =
     | [c] -> c, t
     | c1::c2::cs -> tupNT c1 c2 cs, t
 
-let rec typingCore env = function
-    | Lit t -> free t
-    | Var v ->
-        try free <| Env.find v env with
-        | :? System.Collections.Generic.KeyNotFoundException ->
-            raise <| TypingException(VariableNotFound(env, v))
+let rec (|LamT|_|) = function
+    | Type("->", [t1;t2]) -> Some(t1, t2)
+    | IndefType { contents = SomeType t } -> (|LamT|_|) t
+    | _ -> None
 
-    | Lam(v, e) ->
-        let vt = newVarT()
-        let env = Env.add v (TypeScheme([], TypeSign([], vt))) env
-        let (TypeSign(ec, et)) = typingCore env e
-        TypeSign(ec, lamT vt et)
-        
-    | App(f, x) as e ->
-        let (TypeSign(fc, ft)) = typingCore env f
-        let (TypeSign(xc, xt)) = typingCore env x
-        let rt = newVarT()
+let rec (|LamNT|_|) = function
+    | LamT(t1,LamNT(t2,t3,ts)) -> Some(t1,t2,t3::ts)
+    | LamT(t1,t2) -> Some(t1,t2,[])
+    | _ -> None
 
-        unify e ft (lamT xt rt)
+let typingPat e env p =
+    let rec aux locals = function 
+        | AnyPat -> TypeSign([], newVarT()), locals
+        | ConPat(v, ps) as p ->
+            match Env.tryFindP v env, ps with
+            | None, [] ->
+                if List.exists (fst >> (=) v) locals then raise <| TypingException(DuplicatedPatternVariable(e, v))
+                else
+                    let t = TypeSign([], newVarT())
+                    t, (v, t)::locals
 
-        TypeSign(solveOrRaise e env (unionContext fc xc), rt)
-        
-    | Let(var, body, cont) as e ->
-        let vt = newVarT()
-        let (TypeSign(bc, bt)) = typingCore env body
-        unify e vt bt
-        typingCore (Env.add var (bind (TypeSign(bc, vt))) env) cont
+            | None, _::_ -> raise <| TypingException(PatternNotFound(e, env, v))
+            | Some(TypeScheme(_, TypeSign(_, LamNT _)) as t), [] -> raise <| TypingException(InvalidConstructorPattern(e, t, p))
+            | Some t, [] -> free t, locals
+            | Some t, _::_ ->
+                match free t with
+                | TypeSign(tc, LamNT(dt, ft, fts)) ->
+                    if List.length ps <> List.length fts + 1 then raise <| TypingException(InvalidConstructorPattern(e, t, p))
+                    let fts = ft::fts
+                    let tc, locals =
+                        List.fold2 (fun (tc, locals) p ft ->
+                            let (TypeSign(pc, pt)), locals = aux locals p
+                            unify e ft pt
+                            unionContext tc pc, locals
+                        ) (tc, locals) ps fts
 
-    | LetRec(varBodies, cont) as e ->
-        if not <| isSetWith (fun l r -> fst l = fst r) varBodies then raise <| TypingException(DuplicatedLetRecDecrale(e, varBodies))
+                    TypeSign(tc, dt), locals
 
+                | _ -> raise <| TypingException(InvalidConstructorPattern(e, t, p))
+
+        | LitPat t -> free t, locals
+        | AsPat(p, v) ->
+            let pt, locals = aux locals p
+            if List.exists (fst >> (=) v) locals then raise <| TypingException(DuplicatedPatternVariable(e, v))
+            else
+                pt, (v, pt)::locals
+
+
+    let t, locals = aux [] p
+    t, List.fold (fun env (v,t) -> Env.add v (TypeScheme([], t)) env) env locals
+
+let rec typingApp env f x e =
+    let (TypeSign(fc, ft)) = typingCore env f
+    let (TypeSign(xc, xt)) = typingCore env x
+    let rt = newVarT()
+    unify e ft (lamT xt rt)
+    TypeSign(solveOrRaise e env (unionContext fc xc), rt)
+
+and typingLam env v e =
+    let vt = newVarT()
+    let env = Env.add v (TypeScheme([], TypeSign([], vt))) env
+    let (TypeSign(ec, et)) = typingCore env e
+    TypeSign(ec, lamT vt et)
+
+and typingLet env var body cont e =
+    let vt = newVarT()
+    let (TypeSign(bc, bt)) = typingCore env body
+    unify e vt bt
+    typingCore (Env.add var (bind (TypeSign(bc, vt))) env) cont
+
+and typingRec env varBodies cont e =
+    match tryGetDuplicated (fun l r -> fst l = fst r) varBodies with
+    | Some(v, _) -> raise <| TypingException(DuplicatedLetRecDecrale(e, varBodies, v))
+    | _ ->
         let vbts = List.map (fun vb -> vb, newVarT()) varBodies
         let env = List.fold (fun env ((v,_),vt) -> Env.add v (bind (TypeSign([], vt))) env) env vbts
 
@@ -324,42 +390,96 @@ let rec typingCore env = function
             ) env vbts
         typingCore env cont
 
-    | Ext(v, t, e) -> typingCore (Env.add v t env) e
+and typingMat env v (p, m) pms e =
+    let (TypeSign(vc, vt)) = typingCore env v
+    let (TypeSign(pc, pt)), env = typingPat e env p
+    let (TypeSign(rc, rt)) = typingCore env m
 
-    | TypeDef(name, (EmptyTypeDef vs as td), cont) as e ->
+    unify e vt pt
+
+    let vc = unionContext vc pc
+    let vc, rc =
+        List.fold (fun (vc, rc) (p, m) ->
+            let (TypeSign(pc, pt)), env = typingPat e env p
+            let (TypeSign(mc, mt)) = typingCore env m
+            unify e vt pt
+            unify e mt rt
+            unionContext vc pc, unionContext rc mc
+        ) (vc, rc) pms
+
+    let rc = solveOrRaise e env <| unionContext vc rc
+    TypeSign(rc, rt)
+    
+and typingTypeDef env name td cont e =
+    match td with
+    | DataDef(vs, cs) ->
         if List.exists (isPureTypeArg >> not) vs then raise <| TypingException(InvalidTypeArgments(e, vs))
-        if not <| isSetWith (==) vs then raise <| TypingException(InvalidTypeArgments(e, vs))
+        match tryGetDuplicated (==) vs with
+        | Some v -> raise <| TypingException(DuplicatedTypeArgment(e, vs, v))
+        | _ ->
+            let rec conType last = function
+                | [] -> last
+                | t::ts -> lamT t (conType last ts)
 
-        typingCore (Env.addT name td env) cont
+            let patType first = function
+                | [] -> first
+                | t::ts ->
+                    let rec aux l = function
+                        | [] -> l
+                        | r::rs -> lamT l (aux r rs)
 
-    | TypeDef(name, (ClassDef(vs, ms) as d), cont) as e ->
+                    lamT first (aux t ts)
+
+            let t = Type(name, List.map IndefType vs)
+
+            let env = Env.addT name td env
+            let env =
+                List.fold (fun env (v, ts) ->
+                    let ct = bind <| TypeSign([], conType t ts)
+                    let pt = bind <| TypeSign([], patType t ts)
+
+                    let env = Env.add v ct env
+                    let env = Env.add (name + "." + v) ct env
+                    let env = Env.addP v pt env
+                    let env = Env.addP (name + "." + v) pt env
+                    env
+                ) env cs
+            
+            typingCore (Env.addT name td env) cont
+
+    | ClassDef(vs, ms) ->
         if List.exists (isPureTypeArg >> not) vs then raise <| TypingException(InvalidTypeArgments(e, vs))
-        if not <| isSetWith (==) vs then raise <| TypingException(InvalidTypeArgments(e, vs))
-        if not <| isSetWith (fun l r -> fst l = fst r) ms then raise <| TypingException(DuplicatedMethodDeclare(e, ms))
-
-        let env = Env.addT name d env
+        match tryGetDuplicated (==) vs with
+        | Some v -> raise <| TypingException(DuplicatedTypeArgment(e, vs, v))
+        | _ ->
+            match tryGetDuplicated (fun l r -> fst l = fst r) ms with
+            | Some(v,_) -> raise <| TypingException(DuplicatedMethodDeclare(e, ms, v))
+            | _ ->
+                let env = Env.addT name td env
         
-        let tc = Type(name, List.map IndefType vs)
-        let env =   
-            List.fold (fun env (n, TypeScheme(mvs, TypeSign(mcs, mt))) ->
-                let ft = rebind <| TypeScheme(vs @ mvs, TypeSign(tc::mcs, mt))
-                Env.add n ft env
-            ) env ms
+                let tc = Type(name, List.map IndefType vs)
+                let env =   
+                    List.fold (fun env (n, TypeScheme(mvs, TypeSign(mcs, mt))) ->
+                        let ft = rebind <| TypeScheme(vs @ mvs, TypeSign(tc::mcs, mt))
+                        Env.add n ft env
+                    ) env ms
 
-        typingCore env cont
+                typingCore env cont
 
-    | InstanceDef(className, instanceTypeArgs, impls, cont) as e ->
-        let td =
-            try Env.findT className env with
-            | :? System.Collections.Generic.KeyNotFoundException ->
-                raise <| TypingException(TypeNotFound(e, env, className))
+and typingInsDef env className instanceTypeArgs impls cont e =
+    let td =
+        try Env.findT className env with
+        | :? System.Collections.Generic.KeyNotFoundException ->
+            raise <| TypingException(TypeNotFound(e, env, className))
 
-        match td with
-        | EmptyTypeDef _ -> raise <| TypingException(InvalidInstanceDeclare e)
-        | ClassDef(classTypeVars, methodDefs) ->
-            if List.length instanceTypeArgs <> List.length classTypeVars then raise <| TypingException(InvalidInstanceDeclare e)
-            if not <| isSetWith (fun l r -> fst l = fst r) impls then raise <| TypingException(InvalidInstanceDeclare e)
+    match td with
+    | DataDef _ -> raise <| TypingException(InvalidInstanceDeclare e)
+    | ClassDef(classTypeVars, methodDefs) ->
+        if List.length instanceTypeArgs <> List.length classTypeVars then raise <| TypingException(InvalidInstanceDeclare e)
 
+        match tryGetDuplicated (fun l r -> fst l = fst r) impls with
+        | Some(v,_) -> raise <| TypingException(DuplicatedInstanceImplement(e, v))
+        | _ ->
             List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') impls then raise <| TypingException(MethodNotImplemented(e, n))) methodDefs
             List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') methodDefs then raise <| TypingException(MethodMismatch(e, n))) impls
             
@@ -379,6 +499,22 @@ let rec typingCore env = function
 
             let instanceType = TypeScheme(instanceFreeVars, TypeSign([], Type(className, instanceTypeArgs)))
             typingCore (Env.addI instanceType env) cont
+
+and typingCore env = function
+    | Lit t -> free t
+    | Var v ->
+        try free <| Env.find v env with
+        | :? System.Collections.Generic.KeyNotFoundException ->
+            raise <| TypingException(VariableNotFound(env, v))
+
+    | Lam(v, e) -> typingLam env v e
+    | App(f, x) as e -> typingApp env f x e
+    | Let(var, body, cont) as e -> typingLet env var body cont e
+    | LetRec(varBodies, cont) as e -> typingRec env varBodies cont e
+    | Mat(v, pm, pms) as e -> typingMat env v pm pms e
+    | Ext(v, t, e) -> typingCore (Env.add v t env) e
+    | TypeDef(name, td, cont) as e -> typingTypeDef env name td cont e
+    | InstanceDef(name, typeArgs, impls, cont) as e -> typingInsDef env name typeArgs impls cont e
 
 let deref (TypeSign(cs, t)) =
     let rec derefT = function
