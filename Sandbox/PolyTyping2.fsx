@@ -154,6 +154,7 @@ let primCharT = TypeSign([], Type("Char", []))
 let primStringT = TypeSign([], Type("String", []))
 let primIntegerT = TypeSign([], Type("Integer", []))
 let primIntT = TypeSign([], Type("Int", []))
+let primFloatT = TypeSign([], Type("Float", []))
 
 let lamT t1 t2 = Type("->", [t1;t2])
 let tupNT l r rs =
@@ -516,6 +517,7 @@ and typingLit _ = function
     | StringLit _ -> primStringT
     | IntegerLit _ -> primIntegerT
     | IntLit _ -> primIntT
+    | FloatLit _ -> primFloatT
 
 and typingCore env = function
     | Lit l -> typingLit env l
