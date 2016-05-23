@@ -232,9 +232,9 @@ let fractionalT = type1 "Fractional"
 
 let intLitT = forall1 <| fun a -> [numT a] .=> a
 let floatLitT = forall1 <| fun a -> [fractionalT a] .=> a
-let floatL _ = Lit floatLitT
-let intL _ = Lit intLitT
-let stringL _ = Lit <| forall0 ([] .=> stringT)
+let floatL (n, d) = appE !"Fractional.ofRatio" <| app2E !"Ratio" (Lit(IntegerLit n)) (Lit(IntegerLit d))
+let intL n = appE !"Num.ofInteger" <| Lit(IntLit n)
+let stringL s = Lit <| StringLit s
 
 let (=>.) v xs = Mat(v, List.head xs, List.tail xs)
 let numP _ = LitPat intLitT
@@ -249,9 +249,9 @@ let con0P n = ConPat(n, [])
 let con1P n p1 = ConPat(n, [p1])
 let con2P n p1 p2 = ConPat(n, [p1; p2])
 
-let trueE = Lit <| simpleT boolT
-let falseE = Lit <| simpleT boolT
-let (~+) (_: int) = Lit <| simpleT intT
+let trueE = !"Bool.True"
+let falseE = !"Bool.False"
+let (~+) = Lit << IntLit
 let (^^.) l r = !"seq" %. l %. r
 
 let ifD = extD "if" <| forall1 (fun a -> [] .=> lam4T boolT a a a)
@@ -468,7 +468,7 @@ cls1D "ShowN" (fun a -> ["showN", forall1 <| fun b -> [numT b] .=> lam3T b a str
 ins1D (fun a ->
     "ShowN", listT a,
     [
-        "showN", lam2E "a" "b" <| Lit(simpleT stringT)
+        "showN", lam2E "a" "b" <| stringL "[...]"
     ]
 ) ^.
 
@@ -489,24 +489,24 @@ cls1D "Num" (fun a ->
     "_+_", simpleT <| lam3T a a a
     "negate", simpleT <| a .-> a
     ]) ^.
-    
+
 ins0D "Num" intT
     [
     "_+_", lam2E "x" "y" (app2E !!!addIntD !"x" !"y")
     "negate", "x" ->. appE !!!negateIntD !"x"
     ] ^.
-    
+
 ins0D "Num" floatT
     [
     "_+_", lam2E "x" "y" (app2E !!!addFloatD !"x" !"y")
     "negate", "x" ->. appE !!!negateFloatD !"x"
     ] ^.
-    
-app2E !!!tup2D (appE !"_+_" (Lit <| simpleT intT)) (appE !"_+_" (Lit <| simpleT floatT))
+
+app2E !!!tup2D (appE !"_+_" (Lit(IntLit 1))) (appE !"_+_" (Lit(FloatLit 1.0)))
 |> typing
     ==? Ok(simpleT <| tup2T (intT .-> intT) (floatT .-> floatT))
 
-floatL 1.0 =>. [
+floatL (1I, 1I) =>. [
     numP 1, stringL "1"
     anyP, stringL "any"
 ]
