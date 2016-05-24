@@ -61,7 +61,7 @@ type Exp =
 
     | TypeDef of name: Symbol * TypeDef * Exp
     | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Var, Exp> * cont: Exp
-    
+
 type Env = {
     vars: Map<Var, TypeScheme>
     pats: Map<Var, TypeScheme>
