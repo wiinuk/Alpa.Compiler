@@ -94,14 +94,6 @@
         public Y Fun<X, Y>(T t, U u, Y y) => default(Y);
     }
 
-    public class Field
-    {
-        int Value = 0;
-        static int StaticValue = 0;
-
-        int AccsessField() => Value + StaticValue;
-    }
-
     static class Program
     {
         public static int Main(string[] args)

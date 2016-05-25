@@ -38,11 +38,11 @@ type TypeRef = TypeRef of name: PathRev * Type list
 
 type Operand =
     | OpNone
-    | OpCtor of Type * Type list
+    | OpCtor of thisType: Type * argTypes: Type list
     | OpInt of int
     | OpType of Type
-    | OpField of Type * name: string
-    | OpCall of Type option * name: string * typeArgs: Type list * argTypes: Type list
+    | OpField of thisType: Type * name: string
+    | OpCall of isStatic: bool * thisType: Type * name: string * typeArgs: Type list * argTypes: Type list
 
 type Instr = string * OpCode * Operand
 type MethodBody = MethodBody of baseInit: Type list option * Instr list
@@ -273,25 +273,39 @@ let emitModuleMethod (t: TypeBuilder) map mmap (MethodInfo(head,MethodBody(_, in
     
     let g: ILGenerator = gen()
 
+    let solveTypes map varMap ts =
+        Seq.map (solveType map varMap) ts
+        |> Seq.toArray
+
     for label, op, operand in instrs do
         match operand with
         | OpNone -> g.Emit op
         | OpInt n -> g.Emit(op, n)
-        | OpField(thisType, name) ->
-            let thisType = solveType map varMap thisType
-            let f = thisType.GetField(name, B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
+        | OpType t -> g.Emit(op, solveType map varMap t)
+        | OpField(parent, name) ->
+            let parent = solveType map varMap parent
+            let f = parent.GetField(name, B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
             g.Emit(op, f)
 
-        | OpType t -> g.Emit(op, solveType map varMap t)
-        | OpCtor(thisType, argTypes) ->
-            let thisType = solveType map varMap thisType
-            let argTypes = Seq.map (solveType map varMap) argTypes |> Seq.toArray
-            let ctor = thisType.GetConstructor argTypes
+        | OpCtor(parent, argTypes) ->
+            let parent = solveType map varMap parent
+            let argTypes = solveTypes map varMap argTypes
+            let ctor = parent.GetConstructor argTypes
             g.Emit(op, ctor)
 
-        | OpCall(_, name, typeArgs, argTypes) -> //failwith "Not implemented yet"
-        
+        | OpCall(isStatic, parent, name, typeArgs, argTypes) ->
+            let parent = solveType map varMap parent
+            let argTypes = solveTypes map varMap argTypes
+            let b = if isStatic then B.Static else B.Instance
+            let b = b ||| B.Public ||| B.NonPublic
+            let m = parent.GetMethod(name, b, null, argTypes, null)
+            let m =
+                if List.isEmpty typeArgs then m
+                else
+                    let argTypes = solveTypes map varMap typeArgs
+                    m.MakeGenericMethod(argTypes)
 
+            g.Emit(op, m)
 
 let rec emitModuleMember path (t: TypeBuilder) map mmap = function
     | ModuleMethodDef m -> emitModuleMethod t map mmap m
