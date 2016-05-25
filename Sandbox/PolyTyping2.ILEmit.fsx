@@ -263,7 +263,7 @@ module DefineMethods =
         t.SetParent <| typeof<obj>
         for m in members do defineModuleMember path t map mmap m
 
-    // TODO: using *Builder lookup method?
+    // TODO: use *Builder lookup method?
     let defineTopDef (m: ModuleBuilder) map = function
         | TopModuleDef(name, members) -> defineModuleDef [] name members map
         | TopTypeDef td -> defineTypeDef [] map td
@@ -276,17 +276,20 @@ let emitModuleMethod (t: TypeBuilder) map mmap (MethodInfo(head,MethodBody(_, in
     for label, op, operand in instrs do
         match operand with
         | OpNone -> g.Emit op
+        | OpInt n -> g.Emit(op, n)
+        | OpField(thisType, name) ->
+            let thisType = solveType map varMap thisType
+            let f = thisType.GetField(name, B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
+            g.Emit(op, f)
+
+        | OpType t -> g.Emit(op, solveType map varMap t)
         | OpCtor(thisType, argTypes) ->
             let thisType = solveType map varMap thisType
             let argTypes = Seq.map (solveType map varMap) argTypes |> Seq.toArray
             let ctor = thisType.GetConstructor argTypes
             g.Emit(op, ctor)
 
-        | OpInt n -> // TODO : inlint int
-            g.Emit()
-        | OpType(_) -> failwith "Not implemented yet"
-        | OpField(_, name) -> failwith "Not implemented yet"
-        | OpCall(_, name, typeArgs, argTypes) -> failwith "Not implemented yet"
+        | OpCall(_, name, typeArgs, argTypes) -> //failwith "Not implemented yet"
         
 
 
