@@ -5,7 +5,7 @@ open System.Collections.Generic
 open System.Reflection.Emit
 open System.Threading
 
-type ST = global.System.Type
+type SystemType = global.System.Type
 type C = global.System.TypeCode
 type B = global.System.Reflection.BindingFlags
 type CC = global.System.Reflection.CallingConventions
@@ -115,13 +115,13 @@ let toTypeName (delim: char) (p, path) =
         cs.ToString()
 
 let solveType typeMap varMap t =
-    let get (typeMap: TypeMap) pathRev arity =
+    let get (typeMap: HashMap<_,_>) pathRev arity =
         let mutable (t',_) as t = Unchecked.defaultof<_>
-        if typeMap.TryGetValue(pathRev, &t) then t' :> ST
+        if typeMap.TryGetValue(pathRev, &t) then t' :> SystemType
         else
-            let n = toTypeName ST.Delimiter pathRev
+            let n = toTypeName SystemType.Delimiter pathRev
             let n = if arity = 0 then n else n + "`" + string arity
-            ST.GetType(n, true)
+            SystemType.GetType(n, true)
 
     let rec aux = function
     | Type(pathRev, []) -> get typeMap pathRev 0
@@ -182,10 +182,14 @@ module DefineTypes =
 module DefineMethods =
     let defineParam defineParameter i (Argument(pn, _)) = defineParameter(i, P.None, Option.toObj pn) |> ignore
     let emitParams defineParameter args = List.iteri (fun i a -> defineParam defineParameter (i + 1) a) args
+    
+    let emptyVarMap : TypeVarMap = [||]
+    let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
+    let tDefineGP (t: TypeBuilder) xs = t.DefineGenericParameters xs
 
-    let defineMethodHead defineMethod attr callconv map varMap (MethodHead(name,typeArgs,args,ret)) =
-        let m : MethodBuilder = defineMethod(name, attr, callconv)
-        let mVarMap = makeVarMap typeArgs <| fun x -> m.DefineGenericParameters x
+    let defineMethodHead defineMethod attr callconv (map, varMap) (MethodHead(name,typeArgs,args,ret)) =
+        let m = defineMethod(name, attr, callconv)
+        let mVarMap = makeVarMap typeArgs <| mDefineGP m
         let varMap = Array.append varMap mVarMap
 
         let pts = solveParamTypes map varMap args
@@ -198,7 +202,7 @@ module DefineMethods =
         m, varMap
 
     let defineMethodInfo (t: TypeBuilder) a c (map, mmap, varMap) (MethodInfo(head, body)) =
-        let m, varMap = defineMethodHead t.DefineMethod a c map varMap head
+        let m, varMap = defineMethodHead t.DefineMethod a c (map, varMap) head
         add mmap head (m.GetILGenerator, body, varMap)
 
     let defineMethodDef (t: TypeBuilder) maps ov m =
@@ -232,18 +236,17 @@ module DefineMethods =
 
         | AbstractDef head ->
             let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
-            defineMethodHead t.DefineMethod a CC.HasThis map varMap head
+            defineMethodHead t.DefineMethod a CC.HasThis (map, varMap) head
             |> ignore
 
-    let defineModuleMethod (t: TypeBuilder) map mmap (MethodInfo(head,_)) =
-        defineMethodHead t.DefineMethod (M.Public ||| M.Static) CC.Standard map head
-        |> Choice1Of2
-        |> add mmap head
+    let defineModuleMethod (t: TypeBuilder) map mmap (MethodInfo(head, body)) =
+        let m, varMap = defineMethodHead t.DefineMethod (M.Public ||| M.Static) CC.Standard (map, emptyVarMap) head
+        add mmap head (m.GetILGenerator, body, varMap)
 
     let defineTypeDef nsRev map { name = name; typeArgs = typeArgs; parent = parent; impls = impls; members = members } =
         let path = name, nsRev
-        let (t: TypeBuilder), mmap = get map path
-        let varMap = makeVarMap typeArgs <| fun x -> t.DefineGenericParameters x
+        let t, mmap = get map path
+        let varMap = makeVarMap typeArgs <| tDefineGP t
         t.SetParent <| solveType map varMap (typeRefToType parent)
 
         for impl in impls do t.AddInterfaceImplementation <| solveType map varMap (typeRefToType impl)
@@ -265,8 +268,27 @@ module DefineMethods =
         | TopModuleDef(name, members) -> defineModuleDef [] name members map
         | TopTypeDef td -> defineTypeDef [] map td
 
-let emitModuleMethod (t: TypeBuilder) map mmap (MethodInfo(head,body)) =
-    let m: MethodBuilder = get mmap head
+let emitModuleMethod (t: TypeBuilder) map mmap (MethodInfo(head,MethodBody(_, instrs))) =
+    let gen, _, varMap = get mmap head
+    
+    let g: ILGenerator = gen()
+
+    for label, op, operand in instrs do
+        match operand with
+        | OpNone -> g.Emit op
+        | OpCtor(thisType, argTypes) ->
+            let thisType = solveType map varMap thisType
+            let argTypes = Seq.map (solveType map varMap) argTypes |> Seq.toArray
+            let ctor = thisType.GetConstructor argTypes
+            g.Emit(op, ctor)
+
+        | OpInt n -> // TODO : inlint int
+            g.Emit()
+        | OpType(_) -> failwith "Not implemented yet"
+        | OpField(_, name) -> failwith "Not implemented yet"
+        | OpCall(_, name, typeArgs, argTypes) -> failwith "Not implemented yet"
+        
+
 
 let rec emitModuleMember path (t: TypeBuilder) map mmap = function
     | ModuleMethodDef m -> emitModuleMethod t map mmap m
