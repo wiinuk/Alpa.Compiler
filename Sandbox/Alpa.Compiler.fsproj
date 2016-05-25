@@ -80,6 +80,7 @@
     <None Include="PolyTyping.fsx" />
     <None Include="PolyTyping2.fsx" />
     <None Include="PolyTyping2.Test.fsx" />
+    <None Include="PolyTyping2.ILEmit.fsx" />
     <None Include="PolyTyping2.Emit.fsx" />
   </ItemGroup>
   <ItemGroup>

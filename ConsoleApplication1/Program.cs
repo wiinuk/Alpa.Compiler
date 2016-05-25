@@ -1,87 +1,104 @@
-﻿using System;
-using GenericOperators;
-using static System.Console;
-
-namespace GenericOperators
+﻿namespace ConsoleApplication1
 {
-    public interface IAddable<T>
+    public interface InterfaceEq<T>
     {
-        T Add(T l, T r);
+        bool Eq(T left, T right);
     }
 
-    public struct Addable<T>
+    public abstract class AbstractAdd<T>
     {
-        public T Value { get; private set; }
-        public IAddable<T> Add { get; private set; }
-        public Addable(T value, IAddable<T> add) { Value = value; Add = add; }
-
-        public static Addable<T> operator +(Addable<T> left, Addable<T> right) => new Addable<T>(left.Add.Add(left.Value, right.Value), left.Add);
+        public abstract T Add(T left, T right);
     }
 
-    public interface IIntegral<T> : IAddable<T>
+    public abstract class ImplementAbstractEq_ClassAbstract<T> : InterfaceEq<T>
     {
-        T Sub(T l, T r);
-        T Mul(T l, T r);
-        T Div(T l, T r);
+        public abstract bool Eq(T left, T right);
     }
 
-    public struct Integral<T>
+    public abstract class AbstractOverrideEqInt_ClasAbstract : ImplementAbstractEq_ClassAbstract<int>
     {
-        public T Value { get; private set; }
-        public IIntegral<T> Int { get; private set; }
-        public Integral(T value, IIntegral<T> ops) { Value = value; Int = ops; }
-
-        public static Integral<T> operator +(Integral<T> left, Integral<T> right) => new Integral<T>(left.Int.Add(left.Value, right.Value), left.Int);
-        public static Integral<T> operator -(Integral<T> left, Integral<T> right) => new Integral<T>(left.Int.Sub(left.Value, right.Value), left.Int);
-        public static Integral<T> operator *(Integral<T> left, Integral<T> right) => new Integral<T>(left.Int.Mul(left.Value, right.Value), left.Int);
-        public static Integral<T> operator /(Integral<T> left, Integral<T> right) => new Integral<T>(left.Int.Div(left.Value, right.Value), left.Int);
+        public abstract override bool Eq(int l, int r);
     }
 
-    //public struct GenericInt32 : IIntegral<int>
-    //{
-    //    readonly int value;
-    //    public GenericInt32(int value) { this.value = value; }
-
-    //    public Addable<int> GetGenericAddable() => new Addable<int>();
-
-    //    public Integral<int> GetGenericIntegral()
-    //    {
-    //        throw new NotImplementedException();
-    //    }
-    //}
-    //public struct GenericDouble : IAddable<GenericDouble>
-    //{
-    //    readonly double value;
-    //    public GenericDouble(double value) { this.value = value; }
-    //    public GenericDouble Add(GenericDouble other) => new GenericDouble(value + other.value);
-    //}
-
-    //public static class Generic
-    //{
-    //    public static GenericInt32 Int32(int value) => new GenericInt32(value);
-    //    public static GenericDouble Double(double value) => new GenericDouble(value);
-
-    //    public static Addable<T> AllowOperator<T>(this T self) where T : IAddable<T> => new GenericAd<T>(self);
-    //    public static T UsingOperator<T>(this T self, Func<Addable<T>, Addable<T>> use) where T : IAddable<T> => use(new GenericAd<T>(self)).Value;
-    //}
-}
-
-namespace ConsoleApplication1
-{
-    static class Usecase
+    public class OverrideEq : AbstractOverrideEqInt_ClasAbstract
     {
-        public static Addable<T> Triple<T>(Addable<T> value) => value + value + value;
+        public override bool Eq(int l, int r) => l == r;
     }
 
-    class Program
+    public class VirtualShow
     {
-        static void Main(string[] args)
+        public virtual string Show() => "";
+    }
+
+    public class OverrideShow : VirtualShow
+    {
+        public override string Show() => "";
+    }
+
+    public class NewVirtualShow : VirtualShow
+    {
+        public new virtual string Show() => "";
+    }
+
+    public class OverrideNewVirtualShow : NewVirtualShow
+    {
+        public override string Show() => "";
+    }
+
+    public class SealedOverrideShow : VirtualShow
+    {
+        public sealed override string Show() => "";
+    }
+
+    public sealed class OverrideShow_ClassSealed : VirtualShow
+    {
+        public override string Show() => "";
+    }
+
+    public abstract class ExplicitEqBase : InterfaceEq<int>
+    {
+        bool InterfaceEq<int>.Eq(int left, int right) => left == right;
+    }
+
+    public class EqInt : InterfaceEq<int>
+    {
+        public bool Eq(int left, int right) => left == right;
+    }
+
+    public sealed class EqInt_ClassSealed : InterfaceEq<int>
+    {
+        public bool Eq(int left, int right) => left == right;
+    }
+
+    public class EqIntVirtual : InterfaceEq<int>
+    {
+        public virtual bool Eq(int left, int right) => left == right;
+    }
+
+    public class ExplicitEqInt : InterfaceEq<int>
+    {
+        bool InterfaceEq<int>.Eq(int left, int right) => left == right;
+    }
+
+    public sealed class ExplicitEqInt_ClassSealed : InterfaceEq<int>
+    {
+        bool InterfaceEq<int>.Eq(int left, int right) => left == right;
+    }
+    
+    public class Any { public int Fun(int a) => a; }
+
+    public sealed class Any_ClassSealed { public int Fun(int a) => a; }
+
+    public class TypeParam<T, U>
+    {
+        public Y Fun<X, Y>(T t, U u, Y y) => default(Y);
+    }
+
+    static class Program
+    {
+        public static int Main(string[] args)
         {
-            //var a = Generic.Int32(10);
-            //WriteLine("Int32 triple = {0}", Usecase.Triple(a));
-
-            //var c = Generic.Double(10.1);
-            //var d = Usecase.Triple(c);
+            return 0;
         }
     }
 }
