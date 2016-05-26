@@ -14,7 +14,7 @@ type F = global.System.Reflection.FieldAttributes
 type O = global.System.Reflection.Emit.OpCodes
 
 let mutable seed = 0
-type TypeVar = struct
+type Var = struct
     val Name: string
     val Value: int
     new (name) =
@@ -44,40 +44,38 @@ type ValidName = struct
 end
 type PathRev = ValidName * ValidName list
 
-type TypeRef = 
-    | TypeRef of pathRev: PathRev * TypeRef list
-    | TypeVar of TypeVar
+type TypeSpec = 
+    | TypeSpec of pathRev: PathRev * TypeSpec list
+    | TypeVar of Var
 
-type RealType = RealType of name: PathRev * TypeRef list
+type TypeRef = TypeRef of name: PathRev * TypeSpec list
 
 type Operand =
     | OpNone
-    | OpCtor of thisType: TypeRef * argTypes: TypeRef list
+    | OpCtor of thisType: TypeSpec * argTypes: TypeSpec list
     | OpI1 of int8
     | OpI4 of int
-    | OpType of TypeRef
-    | OpField of thisType: TypeRef * name: string
-    | OpCall of isStatic: bool * thisType: TypeRef * name: string * typeArgs: TypeRef list * argTypes: TypeRef list
+    | OpType of TypeSpec
+    | OpField of thisType: TypeSpec * name: string
+    | OpCall of isStatic: bool * thisType: TypeSpec * name: string * typeArgs: TypeSpec list * argTypes: TypeSpec list
 
 type Macro =
-    | BaseInit of TypeRef list
+    | BaseInit of TypeSpec list
 
 type Instr = 
     | Instr of string * OpCode * Operand
     | Macro of Macro
 
-type Argument = Argument of name: string option * TypeRef
-type MethodBody = MethodBody of Instr list
-type MethodHead =
-    | CtorHead of args: Argument list
-    | MethodHead of name: string * typeArgs: TypeVar list * args: Argument list * ret: Argument
-
-type MethodBase = MethodBase of MethodHead * MethodBody
-type StaticMethodInfo = MethodBase
-
 type Override =
     | Override
-    | BaseMethod of baseMethod: (RealType * string)
+    | BaseMethod of baseMethod: (TypeRef * string)
+
+type Argument = Argument of name: string option * TypeSpec
+type MethodBody = MethodBody of Instr list
+type MethodHead = MethodHead of name: string * typeArgs: Var list * args: Argument list * ret: Argument
+
+type MethodInfo = MethodInfo of MethodHead * MethodBody
+type StaticMethodInfo = MethodInfo
 
 type LiteralValue =
     | Bool of bool
@@ -97,28 +95,30 @@ type LiteralValue =
 
 type Literal =
     | LiteralValue of LiteralValue
-    | Enum of TypeRef * LiteralValue
-    | Null of TypeRef
+    | Enum of TypeSpec * LiteralValue
+    | Null of TypeSpec
 
 type MemberDef =
     | Literal of name: string * Literal
-    | Field of isStatic: bool * isMutable: bool * name: string * TypeRef
+    | Field of isStatic: bool * isMutable: bool * name: string * TypeSpec
     | AbstractDef of MethodHead
-    | MethodBaseDef of MethodBase
+    | CtorDef of args: Argument list * MethodBody
+    | MethodDef of Override option * MethodInfo
 
 type TypeKind = Abstract | Interface | Open | Sealed
 type TypeDef = {
     kind: TypeKind option
     name: ValidName
-    typeArgs: TypeVar list
-    parent: RealType option
-    impls: RealType list
+    typeArgs: Var list
+    parent: TypeRef option
+    impls: TypeRef list
     members: MemberDef list
 }
 type ModuleMember =
     | ModuleMethodDef of StaticMethodInfo
     | ModuleTypeDef of TypeDef
     | ModuleModuleDef of name: ValidName * ModuleMember list
+    | ModuleValDef of isMutable: bool * name: string * TypeSpec
 
 type TopDef =
     | TopTypeDef of TypeDef
@@ -128,8 +128,13 @@ type IL = IL of TopDef list
 
 [<Sealed; AllowNullLiteral>]
 type HashMap<'k,'v when 'k : equality>() = inherit Dictionary<'k,'v>()
-type TypeVarMap = (TypeVar * GenericTypeParameterBuilder) array
-type MethodBuilderInfo = (unit -> ILGenerator) * MethodBase * TypeVarMap
+type TypeVarMap = (Var * GenericTypeParameterBuilder) array
+type MethodBuilderInfo = {
+    gen: unit -> ILGenerator
+    parent: TypeBuilder
+    m: MethodInfo
+    varMap: TypeVarMap
+}
 type TypeBuilderInfo = {
     t: TypeBuilder
     varMap: TypeVarMap
@@ -138,13 +143,13 @@ type TypeBuilderInfo = {
 type TypeMap = HashMap<PathRev, TypeBuilderInfo>
 
 let escaped (x: ValidName) = x.EscapedName
-let varName (v: TypeVar) = v.Name
+let varName (v: Var) = v.Name
 let add (map: HashMap<_,_>) k v = map.Add(k, v)
 let get (map: HashMap<_,_>) k = map.[k]
 let values (map: HashMap<_,_>) = map.Values
 let pathToNs (p,ps) = p::ps
 let nsToPath ps name = name, ps
-let typeRefToType (RealType(n,ts)) = TypeRef(n,ts)
+let typeRefToType (TypeRef(n,ts)) = TypeSpec(n,ts)
 let argType (Argument(_,t)) = t
 let emptyVarMap : TypeVarMap = [||]
     
@@ -171,11 +176,11 @@ let solveType typeMap varMap t =
             Type.GetType(n, true)
 
     let rec aux = function
-    | TypeRef(pathRev, []) -> get typeMap pathRev 0
-    | TypeRef(pathRev, ts) -> get typeMap pathRev <| List.length ts
+    | TypeSpec(pathRev, []) -> get typeMap pathRev 0
+    | TypeSpec(pathRev, ts) -> get typeMap pathRev <| List.length ts
     | TypeVar v ->
         varMap
-        |> Array.find (fun (v': TypeVar, _: GenericTypeParameterBuilder) -> v.Value = v'.Value)
+        |> Array.find (fun (v': Var, _: GenericTypeParameterBuilder) -> v.Value = v'.Value)
         |> snd
         :> System.Type
     aux t
@@ -200,7 +205,7 @@ let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
 let tDefineGP (t: TypeBuilder) xs = t.DefineGenericParameters xs
 
 let ctorHead parentPath parentTypeArgs args =
-    let t = TypeRef(parentPath, List.map TypeVar parentTypeArgs)
+    let t = TypeSpec(parentPath, List.map TypeVar parentTypeArgs)
     MethodHead(".ctor", [], args, Argument(None, t))
 
 module DefineTypes =
@@ -218,8 +223,8 @@ module DefineTypes =
         let isInterfaceMember = function 
             | Literal _
             | Field _
-            | CtorDef _
-            | MethodDef _ -> false
+            | MethodDef _
+            | CtorDef _ -> false
             | AbstractDef _ -> true
 
         let kind =
@@ -248,7 +253,8 @@ module DefineTypes =
         }
 
     and moduleMember path (t: TypeBuilder) map = function
-        | ModuleMethodDef(MethodBase _) -> ()
+        | ModuleMethodDef _
+        | ModuleValDef _ -> ()
         | ModuleModuleDef(name, ms) -> module' t.DefineNestedType (pathToNs path) name map ms
         | ModuleTypeDef td -> type' t.DefineNestedType (pathToNs path) map td
 
@@ -274,9 +280,9 @@ module DefineMembers =
         param m.DefineParameter 0 ret
         m, varMap
 
-    let methodInfo (t: TypeBuilder) a c (map, mmap, varMap) (MethodBase(head, body)) =
-        let m, varMap = methodHead t.DefineMethod a c (map, varMap) head
-        add mmap head ((m.GetILGenerator : unit -> _), body, varMap)
+    let methodInfo (t: TypeBuilder) a c (map, mmap, varMap) (MethodInfo(head, _) as m) =
+        let mb, varMap = methodHead t.DefineMethod a c (map, varMap) head
+        add mmap head { gen = mb.GetILGenerator; m = m; parent = t; varMap = varMap }
 
     let methodDef (t: TypeBuilder) maps ov m =
         match ov with
@@ -294,15 +300,16 @@ module DefineMembers =
 //                        let pts = solveParamTypes map varMap args
 //                        let bm = bt.GetMethod(baseMethodName, pts)
 //                        t.DefineMethodOverride(bm, m)
+    
+    let field (t: TypeBuilder) (isStatic, isMutable, name, ft) map varMap =
+        let a = F.Public
+        let a = if isStatic then a ||| F.Static else a
+        let a = if isMutable then a else a ||| F.InitOnly
+        let ft = solveType map varMap ft
+        t.DefineField(name, ft, a) |> ignore
 
     let member' path (t: TypeBuilder) typeArgs (map, mmap, varMap) = function
-        | Field(isStatic, isMutable, n, ft) ->
-            let a = F.Public
-            let a = if isStatic then a ||| F.Static else a
-            let a = if isMutable then a else a ||| F.InitOnly
-            let ft = solveType map varMap ft
-            t.DefineField(n, ft, a) |> ignore
-
+        | Field(isStatic, isMutable, n, ft) -> field t (isStatic, isMutable, n, ft) map varMap
         | Literal(n, l) ->
             let a = F.Public ||| F.Static ||| F.Literal
             let fv, ft =
@@ -338,17 +345,17 @@ module DefineMembers =
             params' c.DefineParameter args
 
             let h = ctorHead path typeArgs args
-            let head = ctorHead (ValidName ".ctor", [])
-            add mmap h (c.GetILGenerator, body, varMap)
+            let m = MethodInfo(h, body)
+            add mmap h { gen = c.GetILGenerator; m = m; parent = t; varMap = varMap }
 
         | AbstractDef head ->
             let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
             methodHead t.DefineMethod a CC.HasThis (map, varMap) head
             |> ignore
 
-    let moduleMethod (t: TypeBuilder) map mmap (MethodBase(head, body)) =
-        let m, varMap = methodHead t.DefineMethod (M.Public ||| M.Static) CC.Standard (map, emptyVarMap) head
-        add mmap head ((m.GetILGenerator : unit -> _), body, varMap)
+    let moduleMethod (t: TypeBuilder) map mmap (MethodInfo(head, body) as m) =
+        let mb, varMap = methodHead t.DefineMethod (M.Public ||| M.Static) CC.Standard (map, emptyVarMap) head
+        add mmap head { gen = mb.GetILGenerator; m = m; parent = t; varMap = varMap }
 
     let typeDef nsRev map { name = name; typeArgs = typeArgs; parent = parent; impls = impls; members = members } =
         let path = name, nsRev
@@ -363,7 +370,8 @@ module DefineMembers =
         for impl in impls do t.AddInterfaceImplementation <| solveType map varMap (typeRefToType impl)
         for m in members do member' path t typeArgs (map, mmap, varMap) m
 
-    let rec moduleMember path (t: TypeBuilder) map mmap = function
+    let rec moduleMember path t map mmap = function
+        | ModuleValDef(isMutable, name, ft) -> field t (true, isMutable, name, ft) map emptyVarMap
         | ModuleMethodDef m -> moduleMethod t map mmap m
         | ModuleTypeDef td -> typeDef (pathToNs path) map td
         | ModuleModuleDef(name, members) -> moduleDef (pathToNs path) name members map
@@ -379,8 +387,12 @@ module DefineMembers =
         | TopModuleDef(name, members) -> moduleDef [] name members map
         | TopTypeDef td -> typeDef [] map td
 
-let emitInstr (g: ILGenerator) map varMap head = function
-    | Macro(BaseInit ts) -> failwith "Not implemented yet"
+let emitInstr (g: ILGenerator) map { varMap = varMap; parent = parent } = function
+    | Macro(BaseInit ts) ->
+        let ctor = parent.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap ts, null)
+        if List.isEmpty ts then g.Emit O.Ldarg_0 else ()
+        g.Emit(O.Call, ctor)
+
     | Instr(label, op, operand) ->
         match operand with
         | OpNone -> g.Emit op
@@ -395,7 +407,7 @@ let emitInstr (g: ILGenerator) map varMap head = function
         | OpCtor(parent, argTypes) ->
             let parent = solveType map varMap parent
             let argTypes = solveTypes map varMap argTypes
-            let ctor = parent.GetConstructor argTypes
+            let ctor = parent.GetConstructor(B.Public ||| B.NonPublic, null, argTypes, null)
             g.Emit(op, ctor)
 
         | OpCall(isStatic, parent, name, typeArgs, argTypes) ->
@@ -411,9 +423,9 @@ let emitInstr (g: ILGenerator) map varMap head = function
                     m.MakeGenericMethod(argTypes)
             g.Emit(op, m)
 
-let emitMethodBody map (gen, MethodBase(head, MethodBody instrs), varMap) =
+let emitMethodBody map ({ gen = gen; m = MethodInfo(_, MethodBody instrs) } as mi) =
     let g = gen()
-    for instr in instrs do emitInstr g map varMap head instr
+    for instr in instrs do emitInstr g map mi instr
 
 let emit map =
     for { mmap = mmap } in values map do    

@@ -6,25 +6,26 @@ open System
 open System.Diagnostics
 open System.IO
 open System.Reflection
+open System.Reflection.Emit
 open System.Text.RegularExpressions
 
-let newTypeVar name = TypeVar name
+let newTypeVar name = Var name
 
-let sysTypeValidate (t: SystemType) =
+let sysTypeValidate (t: Type) =
     if t.IsNested then failwithf "%A is GenericParameter." t
     if t.IsGenericParameter then failwithf "%A is GenericParameter." t
 
 let getPath t =
     sysTypeValidate t
     let nsRev =
-        t.Namespace.Split SystemType.Delimiter
-        |> Seq.map TypeName.NonEscape
+        t.Namespace.Split Type.Delimiter
+        |> Seq.map ValidName.NonEscape
         |> Seq.rev
         |> Seq.toList
 
-    nsToPath nsRev <| TypeName.NonEscape t.Name
+    nsToPath nsRev <| ValidName.NonEscape t.Name
 
-let rec typeOfT t = Type(getPath t, typeOfTypeArgs t)
+let rec typeOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
 and typeOfTypeArgs t = if not t.IsGenericType then [] else t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList
 let typeRefOfT t = TypeRef(getPath t, typeOfTypeArgs t)
 
@@ -34,17 +35,17 @@ let typeOf<'a> = typeOfT typeof<'a>
 [<RequiresExplicitTypeArguments>]
 let typeRefOf<'a> = typeRefOfT typeof<'a>
 
+[<AutoOpen>]
 module TypeRefs =
     let objR = typeRefOf<obj>
-
+    
+[<AutoOpen>]
 module Types =
     let intT = typeOf<int>
+    let voidT = typeOf<System.Void>
     let bigintT = typeOf<bigint>
 
-open TypeRefs
-open Types
-
-let t n = TypeName n
+let t n = ValidName n
 let p n = (t n, [])
 
 let ildasm path =
@@ -107,8 +108,9 @@ let type1D name v1 f =
         }
     f make (TypeVar v1)
     
-let type1 t v1 = Type.Type(t, [v1])
-let type2 t v1 v2 = Type.Type(t, [v1; v2])
+let type0 t = TypeSpec(t, [])
+let type1 t v1 = TypeSpec(t, [v1])
+let type2 t v1 v2 = TypeSpec(t, [v1; v2])
 let typeRef1 n v1 = TypeRef(n, [v1])
 let typeRef2 n v1 v2 = TypeRef(n, [v1; v2])
 
@@ -168,22 +170,22 @@ let override0 name args retT instrs = MethodDef(Some Override, methodInfo0 name 
 //        ret;;
 //
 //module Program =
-//    fun succ a () : Num a -> a -> a = newobj (CloSucc a) ();;
+//    fun succ a () : Num a -> a -> a = newobj (CloSucc a) () ret;;
 //
 //    val #(Num Int32) : Num Int32;;
 //    val ten : Int32;;
 //    fun init () : void =
 //        newobj #(Num Int32) ()
-//        stfld Program::#(Num Int32)
+//        stsfld Program::#(Num Int32)
 //        ldc_i4 10i
-//        stfld ten
+//        stsfld Program::ten
 //        ret;;
 //
 //    fun main () : void =
 //        call init ()
 //
-//        ldfld ten
-//        ldfld #(Num Int32)
+//        ldsfld Program::ten
+//        ldsfld Program::#(Num Int32)
 //        call succ Int32 ()
 //        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
 //        callvirt `->`(Int32, Int32)::` `(Int32)
@@ -225,11 +227,30 @@ module SimpleInstructions =
 
     let stfld t n = Instr("", O.Stfld, OpField(t, n))
     let ldfld t n = Instr("", O.Ldfld, OpField(t, n))
+    let stsfld t n = Instr("", O.Stsfld, OpField(t, n))
+    let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
+
+    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpCall(false, parent, name, typeArgs, argTypes))
 
 open SimpleInstructions
 
 let field n t = Field(false, false, n, t)
+let moduleD name ms = TopModuleDef(name, ms)
+let mutD name t = ModuleValDef(true, name, t)
+let fun1 name v1 f =
+    let v1 = newTypeVar v1
+    let make args ret instrs =
+        ModuleMethodDef(MethodInfo.MethodInfo(MethodHead(name, [v1], args, argT ret), MethodBody.MethodBody instrs))
 
+    f make (TypeVar v1)
+
+let fun0 name args ret instrs =
+    ModuleMethodDef(MethodInfo.MethodInfo(MethodHead(name, [], args, argT ret), MethodBody.MethodBody instrs))
+
+
+let arrowT = p"->`2"
+let (..->) a b = typeRef2 arrowT a b
+let (.->) a b = type2 arrowT a b
 IL [
     abstract2T "->`2" "a" "b" <| fun f a b ->
         f None [] [abstract0 "_ _" [arg "arg" a] b]
@@ -240,32 +261,16 @@ IL [
             abstract0 "_+_" [argT a; argT a] a
         ]
 
-    type0D "Num(System.Int32)" None [typeRef1 (p"Num`1") intT] [
+    type0D "#Num(System_Int32)" None [typeRef1 (p"Num`1") intT] [
         override0 "ofInteger" [argT bigintT] intT [ldc_i4 0; ret]
         override0 "_+_" [argT intT; argT intT] intT [ldc_i4 0; ret]
     ]
 
-    //type CloSucc2 a <: (a -> a) =
-    //    val item1 : Num a
-    //    new (Num a) =
-    //        base()
-    //        ldarg.0
-    //        stfld CloSucc2 a::item1
-    //        ret;
-    //
-    //    override `_ _` a : a =
-    //        ldfld CloSucc2 a::item1
-    //        ldarg.0
-    //        ldfld CloSucc2 a::item1
-    //        ldsfld bigint::One
-    //        callvirt Num a::ofInteger(a)
-    //        callvirt Num a::`_+_`(a, a)
-    //        ret;;
     type1D "CloSucc2`1" "a" <| fun f a ->
         let numAT = type1 (p"Num`1") a
         let cloSucc2AT = type1 (p"CloSucc2`1") a
 
-        f (Some(typeRef2 (p"->`2") a a)) [] [
+        f (Some(a ..-> a)) [] [
             field "item1" numAT
 
             // new (Num a) = base(); @item1 <- $0;
@@ -282,24 +287,46 @@ IL [
                 ldarg 0
                 ldfld cloSucc2AT "item1"
                 ldsfld bigintT "One"
-                callvirt numAT "ofInteger" [a]
-                callvirt numAT "_+_" [a; a]
+                callvirt numAT "ofInteger" [] [a]
+                callvirt numAT "_+_" [] [a; a]
                 ret
             ]
         ]
 
     type1D "CloSucc`1" "a" <| fun f a ->
-        f (Some(typeRef2 (p"->`2") a (type2 (p"->`2") a a))) [] [
+        f (Some(a ..-> (a .-> a))) [] [
             override0 "_ _" [argT (type1 (p"Num`1") a)] (type2 (p"->`2") a a) [
                 ldarg 0
                 newobj (type1 (p"CloSucc2`1") a) [type1 (p"Num`1") a]
                 ret
             ]
         ]
+    
+    moduleD (t"Program") [
+        fun1 "succ" "a" <| fun f a -> f [] (type1 (p"Num`1") a .-> (a .-> a)) [newobj (type1 (p"CloSucc`1") a) []; ret]
+        mutD "#Num(System_Int32)" <| type1 (p"Num`1") intT
+        mutD "ten" intT
+        fun0 "init" [] voidT [
+            newobj (type0 (p"#Num(System_Int32)")) []
+            stsfld (type0 (p"Program")) "#Num(System_Int32)"
+            ldc_i4 10
+            stsfld (type0 (p"Program")) "ten"
+            ret
+        ]
+    ]
+//    fun main () : void =
+//        call init ()
+//
+//        ldfld ten
+//        ldfld #(Num Int32)
+//        call succ Int32 ()
+//        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
+//        callvirt `->`(Int32, Int32)::` `(Int32)
+//        ret;;
+//;;
 
 ]
 |> emitDll "test"
-
 
 let __ _ =
 //    let d = TopTypeDef {
