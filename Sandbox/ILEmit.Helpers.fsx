@@ -186,7 +186,7 @@ let override0 name args retT instrs = MethodDef(Some Override, methodInfo0 name 
 //
 //        ldsfld Program::ten
 //        ldsfld Program::#(Num Int32)
-//        call succ Int32 ()
+//        call Program::succ Int32 ()
 //        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
 //        callvirt `->`(Int32, Int32)::` `(Int32)
 //        ret;;
@@ -317,14 +317,12 @@ IL [
 //    fun main () : void =
 //        call init ()
 //
-//        ldfld ten
-//        ldfld #(Num Int32)
-//        call succ Int32 ()
+//        ldsfld Program::ten
+//        ldsfld Program::#(Num Int32)
+//        call Program::succ Int32 ()
 //        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
 //        callvirt `->`(Int32, Int32)::` `(Int32)
 //        ret;;
-//;;
-
 ]
 |> emitDll "test"
 
