@@ -136,6 +136,64 @@ let methodInfo0 name args retT body = MethodInfo.MethodInfo(methodHead0 name arg
 let abstract0 name args retT = AbstractDef <| methodHead0 name args retT
 let override0 name args retT instrs = MethodDef(Some Override, methodInfo0 name args retT <| MethodBody.MethodBody instrs)
 
+let ctor args is = CtorDef(args, MethodBody.MethodBody is)
+
+let inRange lo hi x = lo <= x && x <= hi
+let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
+    match n with
+    | n when inRange lo hi n -> Instr("", inlined n, OpNone)
+    | n when inRange -128 127 n -> Instr("", i1Op, OpI1 <| int8 n)
+    | n -> Instr("", i4Op, OpI4 n)
+
+module SimpleInstructions =
+    let base_init ts = Macro(BaseInit ts)
+    let ret = Instr("", O.Ret, OpNone)
+
+    let newobj thisType argTypes = Instr("", O.Newobj, OpCtor(thisType, argTypes))
+
+    let ldc_i4 n = inlinedI4 (O.Ldc_I4_S, O.Ldc_I4, -1, 8) n <| function
+        | 0 -> O.Ldc_I4_0
+        | 1 -> O.Ldc_I4_1
+        | 2 -> O.Ldc_I4_2
+        | 3 -> O.Ldc_I4_3
+        | 4 -> O.Ldc_I4_4
+        | 5 -> O.Ldc_I4_5
+        | 6 -> O.Ldc_I4_6
+        | 7 -> O.Ldc_I4_7
+        | 8 -> O.Ldc_I4_8
+        | _ -> O.Ldc_I4_M1
+
+    let ldarg n = inlinedI4 (O.Ldarg_S, O.Ldarg, 0, 3) n <| function
+        | 0 -> O.Ldarg_0
+        | 1 -> O.Ldarg_1
+        | 2 -> O.Ldarg_2
+        | _ -> O.Ldarg_3
+
+    let stfld t n = Instr("", O.Stfld, OpField(t, n))
+    let ldfld t n = Instr("", O.Ldfld, OpField(t, n))
+    let stsfld t n = Instr("", O.Stsfld, OpField(t, n))
+    let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
+
+    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpCall(false, parent, name, typeArgs, argTypes))
+    let call isStatic thisType name typeArgs argTypes = Instr("", O.Call, OpCall(isStatic, thisType, name, typeArgs, argTypes))
+    let call_static thisType name typeArgs argTypes = call true thisType name typeArgs argTypes
+
+open SimpleInstructions
+
+let field n t = Field(false, false, n, t)
+let moduleD name ms = TopModuleDef(name, ms)
+let mutD name t = ModuleValDef(true, name, t)
+let fun1 name v1 f =
+    let v1 = newTypeVar v1
+    let make args ret instrs =
+        ModuleMethodDef(MethodInfo.MethodInfo(MethodHead(name, [v1], args, argT ret), MethodBody.MethodBody instrs))
+
+    f make (TypeVar v1)
+
+let fun0 name args ret instrs =
+    ModuleMethodDef(MethodInfo.MethodInfo(MethodHead(name, [], args, argT ret), MethodBody.MethodBody instrs))
+
+
 //type abstract `->` (a, b) = abstract `_ _` a : b;;
 //
 //type Num a =
@@ -182,75 +240,21 @@ let override0 name args retT instrs = MethodDef(Some Override, methodInfo0 name 
 //        ret;;
 //
 //    fun main () : void =
-//        call init ()
+//        call static Program::init ()
 //
 //        ldsfld Program::ten
 //        ldsfld Program::#(Num Int32)
-//        call Program::succ Int32 ()
+//        call static Program::succ Int32 ()
 //        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
 //        callvirt `->`(Int32, Int32)::` `(Int32)
 //        ret;;
 //;;
-
-let ctor args is = CtorDef(args, MethodBody.MethodBody is)
-
-let inRange lo hi x = lo <= x && x <= hi
-let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
-    match n with
-    | n when inRange lo hi n -> Instr("", inlined n, OpNone)
-    | n when inRange -128 127 n -> Instr("", i1Op, OpI1 <| int8 n)
-    | n -> Instr("", i4Op, OpI4 n)
-
-module SimpleInstructions =
-    let base_init ts = Macro(BaseInit ts)
-    let ret = Instr("", O.Ret, OpNone)
-
-    let newobj thisType argTypes = Instr("", O.Newobj, OpCtor(thisType, argTypes))
-
-    let ldc_i4 n = inlinedI4 (O.Ldc_I4_S, O.Ldc_I4, -1, 8) n <| function
-        | 0 -> O.Ldc_I4_0
-        | 1 -> O.Ldc_I4_1
-        | 2 -> O.Ldc_I4_2
-        | 3 -> O.Ldc_I4_3
-        | 4 -> O.Ldc_I4_4
-        | 5 -> O.Ldc_I4_5
-        | 6 -> O.Ldc_I4_6
-        | 7 -> O.Ldc_I4_7
-        | 8 -> O.Ldc_I4_8
-        | _ -> O.Ldc_I4_M1
-
-    let ldarg n = inlinedI4 (O.Ldarg_S, O.Ldarg, 0, 3) n <| function
-        | 0 -> O.Ldarg_0
-        | 1 -> O.Ldarg_1
-        | 2 -> O.Ldarg_2
-        | _ -> O.Ldarg_3
-
-    let stfld t n = Instr("", O.Stfld, OpField(t, n))
-    let ldfld t n = Instr("", O.Ldfld, OpField(t, n))
-    let stsfld t n = Instr("", O.Stsfld, OpField(t, n))
-    let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
-
-    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpCall(false, parent, name, typeArgs, argTypes))
-
-open SimpleInstructions
-
-let field n t = Field(false, false, n, t)
-let moduleD name ms = TopModuleDef(name, ms)
-let mutD name t = ModuleValDef(true, name, t)
-let fun1 name v1 f =
-    let v1 = newTypeVar v1
-    let make args ret instrs =
-        ModuleMethodDef(MethodInfo.MethodInfo(MethodHead(name, [v1], args, argT ret), MethodBody.MethodBody instrs))
-
-    f make (TypeVar v1)
-
-let fun0 name args ret instrs =
-    ModuleMethodDef(MethodInfo.MethodInfo(MethodHead(name, [], args, argT ret), MethodBody.MethodBody instrs))
-
-
 let arrowT = p"->`2"
 let (..->) a b = typeRef2 arrowT a b
 let (.->) a b = type2 arrowT a b
+let numR = typeRef1 (p"Num`1")
+let numT = type1 (p"Num`1")
+let programT = type0 (p"Program")
 IL [
     abstract2T "->`2" "a" "b" <| fun f a b ->
         f None [] [abstract0 "_ _" [arg "arg" a] b]
@@ -261,13 +265,13 @@ IL [
             abstract0 "_+_" [argT a; argT a] a
         ]
 
-    type0D "#Num(System_Int32)" None [typeRef1 (p"Num`1") intT] [
+    type0D "#Num(System_Int32)" None [numR intT] [
         override0 "ofInteger" [argT bigintT] intT [ldc_i4 0; ret]
         override0 "_+_" [argT intT; argT intT] intT [ldc_i4 0; ret]
     ]
 
     type1D "CloSucc2`1" "a" <| fun f a ->
-        let numAT = type1 (p"Num`1") a
+        let numAT = numT a
         let cloSucc2AT = type1 (p"CloSucc2`1") a
 
         f (Some(a ..-> a)) [] [
@@ -295,34 +299,36 @@ IL [
 
     type1D "CloSucc`1" "a" <| fun f a ->
         f (Some(a ..-> (a .-> a))) [] [
-            override0 "_ _" [argT (type1 (p"Num`1") a)] (type2 (p"->`2") a a) [
+            override0 "_ _" [argT (numT a)] (a .-> a) [
                 ldarg 0
-                newobj (type1 (p"CloSucc2`1") a) [type1 (p"Num`1") a]
+                newobj (type1 (p"CloSucc2`1") a) [numT a]
                 ret
             ]
         ]
-    
+
     moduleD (t"Program") [
-        fun1 "succ" "a" <| fun f a -> f [] (type1 (p"Num`1") a .-> (a .-> a)) [newobj (type1 (p"CloSucc`1") a) []; ret]
-        mutD "#Num(System_Int32)" <| type1 (p"Num`1") intT
+        fun1 "succ" "a" <| fun f a -> f [] (numT a .-> (a .-> a)) [newobj (type1 (p"CloSucc`1") a) []; ret]
+        mutD "#Num(System_Int32)" <| numT intT
         mutD "ten" intT
         fun0 "init" [] voidT [
             newobj (type0 (p"#Num(System_Int32)")) []
-            stsfld (type0 (p"Program")) "#Num(System_Int32)"
+            stsfld programT "#Num(System_Int32)"
             ldc_i4 10
-            stsfld (type0 (p"Program")) "ten"
+            stsfld programT "ten"
+            ret
+        ]
+
+        fun0 "main" [] voidT [
+            call_static programT "init" [] []
+
+            ldsfld programT "ten"
+            ldsfld programT "#Num(System_Int32)"
+            call_static programT "succ" [intT] []
+            callvirt (numT intT .-> (intT .-> intT)) "_ _" [] [numT intT]
+            callvirt (intT .-> intT) "_ _" [] [intT]
             ret
         ]
     ]
-//    fun main () : void =
-//        call init ()
-//
-//        ldsfld Program::ten
-//        ldsfld Program::#(Num Int32)
-//        call Program::succ Int32 ()
-//        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
-//        callvirt `->`(Int32, Int32)::` `(Int32)
-//        ret;;
 ]
 |> emitDll "test"
 
