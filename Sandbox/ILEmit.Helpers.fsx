@@ -1,0 +1,379 @@
+﻿module internal ILEmit.Helpers
+#load "ILEmit.fsx"
+
+open ILEmit
+open System
+open System.Diagnostics
+open System.IO
+open System.Reflection
+open System.Text.RegularExpressions
+
+let newTypeVar name = TypeVar name
+
+let sysTypeValidate (t: SystemType) =
+    if t.IsNested then failwithf "%A is GenericParameter." t
+    if t.IsGenericParameter then failwithf "%A is GenericParameter." t
+
+let getPath t =
+    sysTypeValidate t
+    let nsRev =
+        t.Namespace.Split SystemType.Delimiter
+        |> Seq.map TypeName.NonEscape
+        |> Seq.rev
+        |> Seq.toList
+
+    nsToPath nsRev <| TypeName.NonEscape t.Name
+
+let rec typeOfT t = Type(getPath t, typeOfTypeArgs t)
+and typeOfTypeArgs t = if not t.IsGenericType then [] else t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList
+let typeRefOfT t = TypeRef(getPath t, typeOfTypeArgs t)
+
+[<RequiresExplicitTypeArguments>]
+let typeOf<'a> = typeOfT typeof<'a>
+
+[<RequiresExplicitTypeArguments>]
+let typeRefOf<'a> = typeRefOfT typeof<'a>
+
+module TypeRefs =
+    let objR = typeRefOf<obj>
+
+module Types =
+    let intT = typeOf<int>
+    let bigintT = typeOf<bigint>
+
+open TypeRefs
+open Types
+
+let t n = TypeName n
+let p n = (t n, [])
+
+let ildasm path =
+    let outPath = Path.ChangeExtension(path, ".il")
+    Process.Start(
+        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe",
+        sprintf "\"%s\" /out=\"%s\" /utf8 /metadata=VALIDATE" path outPath
+    ).WaitForExit()
+
+    let trivia = Regex "\s*//.*$"
+    let sourceLines =
+        File.ReadLines outPath
+        |> Seq.map (fun l -> trivia.Replace(l, ""))
+        |> Seq.filter (not << String.IsNullOrWhiteSpace)
+
+    String.concat "\n" sourceLines
+
+let emitDll name il =
+    let moduleName = Path.ChangeExtension(name, ".dll")
+    let path = Path.Combine(Path.GetTempPath(), moduleName)
+
+    if File.Exists path then File.Delete path else ()
+
+    let d = AppDomain.CurrentDomain
+    let a = d.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.Save)
+    let m = a.DefineDynamicModule moduleName
+    emitIL m il
+    a.Save moduleName
+    ildasm path, File.ReadAllBytes path
+    
+let typeDef = {
+    kind = None
+    name = t""
+    typeArgs = []
+    parent = None
+    impls = []
+    members = []
+}
+
+let type0D name parent impls members =
+    TopTypeDef {
+        kind = None
+        name = t name
+        typeArgs = []
+        parent = parent
+        impls = impls
+        members = members
+    }
+
+let type1D name v1 f =
+    let v1 = newTypeVar v1
+    let make parent impls members =
+        TopTypeDef {
+            kind = None
+            name = t name
+            typeArgs = [v1]
+            parent = parent
+            impls = impls
+            members = members
+        }
+    f make (TypeVar v1)
+    
+let type1 t v1 = Type.Type(t, [v1])
+let type2 t v1 v2 = Type.Type(t, [v1; v2])
+let typeRef1 n v1 = TypeRef(n, [v1])
+let typeRef2 n v1 v2 = TypeRef(n, [v1; v2])
+
+let abstract2T name v1 v2 f =
+    let v1, v2 = newTypeVar v1, newTypeVar v2
+    let make parent impls members =
+        TopTypeDef {
+            kind = Some Abstract
+            name = t name
+            typeArgs = [v1; v2]
+            parent = parent
+            impls = impls
+            members = members
+        }
+    f make (TypeVar v1) (TypeVar v2)
+
+let arg n t = Argument(Some n, t)
+let argT t = Argument(None, t)
+
+let methodHead0 name args retT = MethodHead(name, [], args, Argument(None, retT))
+let methodInfo0 name args retT body = MethodInfo.MethodInfo(methodHead0 name args retT, body)
+
+let abstract0 name args retT = AbstractDef <| methodHead0 name args retT
+let override0 name args retT instrs = MethodDef(Some Override, methodInfo0 name args retT <| MethodBody.MethodBody instrs)
+
+//type abstract `->` (a, b) = abstract `_ _` a : b;;
+//
+//type Num a =
+//    ofInteger Integer : a;
+//    `_+_` (a, a) : a;;
+//
+//type #(Num Int32) <: Object, Num Int32 =
+//    override ofInteger Integer : Int32 { ... };
+//    override `_+_` (Int32, Int32) : Int32 { ... };;
+//
+//type CloSucc2 a <: (a -> a) =
+//    val item1 : Num a
+//    new (Num a) =
+//        base()
+//        ldarg.0
+//        stfld CloSucc2::item
+//        ret;
+//
+//    override `_ _` a : a =
+//        ldfld CloSucc2::item
+//        ldarg.0
+//        ldfld CloSucc2::item
+//        ldsfld bigint::One
+//        callvirt Num a::ofInteger(a)
+//        callvirt Num a::`_+_`
+//        ret;;
+//
+//type CloSucc a <: (Num a -> a -> a) =
+//    override `_ _` (Num a) : a -> a =
+//        ldarg.0
+//        newobj (CloSucc2 a) (Num a)
+//        ret;;
+//
+//module Program =
+//    fun succ a () : Num a -> a -> a = newobj (CloSucc a) ();;
+//
+//    val #(Num Int32) : Num Int32;;
+//    val ten : Int32;;
+//    fun init () : void =
+//        newobj #(Num Int32) ()
+//        stfld Program::#(Num Int32)
+//        ldc_i4 10i
+//        stfld ten
+//        ret;;
+//
+//    fun main () : void =
+//        call init ()
+//
+//        ldfld ten
+//        ldfld #(Num Int32)
+//        call succ Int32 ()
+//        callvirt `->`(Num Int32, Int32 -> Int32)::` `(Num Int32)
+//        callvirt `->`(Int32, Int32)::` `(Int32)
+//        ret;;
+//;;
+
+let ctor args is = CtorDef(args, MethodBody.MethodBody is)
+
+let inRange lo hi x = lo <= x && x <= hi
+let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
+    match n with
+    | n when inRange lo hi n -> Instr("", inlined n, OpNone)
+    | n when inRange -128 127 n -> Instr("", i1Op, OpI1 <| int8 n)
+    | n -> Instr("", i4Op, OpI4 n)
+
+module SimpleInstructions =
+    let base_init ts = Macro(BaseInit ts)
+    let ret = Instr("", O.Ret, OpNone)
+
+    let newobj thisType argTypes = Instr("", O.Newobj, OpCtor(thisType, argTypes))
+
+    let ldc_i4 n = inlinedI4 (O.Ldc_I4_S, O.Ldc_I4, -1, 8) n <| function
+        | 0 -> O.Ldc_I4_0
+        | 1 -> O.Ldc_I4_1
+        | 2 -> O.Ldc_I4_2
+        | 3 -> O.Ldc_I4_3
+        | 4 -> O.Ldc_I4_4
+        | 5 -> O.Ldc_I4_5
+        | 6 -> O.Ldc_I4_6
+        | 7 -> O.Ldc_I4_7
+        | 8 -> O.Ldc_I4_8
+        | _ -> O.Ldc_I4_M1
+
+    let ldarg n = inlinedI4 (O.Ldarg_S, O.Ldarg, 0, 3) n <| function
+        | 0 -> O.Ldarg_0
+        | 1 -> O.Ldarg_1
+        | 2 -> O.Ldarg_2
+        | _ -> O.Ldarg_3
+
+    let stfld t n = Instr("", O.Stfld, OpField(t, n))
+    let ldfld t n = Instr("", O.Ldfld, OpField(t, n))
+
+open SimpleInstructions
+
+let field n t = Field(false, false, n, t)
+
+IL [
+    abstract2T "->`2" "a" "b" <| fun f a b ->
+        f None [] [abstract0 "_ _" [arg "arg" a] b]
+
+    type1D "Num`1" "a" <| fun f a ->
+        f None [] [
+            abstract0 "ofInteger" [argT bigintT] a
+            abstract0 "_+_" [argT a; argT a] a
+        ]
+
+    type0D "Num(System.Int32)" None [typeRef1 (p"Num`1") intT] [
+        override0 "ofInteger" [argT bigintT] intT [ldc_i4 0; ret]
+        override0 "_+_" [argT intT; argT intT] intT [ldc_i4 0; ret]
+    ]
+
+    //type CloSucc2 a <: (a -> a) =
+    //    val item1 : Num a
+    //    new (Num a) =
+    //        base()
+    //        ldarg.0
+    //        stfld CloSucc2 a::item1
+    //        ret;
+    //
+    //    override `_ _` a : a =
+    //        ldfld CloSucc2 a::item1
+    //        ldarg.0
+    //        ldfld CloSucc2 a::item1
+    //        ldsfld bigint::One
+    //        callvirt Num a::ofInteger(a)
+    //        callvirt Num a::`_+_`(a, a)
+    //        ret;;
+    type1D "CloSucc2`1" "a" <| fun f a ->
+        let numAT = type1 (p"Num`1") a
+        let cloSucc2AT = type1 (p"CloSucc2`1") a
+
+        f (Some(typeRef2 (p"->`2") a a)) [] [
+            field "item1" numAT
+
+            // new (Num a) = base(); @item1 <- $0;
+            ctor [argT numAT] [
+                base_init []
+                ldarg 0
+                stfld cloSucc2AT "item1"
+                ret
+            ]
+
+            // override `_ _` a : a = @item1.`_+_`($0, @item1.ofInteger(bigint::One));
+            override0 "_ _" [argT a] a [
+                ldfld cloSucc2AT "item1"
+                ldarg 0
+                ldfld cloSucc2AT "item1"
+                ldsfld bigintT "One"
+                callvirt numAT "ofInteger" [a]
+                callvirt numAT "_+_" [a; a]
+                ret
+            ]
+        ]
+
+    type1D "CloSucc`1" "a" <| fun f a ->
+        f (Some(typeRef2 (p"->`2") a (type2 (p"->`2") a a))) [] [
+            override0 "_ _" [argT (type1 (p"Num`1") a)] (type2 (p"->`2") a a) [
+                ldarg 0
+                newobj (type1 (p"CloSucc2`1") a) [type1 (p"Num`1") a]
+                ret
+            ]
+        ]
+
+]
+|> emitDll "test"
+
+
+let __ _ =
+//    let d = TopTypeDef {
+//            kind = None
+//            name = t"Type"
+//            typeArgs = []
+//            parent = typeRefOf<obj>
+//            impls = []
+//            members = []
+//        }
+//        
+//    let name = "test" // sprintf "%s_%d" "test" Environment.TickCount
+//    let moduleName = Path.ChangeExtension(name, ".dll")
+//    let path = Path.Combine(Path.GetTempPath(), moduleName)
+//
+//    if File.Exists path then File.Delete path else ()
+//
+//    let d = AppDomain.CurrentDomain
+//    let a = d.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.Save)
+//    let m = a.DefineDynamicModule moduleName
+//    let t = m.DefineType("Type1", T.Public ||| T.Sealed ||| T.BeforeFieldInit, typeof<obj>)
+//    //t.DefineField("f1", t, FieldAttributes.InitOnly ||| FieldAttributes.Public) |> ignore
+//    t.CreateType() |> ignore
+//
+//    //if File.Exists path then File.Delete path else ()
+//    a.Save moduleName
+//
+//    ildasm path = ".assembly extern mscorlib
+//{
+//  .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
+//  .ver 4:0:0:0
+//}
+//.assembly test
+//{
+//  .hash algorithm 0x00008004
+//  .ver 0:0:0:0
+//}
+//.module test.dll
+//.imagebase 0x00400000
+//.file alignment 0x00000200
+//.stackreserve 0x00100000
+//.subsystem 0x0003
+//.corflags 0x00000001
+//.class public auto ansi sealed beforefieldinit Type1
+//       extends [mscorlib]System.Object
+//{
+//  .method public specialname rtspecialname 
+//          instance void  .ctor() cil managed
+//  {
+//    .maxstack  2
+//    IL_0000:  ldarg.0
+//    IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
+//    IL_0006:  ret
+//  }
+//}"      |> ignore
+//
+//
+//    let map = HashMap()
+//    DefineTypes.topDef m map d
+//    createTypes map
+//    a.Save("test.dll")
+//
+//    m.GetTypes()
+//
+//    map.[t"Type", []]
+
+    IL [
+        TopTypeDef {
+            kind = None
+            name = t"Type"
+            typeArgs = []
+            parent = None
+            impls = []
+            members = []
+        }
+    ]
+    |> emitDll "test.dll"
