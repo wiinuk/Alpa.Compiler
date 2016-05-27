@@ -17,53 +17,70 @@ let (===?) act exp = fst act ==? exp
 let emptyTypeMap = HashMap()
 let solveT = solveType emptyTypeMap emptyVarMap 
 
-solveT typeOf<int> ==? typeof<int>
-solveT typeOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
-
 open System
 open System.Reflection
 open System.Reflection.Emit
-let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName("test2"), AssemblyBuilderAccess.RunAndSave)
-let f = a.DefineDynamicModule("test2.dll")
+let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName "test10", AssemblyBuilderAccess.RunAndSave)
+let m = a.DefineDynamicModule("test10.dll")
+let t = m.DefineType("Ty")
 
-let ds = [
-    type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
-        override0 "Equals" [argT intT] typeOf<bool> [ldc_i4 1; ret]
-    ]
-]
+let t2 = m.DefineType("Ty2")
 
-let map = HashMap()
-let i = map.[p"EqualsInt"].t.ImplementedInterfaces |> Seq.item 0
-i.GetGenericArguments().[0]
+t2.SetParent t
+t2.BaseType
 
-for d in ds do DefineTypes.topDef f map d
-for d in ds do DefineMembers.topDef map d
-emit map
-createTypes map
-
-//let t = f.DefineType("EqualsInt", T.Public ||| T.Sealed, typeof<obj>, [| typeof<IEquatable<int>> |])
-//let m = t.DefineMethod("Equals", M.Public ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual, CC.Standard, typeof<bool>, [|typeof<int>|])
-//let g = m.GetILGenerator()
-//g.Emit O.Ldc_I4_1
-//g.Emit O.Ret
-//
-//
-//t.CreateType()
-
-a.Save("test2.dll")
+solveT typeOf<int> ==? typeof<int>
+solveT typeOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
 
 IL [
     type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
         override0 "Equals" [argT intT] typeOf<bool> [ldc_i4 1; ret]
     ]
 ]
-|> emitDll "test3"
+|> emitDll "test3" ===? ".assembly extern mscorlib
+{
+  .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
+  .ver 4:0:0:0
+}
+.assembly test3
+{
+  .hash algorithm 0x00008004
+  .ver 0:0:0:0
+}
+.module test3.dll
+.imagebase 0x00400000
+.file alignment 0x00000200
+.stackreserve 0x00100000
+.subsystem 0x0003
+.corflags 0x00000001
+.class public auto ansi sealed beforefieldinit EqualsInt
+       extends [mscorlib]System.Object
+       implements class [mscorlib]System.IEquatable`1<int32>
+{
+  .method public hidebysig newslot virtual final 
+          instance bool  Equals(int32 A_1) cil managed
+  {
+    .maxstack  1
+    IL_0000:  ldc.i4.1
+    IL_0001:  ret
+  }
+  .method public specialname rtspecialname 
+          instance void  .ctor() cil managed
+  {
+    .maxstack  2
+    IL_0000:  ldarg.0
+    IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
+    IL_0006:  ret
+  }
+}"
+
+//#r @"C:\Users\pc-2\AppData\Local\Temp\test3.dll"
 
 //type abstract `->` (a, b) = abstract `_ _` a : b;;
 //
 //type Num a =
-//    ofInteger Integer : a;
-//    `_+_` (a, a) : a;;
+//    abstract ofInteger Integer : a;
+//    abstract `_+_` (a, a) : a;;
 //
 //type #(Num Int32) <: Object, Num Int32 =
 //    override ofInteger Integer : Int32 { ... };
@@ -134,33 +151,33 @@ IL [
         override0 "ofInteger" [argT bigintT] intT [ldc_i4 0; ret]
         override0 "_+_" [argT intT; argT intT] intT [ldc_i4 0; ret]
     ]
-//
-//    type1D "CloSucc2`1" "a" <| fun f a ->
-//        let numAT = numT a
-//        let cloSucc2AT = type1 (p"CloSucc2`1") a
-//
-//        f (Some(a ..-> a)) [] [
-//            field "item1" numAT
-//
-//            // new (Num a) = base(); @item1 <- $0;
-//            ctor [argT numAT] [
-//                base_init []
-//                ldarg 0
-//                stfld cloSucc2AT "item1"
-//                ret
-//            ]
-//
-//            // override `_ _` a : a = @item1.`_+_`($0, @item1.ofInteger(bigint::One));
-//            override0 "_ _" [argT a] a [
-//                ldfld cloSucc2AT "item1"
-//                ldarg 0
-//                ldfld cloSucc2AT "item1"
-//                ldsfld bigintT "One"
-//                callvirt numAT "ofInteger" [] [a]
-//                callvirt numAT "_+_" [] [a; a]
-//                ret
-//            ]
-//        ]
+
+    type1D "CloSucc2`1" "a" <| fun f a ->
+        let numAT = numT a
+        let cloSucc2AT = type1 (p"CloSucc2`1") a
+
+        f (Some(a ..-> a)) [] [
+            field "item1" numAT
+
+            // new (Num a) = base(); @item1 <- $0;
+            ctor [argT numAT] [
+                base_init []
+                ldarg 0
+                stfld cloSucc2AT "item1"
+                ret
+            ]
+
+            // override `_ _` a : a = @item1.`_+_`($0, @item1.ofInteger(bigint::One));
+            override0 "_ _" [argT a] a [
+                ldfld cloSucc2AT "item1"
+                ldarg 0
+                ldfld cloSucc2AT "item1"
+                ldsfld bigintT "One"
+                callvirt numAT "ofInteger" [] [a]
+                callvirt numAT "_+_" [] [a; a]
+                ret
+            ]
+        ]
 //
 //    type1D "CloSucc`1" "a" <| fun f a ->
 //        f (Some(a ..-> (a .-> a))) [] [
@@ -242,6 +259,34 @@ IL [
           instance !a  '_+_'(!a A_1,
                              !a A_2) cil managed
   {
+  }
+}
+.class public auto ansi sealed beforefieldinit '#Num(System_Int32)'
+       extends [mscorlib]System.Object
+       implements class Num`1<int32>
+{
+  .method public hidebysig newslot virtual final 
+          instance int32  ofInteger(valuetype [System.Numerics]System.Numerics.BigInteger A_1) cil managed
+  {
+    .maxstack  1
+    IL_0000:  ldc.i4.0
+    IL_0001:  ret
+  }
+  .method public hidebysig newslot virtual final 
+          instance int32  '_+_'(int32 A_1,
+                                int32 A_2) cil managed
+  {
+    .maxstack  1
+    IL_0000:  ldc.i4.0
+    IL_0001:  ret
+  }
+  .method public specialname rtspecialname 
+          instance void  .ctor() cil managed
+  {
+    .maxstack  2
+    IL_0000:  ldarg.0
+    IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
+    IL_0006:  ret
   }
 }"
 

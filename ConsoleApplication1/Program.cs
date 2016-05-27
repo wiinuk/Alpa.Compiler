@@ -101,6 +101,17 @@ namespace ConsoleApplication1
         public bool Equals(int other) => true;
     }
 
+    public class Outer<T1>
+    {
+        public class Nested1<T2>
+        {
+            public class Nested2<T3>
+            {
+                public Tuple<T1, T2, T3> F;
+            }
+        }
+    }
+
     static class Program
     {
         public static bool RetBool() => true;
