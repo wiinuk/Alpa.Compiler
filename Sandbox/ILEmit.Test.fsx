@@ -34,7 +34,7 @@ solveT typeOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
 
 IL [
     type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
-        override0 "Equals" [argT intT] typeOf<bool> [ldc_i4 1; ret]
+        override0 "Equals" [paramT intT] typeOf<bool> [ldc_i4 1; ret]
     ]
 ]
 |> emitDll "test3" ===? ".assembly extern mscorlib
@@ -140,16 +140,16 @@ let programT = type0 (p"Program")
 
 IL [
     abstract2T "->`2" "a" "b" <| fun f a b ->
-        f None [] [abstract0 "_ _" [arg "arg" a] b]
+        f None [] [abstract0 "_ _" [param "param" a] b]
 
     type1D "Num`1" "a" <| fun f a ->
         f None [] [
-            abstract0 "ofInteger" [argT bigintT] a
-            abstract0 "_+_" [argT a; argT a] a
+            abstract0 "ofInteger" [paramT bigintT] a
+            abstract0 "_+_" [paramT a; paramT a] a
         ]
     type0D "#Num(System_Int32)" None [numR intT] [
-        override0 "ofInteger" [argT bigintT] intT [ldc_i4 0; ret]
-        override0 "_+_" [argT intT; argT intT] intT [ldc_i4 0; ret]
+        override0 "ofInteger" [paramT bigintT] intT [ldc_i4 0; ret]
+        override0 "_+_" [paramT intT; paramT intT] intT [ldc_i4 0; ret]
     ]
 
     type1D "CloSucc2`1" "a" <| fun f a ->
@@ -160,7 +160,7 @@ IL [
             field "item1" numAT
 
             // new (Num a) = base(); @item1 <- $0;
-            ctor [argT numAT] [
+            ctor [paramT numAT] [
                 base_init []
                 ldarg 0
                 stfld cloSucc2AT "item1"
@@ -168,7 +168,7 @@ IL [
             ]
 
             // override `_ _` a : a = @item1.`_+_`($0, @item1.ofInteger(bigint::One));
-            override0 "_ _" [argT a] a [
+            override0 "_ _" [paramT a] a [
                 ldfld cloSucc2AT "item1"
                 ldarg 0
                 ldfld cloSucc2AT "item1"
@@ -181,7 +181,7 @@ IL [
 //
 //    type1D "CloSucc`1" "a" <| fun f a ->
 //        f (Some(a ..-> (a .-> a))) [] [
-//            override0 "_ _" [argT (numT a)] (a .-> a) [
+//            override0 "_ _" [paramT (numT a)] (a .-> a) [
 //                ldarg 0
 //                newobj (type1 (p"CloSucc2`1") a) [numT a]
 //                ret
@@ -237,7 +237,7 @@ IL [
        extends [mscorlib]System.Object
 {
   .method public hidebysig newslot abstract virtual 
-          instance !b  '_ _'(!a arg) cil managed
+          instance !b  '_ _'(!a param) cil managed
   {
   }
   .method public specialname rtspecialname 
@@ -295,7 +295,7 @@ let __ _ =
 //    let d = TopTypeDef {
 //            kind = None
 //            name = t"Type"
-//            typeArgs = []
+//            typeParams = []
 //            parent = typeRefOf<obj>
 //            impls = []
 //            members = []
@@ -359,7 +359,7 @@ let __ _ =
     IL [
         TopTypeDef(t"Type", {
             kind = None
-            typeArgs = []
+            typeParams = []
             parent = None
             impls = []
             members = []

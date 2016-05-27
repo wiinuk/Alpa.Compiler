@@ -34,7 +34,7 @@ let p n = FullName(t n, [], [], None)
 
 let typeDef = {
     kind = None
-    typeArgs = []
+    typeParams = []
     parent = None
     impls = []
     members = []
@@ -43,7 +43,7 @@ let typeDef = {
 let type0D name parent impls members =
     TopTypeDef(name, {
         kind = None
-        typeArgs = []
+        typeParams = []
         parent = parent
         impls = impls
         members = members
@@ -54,7 +54,7 @@ let type1D name v1 f =
     let make parent impls members =
         TopTypeDef(name, {
             kind = None
-            typeArgs = [v1]
+            typeParams = [v1]
             parent = parent
             impls = impls
             members = members
@@ -72,15 +72,15 @@ let abstract2T name v1 v2 f =
     let make parent impls members =
         TopTypeDef(name, {
             kind = Some Abstract
-            typeArgs = [v1; v2]
+            typeParams = [v1; v2]
             parent = parent
             impls = impls
             members = members
         })
     f make (TypeVar v1) (TypeVar v2)
 
-let arg n t = Argument(Some n, t)
-let argT t = Argument(None, t)
+let param n t = Argument(Some n, t)
+let paramT t = Argument(None, t)
 
 let methodHead0 name args retT = MethodHead(name, [], args, Argument(None, retT))
 let methodInfo0 name args retT body = MethodInfo(methodHead0 name args retT, body)
@@ -96,12 +96,12 @@ let mutD name t = ModuleValDef(true, name, t)
 let fun1 name v1 f =
     let v1 = newTypeVar v1
     let make args ret instrs =
-        ModuleMethodDef(MethodInfo(MethodHead(name, [v1], args, argT ret), MethodBody instrs))
+        ModuleMethodDef(MethodInfo(MethodHead(name, [v1], args, paramT ret), MethodBody instrs))
 
     f make (TypeVar v1)
 
 let fun0 name args ret instrs =
-    ModuleMethodDef(MethodInfo(MethodHead(name, [], args, argT ret), MethodBody instrs))
+    ModuleMethodDef(MethodInfo(MethodHead(name, [], args, paramT ret), MethodBody instrs))
     
 let inRange lo hi x = lo <= x && x <= hi
 let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =

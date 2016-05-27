@@ -89,7 +89,7 @@ type MemberDef =
 type TypeKind = Abstract | Interface | Open | Sealed
 type TypeDef = {
     kind: TypeKind option
-    typeArgs: Var list
+    typeParams: Var list
     parent: TypeSpec option
     /// Implement Interfaces
     impls: TypeSpec list
@@ -170,7 +170,7 @@ type SolvedType =
 let rec solveTypeCore typeMap varMap mVarMap t =
     let getGenericDef typeMap pathRev =
         let mutable ti = Unchecked.defaultof<_>
-        if tryGet typeMap pathRev &ti then let { t = t } = ti in SBuilderType ti
+        if tryGet typeMap pathRev &ti then SBuilderType ti
         else SType <| Type.GetType(toTypeName pathRev, true)
 
     let rec aux = function
@@ -249,7 +249,7 @@ module DefineTypes =
         }
         for m in ms do moduleMember path t map m
 
-    and type' defineType (FullName(name=name) as path) map ({ kind = kind; typeArgs = typeArgs; members = members } as d) =
+    and type' defineType (FullName(name=name) as path) map ({ kind = kind; typeParams = typeArgs; members = members } as d) =
         let isInterfaceMember = function 
             | Literal _
             | Field _
@@ -303,7 +303,7 @@ let defineTypeVars map =
     for { d = d; t = t; varMap = varMap } in values map do
         match d with
         | Choice2Of2 _ -> ()
-        | Choice1Of2 { typeArgs = typeArgs } ->
+        | Choice1Of2 { typeParams = typeArgs } ->
             let varMap' = defineVarMap typeArgs <| tDefineGP t
             copyToArray varMap' varMap
 
@@ -472,6 +472,43 @@ module DefineMembers =
             | Choice1Of2 td -> typeDef ti td
             | Choice2Of2 members -> for m in members do moduleMember ti m
 
+// type C (a) = fun M (b) (a, b) : b
+//
+// call C(char)::M (int) (char, int)
+// call C(char)::M (int) (char, char) // invalid
+// call C(char)::M (int) (int, char) // invalid
+// call C(char)::M (int) (int, int) // invalid
+//
+// call C(char)::M (char) (char, char)
+// call C(char)::M (char) (int, char) // invalid
+// call C(char)::M (char) (char, int) // invalid
+// call C(char)::M (char) (int, int) // invalid
+
+let findMethod { mmap = mmap; varMap = varMap } thisTypeArgs name mTypeArgs argTypes =
+    if Array.length varMap <> List.length thisTypeArgs then invalidArg "thisTypeVars" "findMethod"
+
+    let subst = Seq.zip varMap thisTypeArgs |> Seq.toArray
+
+    get mmap name
+    |> List.find (function
+        | { m = MethodInfo(MethodHead(typeArgs=mTypeParams; args=ps), _) } ->
+            List.length mTypeParams = List.length mTypeArgs &&
+            List.length ps = List.length argTypes &&
+            List.forall2 (fun (Argument(_,paramType)) argType ->
+                at = t
+            ) ps argTypes
+        | _ -> false
+    )
+    |> fun { mb = mb } -> mb
+
+//    match solveTypeCore map varMap mVarMap t with
+//    | SType t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
+//
+//    | SBuilderType { mmap = parentMMap } -> findMethod ts parentMMap
+//
+//    | SBuilderGeneric(t, genericDef, genericParams) -> failwith "Not implemented yet"
+//    | STypeVar(_, _) -> failwith "Not implemented yet"
+
 let emitInstr (g: ILGenerator) map { mVarMap = mVarMap; dt = { varMap = varMap; path = path; mmap = mmap; d = d } as dt } = function
     | Macro(BaseInit ts) ->
         let ctor =
@@ -480,9 +517,12 @@ let emitInstr (g: ILGenerator) map { mVarMap = mVarMap; dt = { varMap = varMap; 
                 match solveTypeCore map varMap mVarMap parent with
                 | SType t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
 
-                | SBuilderType { mmap = parentMMap } -> findMethod ts parentMMap
+                | SBuilderType ti ->
+                    match findMethod ti [] ".ctor" [] ts with
+                    | Choice2Of2 c -> upcast c
+                    | Choice1Of2 m -> failwith "unreach"
 
-                | SBuilderGeneric(t, genericDef, genericParams) -> failwith "Not implemented yet"
+                | SBuilderGeneric(t, genericDef, genericTypeParams) -> failwith "Not implemented yet"
                 | STypeVar(_, _) -> failwith "Not implemented yet"
 
 
