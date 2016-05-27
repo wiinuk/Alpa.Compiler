@@ -21,7 +21,7 @@ let getPath t =
 
 let rec typeOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
 and typeOfTypeArgs t = if not t.IsGenericType then [] else t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList
-let typeRefOfT t = TypeRef(getPath t, typeOfTypeArgs t)
+let typeRefOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
 
 [<RequiresExplicitTypeArguments>]
 let typeOf<'a> = typeOfT typeof<'a>
@@ -64,8 +64,8 @@ let type1D name v1 f =
 let type0 t = TypeSpec(t, [])
 let type1 t v1 = TypeSpec(t, [v1])
 let type2 t v1 v2 = TypeSpec(t, [v1; v2])
-let typeRef1 n v1 = TypeRef(n, [v1])
-let typeRef2 n v1 v2 = TypeRef(n, [v1; v2])
+let typeRef1 n v1 = TypeSpec(n, [v1])
+let typeRef2 n v1 v2 = TypeSpec(n, [v1; v2])
 
 let abstract2T name v1 v2 f =
     let v1, v2 = newTypeVar v1, newTypeVar v2
@@ -79,29 +79,29 @@ let abstract2T name v1 v2 f =
         })
     f make (TypeVar v1) (TypeVar v2)
 
-let param n t = Argument(Some n, t)
-let paramT t = Argument(None, t)
+let param n t = Parameter(Some n, t)
+let paramT t = Parameter(None, t)
 
-let methodHead0 name args retT = MethodHead(name, [], args, Argument(None, retT))
-let methodInfo0 name args retT body = MethodInfo(methodHead0 name args retT, body)
+let methodHead0 name pars retT = MethodHead(name, [], pars, Parameter(None, retT))
+let methodInfo0 name pars retT body = MethodInfo(methodHead0 name pars retT, body)
 
-let abstract0 name args retT = AbstractDef <| methodHead0 name args retT
-let override0 name args retT instrs = MethodDef(Some Override, methodInfo0 name args retT <| MethodBody instrs)
+let abstract0 name pars retT = AbstractDef <| methodHead0 name pars retT
+let override0 name pars retT instrs = MethodDef(Some Override, methodInfo0 name pars retT <| MethodBody instrs)
 
-let ctor args is = CtorDef(args, MethodBody is)
+let ctor pars is = CtorDef(pars, MethodBody is)
 
 let field n t = Field(false, false, n, t)
 let moduleD name ms = TopModuleDef(name, ms)
 let mutD name t = ModuleValDef(true, name, t)
 let fun1 name v1 f =
     let v1 = newTypeVar v1
-    let make args ret instrs =
-        ModuleMethodDef(MethodInfo(MethodHead(name, [v1], args, paramT ret), MethodBody instrs))
+    let make pars ret instrs =
+        ModuleMethodDef(MethodInfo(MethodHead(name, [v1], pars, paramT ret), MethodBody instrs))
 
     f make (TypeVar v1)
 
-let fun0 name args ret instrs =
-    ModuleMethodDef(MethodInfo(MethodHead(name, [], args, paramT ret), MethodBody instrs))
+let fun0 name pars ret instrs =
+    ModuleMethodDef(MethodInfo(MethodHead(name, [], pars, paramT ret), MethodBody instrs))
     
 let inRange lo hi x = lo <= x && x <= hi
 let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =

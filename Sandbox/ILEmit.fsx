@@ -14,6 +14,8 @@ type F = global.System.Reflection.FieldAttributes
 type O = global.System.Reflection.Emit.OpCodes
 
 let mutable seed = 0
+
+[<CustomEquality; NoComparison>]
 type Var = struct
     val Name: string
     val Value: int
@@ -23,7 +25,14 @@ type Var = struct
             Name = name
             Value = x
         }
-    override x.ToString() = sprintf "TypeVar \"%s\"" x.Name
+    override x.ToString() = sprintf "%s \"%s\"" typeof<Var>.Name x.Name
+    override l.Equals r =
+        match r with
+        | :? Var as r -> l.Value = r.Value
+        | _ -> false
+    override x.GetHashCode() = x.Value
+    interface IEquatable<Var> with
+        override l.Equals r = l.Value = r.Value
 end
 
 type FullName = FullName of name: string * nestersRev: string list * namespaceRev: string list * assemblyName: string option
@@ -52,9 +61,9 @@ type Override =
     | Override
     | BaseMethod of baseMethod: (TypeSpec * string)
 
-type Argument = Argument of name: string option * TypeSpec
+type Parameter = Parameter of name: string option * TypeSpec
 type MethodBody = MethodBody of Instr list
-type MethodHead = MethodHead of name: string * typeArgs: Var list * args: Argument list * ret: Argument
+type MethodHead = MethodHead of name: string * typeParams: Var list * pars: Parameter list * ret: Parameter
 type MethodInfo = MethodInfo of MethodHead * MethodBody
 type StaticMethodInfo = MethodInfo
 
@@ -83,7 +92,7 @@ type MemberDef =
     | Literal of name: string * Literal
     | Field of isStatic: bool * isMutable: bool * name: string * TypeSpec
     | AbstractDef of MethodHead
-    | CtorDef of args: Argument list * MethodBody
+    | CtorDef of pars: Parameter list * MethodBody
     | MethodDef of Override option * MethodInfo
 
 type TypeKind = Abstract | Interface | Open | Sealed
@@ -142,7 +151,7 @@ let tryGet (map: HashMap<_,_>) k (v: _ byref) = map.TryGetValue(k, &v)
 let values (map: HashMap<_,_>) = map.Values
 let pathToNs (p,ps) = p::ps
 let nsToPath ps name = name, ps
-let argType (Argument(_,t)) = t
+let paramType (Parameter(_,t)) = t
 let emptyVarMap : TypeVarMap = [||]
     
 let toTypeName = function
@@ -163,7 +172,7 @@ let toTypeName = function
 
 type SolvedType =
     | SBuilderType of TypeBuilderInfo
-    | SBuilderGeneric of t: Type * genericDef: TypeBuilderInfo * genericParams: SolvedType list
+    | SBuilderGeneric of t: Type * genericDef: TypeBuilderInfo * genericArgs: SolvedType list
     | SType of Type
     | STypeVar of Var * GenericTypeParameterBuilder
 
@@ -212,24 +221,24 @@ let solveTypes map varMap mVarMap ts =
     Seq.map (solveType map varMap mVarMap) ts
     |> Seq.toArray
     
-let solveParamTypes map varMap mVarMap args =
-    Seq.map (argType >> solveType map varMap mVarMap) args
+let solveParamTypes map varMap mVarMap pars =
+    Seq.map (paramType >> solveType map varMap mVarMap) pars
     |> Seq.toArray
 
-let defineVarMap typeArgs defineGenericParameters =
-    match typeArgs with
+let defineVarMap typeParams defineGenericParameters =
+    match typeParams with
     | [] -> emptyVarMap
     | _ ->
-        let typeArgs = List.toArray typeArgs
+        let typeArgs = List.toArray typeParams
         let names = Array.map varName typeArgs
         Array.zip typeArgs <| defineGenericParameters names
 
 let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
 let tDefineGP (t: TypeBuilder) xs = t.DefineGenericParameters xs
 
-let ctorHead { path = path; varMap = varMap } args =
+let ctorHead { path = path; varMap = varMap } pars =
     let t = TypeSpec(path, Seq.map (fun (v,_) -> TypeVar v) varMap |> Seq.toList)
-    MethodHead(".ctor", [], args, Argument(None, t))
+    MethodHead(".ctor", [], pars, Parameter(None, t))
 
 let addTypeName (FullName(name, nestersRev, nsRev, asmName)) typeName =
     FullName(typeName, name::nestersRev, nsRev, asmName)
@@ -249,7 +258,7 @@ module DefineTypes =
         }
         for m in ms do moduleMember path t map m
 
-    and type' defineType (FullName(name=name) as path) map ({ kind = kind; typeParams = typeArgs; members = members } as d) =
+    and type' defineType (FullName(name=name) as path) map ({ kind = kind; typeParams = typeParams; members = members } as d) =
         let isInterfaceMember = function 
             | Literal _
             | Field _
@@ -281,7 +290,7 @@ module DefineTypes =
             d = Choice1Of2 d
             path = path
             map = map
-            varMap = Array.zeroCreate <| List.length typeArgs
+            varMap = Array.zeroCreate <| List.length typeParams
             mmap = HashMap()
         }
 
@@ -299,12 +308,12 @@ let copyToArray source target =
     if Array.length source <> Array.length target then invalidArg "source" "array length"
     Array.blit source 0 target 0 source.Length
 
-let defineTypeVars map =
+let defineTypeParams map =
     for { d = d; t = t; varMap = varMap } in values map do
         match d with
         | Choice2Of2 _ -> ()
-        | Choice1Of2 { typeParams = typeArgs } ->
-            let varMap' = defineVarMap typeArgs <| tDefineGP t
+        | Choice1Of2 { typeParams = typeParams } ->
+            let varMap' = defineVarMap typeParams <| tDefineGP t
             copyToArray varMap' varMap
 
 let toSign (MethodHead(name=name)) = name
@@ -316,18 +325,18 @@ let addMethod mmap head m =
     add mmap sign ms
 
 module DefineMembers =
-    let param defineParameter i (Argument(pn, _)) = defineParameter(i, P.None, Option.toObj pn) |> ignore
-    let params' defineParameter args = List.iteri (fun i a -> param defineParameter (i + 1) a) args
+    let param defineParameter i (Parameter(n, _)) = defineParameter(i, P.None, Option.toObj n) |> ignore
+    let params' defineParameter pars = List.iteri (fun i a -> param defineParameter (i + 1) a) pars
     
-    let methodHead { t = t; map = map; varMap = varMap } attr callconv (MethodHead(name,typeArgs,args,ret)) =
+    let methodHead { t = t; map = map; varMap = varMap } attr callconv (MethodHead(name,typeParams,pars,ret)) =
         let m = t.DefineMethod(name, attr, callconv)
-        let mVarMap = defineVarMap typeArgs <| mDefineGP m
+        let mVarMap = defineVarMap typeParams <| mDefineGP m
         
-        m.SetReturnType(solveType map varMap mVarMap (argType ret))
-        m.SetParameters(solveParamTypes map varMap mVarMap args)
+        m.SetReturnType(solveType map varMap mVarMap (paramType ret))
+        m.SetParameters(solveParamTypes map varMap mVarMap pars)
 
         param m.DefineParameter 0 ret
-        params' m.DefineParameter args
+        params' m.DefineParameter pars
 
         m, mVarMap
 
@@ -347,7 +356,7 @@ module DefineMembers =
             methodInfo dt a CC.HasThis m
                     // TODO: last path
 //                        let bt = solveType map varMap <| typeRefToType baseType
-//                        let pts = solveParamTypes map varMap args
+//                        let pts = solveParamTypes map varMap pars
 //                        let bm = bt.GetMethod(baseMethodName, pts)
 //                        t.DefineMethodOverride(bm, m)
     
@@ -359,7 +368,7 @@ module DefineMembers =
     //     type X = ...;
     //     ...;;
     //
-    // (2) type arg definition
+    // (2) type param definition
     // type IOrd`1 a = ...;;
     // type IMap`2(k <: IOrd, v) = ...;;
     // type IntMap`1 v = ...;;
@@ -423,13 +432,13 @@ module DefineMembers =
         let f = t.DefineField(n, ft, a)
         f.SetConstant fv
 
-    let ctorDef ({ t = t; map = map; varMap = varMap; mmap = mmap } as dt) args body =
-        let pts = solveParamTypes map varMap emptyVarMap args
+    let ctorDef ({ t = t; map = map; varMap = varMap; mmap = mmap } as dt) pars body =
+        let pts = solveParamTypes map varMap emptyVarMap pars
         let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
                             
-        params' c.DefineParameter args
+        params' c.DefineParameter pars
 
-        let h = ctorHead dt args
+        let h = ctorHead dt pars
         let m = MethodInfo(h, body)
         addMethod mmap h { mb = Choice2Of2 c; m = m; dt = dt; mVarMap = emptyVarMap }
 
@@ -440,7 +449,7 @@ module DefineMembers =
 
         | Literal(n, l) -> literal dt n l
         | MethodDef(ov, m) -> methodDef dt ov m
-        | CtorDef(args, body) -> ctorDef dt args body
+        | CtorDef(pars, body) -> ctorDef dt pars body
         | AbstractDef head ->
             let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
             methodHead dt a CC.HasThis head
@@ -485,18 +494,35 @@ module DefineMembers =
 // call C(char)::M (char) (int, int) // invalid
 
 let findMethod { mmap = mmap; varMap = varMap } thisTypeArgs name mTypeArgs argTypes =
-    if Array.length varMap <> List.length thisTypeArgs then invalidArg "thisTypeVars" "findMethod"
+    if Array.length varMap <> Array.length thisTypeArgs then invalidArg "thisTypeVars" "findMethod"
 
-    let subst = Seq.zip varMap thisTypeArgs |> Seq.toArray
+    /// require: varMap.Length = typeArgs.Length && mTypeParams.Length mTypeArgs.Length
+    let solveVar varMap typeArgs mTypeParams mTypeArgs v =
+        let i = Array.FindIndex(varMap, fun (v',_) -> v = v')
+        if 0 <= i then Some <| Array.item i typeArgs
+        else 
+            match List.tryFindIndex (fun v' -> v = v') mTypeParams with
+            | Some i -> Some <| Array.item i mTypeArgs
+            | None -> None
+
+    let substType mTypeParams t =
+        let rec aux = function
+            | TypeSpec(_, []) as t -> t
+            | TypeSpec(n, vs) -> TypeSpec(n, List.map aux vs)
+            | TypeVar v as t ->
+                match solveVar varMap thisTypeArgs mTypeParams mTypeArgs v with
+                | Some t -> t
+                | None -> t
+        aux t
 
     get mmap name
     |> List.find (function
-        | { m = MethodInfo(MethodHead(typeArgs=mTypeParams; args=ps), _) } ->
-            List.length mTypeParams = List.length mTypeArgs &&
-            List.length ps = List.length argTypes &&
-            List.forall2 (fun (Argument(_,paramType)) argType ->
-                at = t
-            ) ps argTypes
+        | { m = MethodInfo(MethodHead(typeParams=mTypeParams; pars=pars), _) } ->
+            List.length mTypeParams = Array.length mTypeArgs &&
+            List.length pars = List.length argTypes &&
+            List.forall2 (fun (Parameter(_,parType)) argType ->
+                substType mTypeParams parType = argType
+            ) pars argTypes
         | _ -> false
     )
     |> fun { mb = mb } -> mb
@@ -522,9 +548,8 @@ let emitInstr (g: ILGenerator) map { mVarMap = mVarMap; dt = { varMap = varMap; 
                     | Choice2Of2 c -> upcast c
                     | Choice1Of2 m -> failwith "unreach"
 
-                | SBuilderGeneric(t, genericDef, genericTypeParams) -> failwith "Not implemented yet"
+                | SBuilderGeneric(t, genericDef, genericTypeArgs) -> failwith "Not implemented yet"
                 | STypeVar(_, _) -> failwith "Not implemented yet"
-
 
             | Choice1Of2 { parent = None }
             | Choice2Of2 _ ->
@@ -586,7 +611,7 @@ let createTypes map = for { t = t } in values map do t.CreateType() |> ignore
 let emitIL m (IL ds) =
     let map = HashMap()
     for d in ds do DefineTypes.topDef m map d
-    defineTypeVars map
+    defineTypeParams map
     for d in ds do DefineMembers.topDef map d
     emit map
     createTypes map
