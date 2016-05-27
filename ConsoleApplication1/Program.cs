@@ -1,4 +1,6 @@
-﻿namespace ConsoleApplication1
+﻿using System;
+
+namespace ConsoleApplication1
 {
     public interface InterfaceEq<T>
     {
@@ -94,8 +96,14 @@
         public Y Fun<X, Y>(T t, U u, Y y) => default(Y);
     }
 
+    public sealed class EqualsInt : IEquatable<int>
+    {
+        public bool Equals(int other) => true;
+    }
+
     static class Program
     {
+        public static bool RetBool() => true;
         public static int Main(string[] args)
         {
             return 0;
