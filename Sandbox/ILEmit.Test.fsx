@@ -24,6 +24,11 @@ let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName "test10", Ass
 let m = a.DefineDynamicModule("test10.dll")
 let t = m.DefineType("Ty")
 
+t.DefineGenericParameters [|"a"|]
+
+let tint = t.MakeGenericType([|typeof<int>|])
+tint.GetType()
+
 let t2 = m.DefineType("Ty2")
 
 t2.SetParent t
