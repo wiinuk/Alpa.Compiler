@@ -223,6 +223,7 @@ type TypeBuilderInfo = {
     t: TypeBuilder
 
     path: FullName
+
     mutable varMap: TypeVarMap
     /// SourceEnv
     map: TypeMap
@@ -613,7 +614,6 @@ let findMethod { mmap = mmap; varMap = varMap } typeArgs name mTypeArgs argTypes
     |> List.find (function
         | { mVarMap = TypeVarMap(mTypeParams,_) as mVarMap; m = MethodInfo(MethodHead(pars = pars), _)
             } ->
-            
             List.length pars = List.length argTypes &&
             Vector.length mTypeParams = Vector.length mTypeArgs &&
             substTypeArgs mVarMap mTypeArgs <| fun _ ->
@@ -631,14 +631,13 @@ let findMethod { mmap = mmap; varMap = varMap } typeArgs name mTypeArgs argTypes
 //    | SBuilderGeneric(t, genericDef, genericParams) -> failwith "Not implemented yet"
 //    | STypeVar(_, _) -> failwith "Not implemented yet"
 
-let emitInstr (g: ILGenerator) map typeArgs { mVarMap = mVarMap; dt = { varMap = varMap; path = path; mmap = mmap; d = d } as dt } = function
-    | Macro(BaseInit ts) ->
+let emitMacroInstr (g: ILGenerator) typeArgs { mVarMap = mVarMap; dt = { map = map; varMap = varMap; d = d }} = function
+    | BaseInit ts ->
         let ctor =
             match d with
             | Choice1Of2 { parent = Some parent } ->
                 match solveTypeCore map varMap mVarMap parent with
                 | SType t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
-
                 | SBuilderType ti ->
                     match findMethod ti typeArgs ".ctor" Vector.empty ts with
                     | { mb = Choice2Of2 c } -> upcast c
@@ -652,57 +651,54 @@ let emitInstr (g: ILGenerator) map typeArgs { mVarMap = mVarMap; dt = { varMap =
             | Choice1Of2 { parent = None }
             | Choice2Of2 _ ->
                 typeof<obj>.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
-
-//        let ctor =
-//            get mmap ".ctor" |> List.find (fun { m = MethodInfo(head, _) } -> m. true)
-//
-//        let ctor = parent.mmap.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap ts, null)
-
+                
         if List.isEmpty ts then g.Emit O.Ldarg_0 else ()
         g.Emit(O.Call, ctor)
 
+let emitInstr (g: ILGenerator) ({ mVarMap = mVarMap; dt = { map = map; varMap = varMap; typeArgs = typeArgs; path = path; mmap = mmap; d = d } as dt } as ti) = function
+    | Macro macro -> emitMacroInstr g typeArgs ti macro
     | Instr(label, op, operand) ->
         match operand with
         | OpNone -> g.Emit op
         | OpI1 n -> g.Emit(op, n)
         | OpI4 n -> g.Emit(op, n)
-        | OpType t -> g.Emit(op, solveType map varMap t)
+        | OpType t -> g.Emit(op, solveType map varMap mVarMap t)
         | OpField(parent, name) ->
-            let parent = solveType map varMap parent
+            let parent = solveType map varMap mVarMap parent
             let f = parent.GetField(name, B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
             g.Emit(op, f)
 
         | OpCtor(parent, argTypes) ->
-            let parent = solveType map varMap parent
-            let argTypes = solveTypes map varMap argTypes
+            let parent = solveType map varMap mVarMap parent
+            let argTypes = solveTypes map varMap mVarMap argTypes
             let ctor = parent.GetConstructor(B.Public ||| B.NonPublic, null, argTypes, null)
             g.Emit(op, ctor)
 
         | OpCall(isStatic, parent, name, typeArgs, argTypes) ->
-            let parent = solveType map varMap parent
-            let argTypes = solveTypes map varMap argTypes
+            let parent = solveType map varMap mVarMap parent
+            let argTypes = solveTypes map varMap mVarMap argTypes
             let b = if isStatic then B.Static else B.Instance
             let b = b ||| B.Public ||| B.NonPublic
             let m = parent.GetMethod(name, b, null, argTypes, null)
             let m =
                 if List.isEmpty typeArgs then m
                 else
-                    let argTypes = solveTypes map varMap typeArgs
+                    let argTypes = solveTypes map varMap mVarMap typeArgs
                     m.MakeGenericMethod(argTypes)
             g.Emit(op, m)
 
-let emitMethodBody map ({ mb = mb; m = MethodInfo(_, MethodBody instrs) } as mi) =
+let emitMethodBody ({ mb = mb; m = MethodInfo(_, MethodBody instrs) } as mi) =
     let g =
         match mb with
         | Choice1Of2 m -> m.GetILGenerator()
         | Choice2Of2 m -> m.GetILGenerator()
 
-    for instr in instrs do emitInstr g map mi instr
+    for instr in instrs do emitInstr g mi instr
 
 let emit map =
-    for { mmap = mmap } in values map do    
+    for { mmap = mmap } in values map do
         for mi in values mmap do
-            emitMethodBody map mi
+            emitMethodBody mi
 
 let createTypes map = for { t = t } in values map do t.CreateType() |> ignore
 
