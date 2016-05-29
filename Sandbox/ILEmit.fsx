@@ -76,10 +76,10 @@ module List =
 let mutable private seed = 0
 
 /// type Var<'a> = { id: int; value: 'a option ref }
-[<Sealed>]
-type Var<[<ComparisonConditionalOn; EqualityConditionalOn>] 'T> =
+[<Sealed; NoEquality; NoComparison>]
+type Var<'T> =
     val Name: string
-    val internal id: int
+    val Id: int
     [<DefaultValue>]
     val mutable internal hasValue: bool
     [<DefaultValue>]
@@ -88,13 +88,13 @@ type Var<[<ComparisonConditionalOn; EqualityConditionalOn>] 'T> =
         let x = Interlocked.Increment &seed
         {
             Name = name
-            id = x
+            Id = x
         }
     new (name, value) as self =
         let x = Interlocked.Increment &seed
         {
             Name = name
-            id = x
+            Id = x
         }
         then
             self.hasValue <- true
@@ -104,41 +104,11 @@ type Var<[<ComparisonConditionalOn; EqualityConditionalOn>] 'T> =
         if x.hasValue then sprintf "Var(\"%s\", %A)" x.Name x.value
         else sprintf "Var(\"%s\")" x.Name
 
-    override x.GetHashCode() = if x.hasValue then Unchecked.hash x.value else x.id
-
-    static member private Comp (l: _ Var) (r: _ Var) =
-        match l.hasValue, r.hasValue with
-        | true, true -> Unchecked.compare l.value r.value
-        | false, false -> l.id.CompareTo r.id
-        | true, false -> 1
-        | false, true -> -1
-
-    static member private Eq (l: _ Var) (r: _ Var) =
-        match l.hasValue, r.hasValue with
-        | true, true -> Unchecked.equals l.value r.value
-        | false, false -> l.id = r.id
-        | _ -> false
-
-    override l.Equals r =
-        match r with
-        | :? Var<'T> as r -> Var<_>.Eq l r
-        | _ -> false
-
-    static member op_Equality(l, r) = Var<_>.Eq l r
-    static member op_Inequality(l, r) = not <| Var<_>.Eq l r
-
-    interface IEquatable<Var<'T>> with
-        override l.Equals r = Var<_>.Eq l r
-
-    interface IComparable<Var<'T>> with
-        override l.CompareTo r = Var<_>.Comp l r
-
-    interface IComparable with
-        override l.CompareTo r = Var<_>.Comp l (unbox r)
-
 module Var =
     /// Option.isSome x.value
     let hasValue (x: _ Var) = x.hasValue
+
+    let id (x: _ Var) = x.Id
 
     /// match !x.value with Some x -> x | None -> Unchecked.defaultof<_>
     let getValueOrDefault (x: _ Var) = x.value
@@ -158,7 +128,7 @@ module Var =
 type FullName = FullName of name: string * nestersRev: string list * namespaceRev: string list * assemblyName: string option
 
 type TypeVar = Var<TypeSpec>
-and TypeSpec = 
+and [<NoEquality; NoComparison>] TypeSpec = 
     | TypeSpec of pathRev: FullName * TypeSpec list
     | TypeVar of Var<TypeSpec>
 
@@ -305,9 +275,29 @@ type ILType =
     | ILTypeBuilder of ILTypeBuilder
     | ILTypeParamBuilder of TypeVar * GenericTypeParameterBuilder ref
     | ILConstructedGenericType of ofTypeBuilder: Type * ILTypeBuilder
+    
+let rec typeSpecEq l r =
+    match l, r with
+    | TypeSpec(ln, ls), TypeSpec(rn, rs) -> ln = rn && List.length ls = List.length rs && List.forall2 typeSpecEq ls rs
+    | TypeVar l, TypeSpec _ -> Var.hasValue l && typeSpecEq (Var.getValueOrDefault l) r
+    | TypeSpec _, TypeVar r -> Var.hasValue r && typeSpecEq l (Var.getValueOrDefault r)
+    | TypeVar l, TypeVar r -> typeVarEq l r
 
+and typeVarEq l r =
+    match Var.hasValue l, Var.hasValue r with
+    | false, false -> Var.id l = Var.id r
+    | true, true -> typeSpecEq (Var.getValueOrDefault l) (Var.getValueOrDefault r)
+    | false, true ->
+        match Var.getValueOrDefault r with
+        | TypeVar r -> typeVarEq l r
+        | TypeSpec _ -> false
+
+    | true, false ->
+        match Var.getValueOrDefault l with
+        | TypeVar l -> typeVarEq l r
+        | TypeSpec _ -> false
 let solveTypeVarMap (TypeVarMap(vs,ts)) v =
-    match List.tryFindIndex (fun v' -> v = v') vs with
+    match List.tryFindIndex (fun v' -> typeVarEq v v') vs with
     | None -> None
     | Some i -> Some(List.item i ts)
 
@@ -454,174 +444,161 @@ let addMethod mmap head m =
     let ms = if tryGet mmap sign &ms then m::ms else [m]
     add mmap sign ms
 
-module DefineMembers =
-    let param defineParameter i (Parameter(n, _)) = defineParameter(i, P.None, Option.toObj n) |> ignore
-    let params' defineParameter pars = List.iteri (fun i a -> param defineParameter (i + 1) a) pars
+let defineParam defineParameter i (Parameter(n, _)) = defineParameter(i, P.None, Option.toObj n) |> ignore
+let defineParams defineParameter pars = List.iteri (fun i a -> defineParam defineParameter (i + 1) a) pars
     
-    let methodHead { map = map; t = t; varMap = varMap } attr callconv (MethodHead(name,typeParams,pars,ret)) =
-        let m = t.DefineMethod(name, attr, callconv)
-        let mVarMap = defineVarMap typeParams <| mDefineGP m
+let defineMethodHead { map = map; t = t; varMap = varMap } attr callconv (MethodHead(name,typeParams,pars,ret)) =
+    let m = t.DefineMethod(name, attr, callconv)
+    let mVarMap = defineVarMap typeParams <| mDefineGP m
         
-        m.SetReturnType(solveType map varMap mVarMap (paramType ret))
-        m.SetParameters(solveParamTypes map varMap mVarMap pars)
+    m.SetReturnType(solveType map varMap mVarMap (paramType ret))
+    m.SetParameters(solveParamTypes map varMap mVarMap pars)
 
-        param m.DefineParameter 0 ret
-        params' m.DefineParameter pars
+    defineParam m.DefineParameter 0 ret
+    defineParams m.DefineParameter pars
 
-        m, mVarMap
+    m, mVarMap
 
-    let methodInfo ({ mmap = mmap } as dt) a c (MethodInfo(head, _) as m) =
-        let mb, mVarMap = methodHead dt a c head
-        addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap }
+let defineMethodInfo ({ mmap = mmap } as dt) a c (MethodInfo(head, _) as m) =
+    let mb, mVarMap = defineMethodHead dt a c head
+    addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap }
 
-    let methodDef dt ov m =
-        match ov with
-        | None -> methodInfo dt (M.Public ||| M.Final ||| M.HideBySig) CC.Standard m
-        | Some Override ->
-            let a = M.Public ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual
-            methodInfo dt a CC.HasThis m
+let defineMethodDef dt ov m =
+    match ov with
+    | None -> defineMethodInfo dt (M.Public ||| M.Final ||| M.HideBySig) CC.Standard m
+    | Some Override ->
+        let a = M.Public ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual
+        defineMethodInfo dt a CC.HasThis m
 
-        | Some(BaseMethod _) ->
-            let a = M.Private ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual
-            methodInfo dt a CC.HasThis m
-                    // TODO: last path
+    | Some(BaseMethod _) ->
+        let a = M.Private ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual
+        defineMethodInfo dt a CC.HasThis m
+                // TODO: last path
 //                        let bt = solveType map varMap <| typeRefToType baseType
 //                        let pts = solveParamTypes map varMap pars
 //                        let bm = bt.GetMethod(baseMethodName, pts)
 //                        t.DefineMethodOverride(bm, m)
     
-    // (1) type name definition
-    // type IOrd`1 ... = ...;;
-    // type IMap`2 ... = ...;;
-    // type IntMap`1 ... = ...;;
-    // module Module =
-    //     type X = ...;
-    //     ...;;
-    //
-    // (2) type param definition
-    // type IOrd`1 a = ...;;
-    // type IMap`2(k <: IOrd, v) = ...;;
-    // type IntMap`1 v = ...;;
-    // module Module =
-    //     type X = ...;
-    //     ...;;
-    //
-    // (3) member definition
-    // type IOrd`1 a =
-    //     abstract CompareTo a : int;;
-    // type IMap`2(k <: IOrd, v) =
-    //     abstract Add(k, v) : void;;
-    // type IntMap`1 v <: object, IMap(int32, v) =
-    //     override Add(int32, v) : void = ...;;
-    // module Module =
-    //     type X = fun Member (a <: IOrd b, b) (a) : void = ...;
-    //     fun main () : void = ...;;
-    //
-    // (4) emit method body
-    // type IOrd`1 a =
-    //     abstract CompareTo a : int;;
-    // type IMap`2(k <: IOrd, v) =
-    //     abstract Add(k, v) : void;;
-    // type IntMap`1 v <: object, IMap(int32, v) =
-    //     override Add(int32, v) : void = ret;;
-    // module Module =
-    //     type X = fun Member (a <: IOrd b, b) (a) : void = ret;
-    //     fun main () : void = ret;;
+// (1) type name definition
+// type IOrd`1 ... = ...;;
+// type IMap`2 ... = ...;;
+// type IntMap`1 ... = ...;;
+// module Module =
+//     type X = ...;
+//     ...;;
+//
+// (2) type param definition
+// type IOrd`1 a = ...;;
+// type IMap`2(k <: IOrd, v) = ...;;
+// type IntMap`1 v = ...;;
+// module Module =
+//     type X = ...;
+//     ...;;
+//
+// (3) member definition
+// type IOrd`1 a =
+//     abstract CompareTo a : int;;
+// type IMap`2(k <: IOrd, v) =
+//     abstract Add(k, v) : void;;
+// type IntMap`1 v <: object, IMap(int32, v) =
+//     override Add(int32, v) : void = ...;;
+// module Module =
+//     type X = fun Member (a <: IOrd b, b) (a) : void = ...;
+//     fun main () : void = ...;;
+//
+// (4) emit method body
+// type IOrd`1 a =
+//     abstract CompareTo a : int;;
+// type IMap`2(k <: IOrd, v) =
+//     abstract Add(k, v) : void;;
+// type IntMap`1 v <: object, IMap(int32, v) =
+//     override Add(int32, v) : void = ret;;
+// module Module =
+//     type X = fun Member (a <: IOrd b, b) (a) : void = ret;
+//     fun main () : void = ret;;
 
-    let field { t = t; map = map; varMap = varMap } (isStatic, isMutable, name, ft) =
-        let a = F.Public
-        let a = if isStatic then a ||| F.Static else a
-        let a = if isMutable then a else a ||| F.InitOnly
-        let ft = solveType map varMap emptyVarMap ft
-        t.DefineField(name, ft, a)
+let defineField { t = t; map = map; varMap = varMap } (isStatic, isMutable, name, ft) =
+    let a = F.Public
+    let a = if isStatic then a ||| F.Static else a
+    let a = if isMutable then a else a ||| F.InitOnly
+    let ft = solveType map varMap emptyVarMap ft
+    t.DefineField(name, ft, a)
 
-    let literal { t = t; map = map; varMap = varMap } n l =
-        let a = F.Public ||| F.Static ||| F.Literal
-        let fv, ft =
-            let literalValue = function
-                | I1 v -> box v
-                | U1 v -> box v
-                | I2 v -> box v
-                | U2 v -> box v
-                | I4 v -> box v
-                | U4 v -> box v
-                | I8 v -> box v
-                | U8 v -> box v
-                | Bool v -> box v
-                | F4 v -> box v
-                | F8 v -> box v
-                | DateTime v -> box v
-                | Char v -> box v
-                | String v -> box v
+let defineLiteral { t = t; map = map; varMap = varMap } n l =
+    let a = F.Public ||| F.Static ||| F.Literal
+    let fv, ft =
+        let literalValue = function
+            | I1 v -> box v
+            | U1 v -> box v
+            | I2 v -> box v
+            | U2 v -> box v
+            | I4 v -> box v
+            | U4 v -> box v
+            | I8 v -> box v
+            | U8 v -> box v
+            | Bool v -> box v
+            | F4 v -> box v
+            | F8 v -> box v
+            | DateTime v -> box v
+            | Char v -> box v
+            | String v -> box v
 
-            match l with
-            | LiteralValue v -> let v = literalValue v in v, v.GetType()
-            | Enum(t, v) -> literalValue v, solveType map varMap emptyVarMap t
-            | Null t -> null, solveType map varMap emptyVarMap t
+        match l with
+        | LiteralValue v -> let v = literalValue v in v, v.GetType()
+        | Enum(t, v) -> literalValue v, solveType map varMap emptyVarMap t
+        | Null t -> null, solveType map varMap emptyVarMap t
 
-        let f = t.DefineField(n, ft, a)
-        f.SetConstant fv
+    let f = t.DefineField(n, ft, a)
+    f.SetConstant fv
 
-    let ctorDef ({ t = t; map = map; varMap = varMap; mmap = mmap } as dt) pars body =
-        let pts = solveParamTypes map varMap emptyVarMap pars
-        let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
+let defineCtor ({ t = t; map = map; varMap = varMap; mmap = mmap } as dt) pars body =
+    let pts = solveParamTypes map varMap emptyVarMap pars
+    let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
                             
-        params' c.DefineParameter pars
+    defineParams c.DefineParameter pars
 
-        let h = ctorHead dt pars
-        let m = MethodInfo(h, body)
-        addMethod mmap h { mb = Choice2Of2 c; m = m; dt = dt; mVarMap = emptyVarMap }
+    let h = ctorHead dt pars
+    let m = MethodInfo(h, body)
+    addMethod mmap h { mb = Choice2Of2 c; m = m; dt = dt; mVarMap = emptyVarMap }
 
-    let member' dt = function
-        | Field(isStatic, isMutable, n, ft) ->
-            let f = field dt (isStatic, isMutable, n, ft)
-            ()
+let defineMember dt = function
+    | Field(isStatic, isMutable, n, ft) ->
+        let f = defineField dt (isStatic, isMutable, n, ft)
+        ()
 
-        | Literal(n, l) -> literal dt n l
-        | MethodDef(ov, m) -> methodDef dt ov m
-        | CtorDef(pars, body) -> ctorDef dt pars body
-        | AbstractDef head ->
-            let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
-            methodHead dt a CC.HasThis head
-            |> ignore
+    | Literal(n, l) -> defineLiteral dt n l
+    | MethodDef(ov, m) -> defineMethodDef dt ov m
+    | CtorDef(pars, body) -> defineCtor dt pars body
+    | AbstractDef head ->
+        let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
+        defineMethodHead dt a CC.HasThis head
+        |> ignore
 
-    let moduleMethod ({ mmap = mmap } as dt) (MethodInfo(head, _) as m) =
-        let mb, mVarMap = methodHead dt (M.Public ||| M.Static) CC.Standard head
-        addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap }
+let defineModuleMethod ({ mmap = mmap } as dt) (MethodInfo(head, _) as m) =
+    let mb, mVarMap = defineMethodHead dt (M.Public ||| M.Static) CC.Standard head
+    addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap }
 
-    let typeDef ({ t = t; map = map; varMap = varMap } as ti) { parent = parent; impls = impls; members = members } =
-        match parent with
-        | Some parent -> t.SetParent <| solveType map varMap emptyVarMap parent
-        | _ -> ()
+let defineTypeDef ({ t = t; map = map; varMap = varMap } as ti) { parent = parent; impls = impls; members = members } =
+    match parent with
+    | Some parent -> t.SetParent <| solveType map varMap emptyVarMap parent
+    | _ -> ()
 
-        for impl in impls do t.AddInterfaceImplementation <| solveType map varMap emptyVarMap impl
-        for m in members do member' ti m
+    for impl in impls do t.AddInterfaceImplementation <| solveType map varMap emptyVarMap impl
+    for m in members do defineMember ti m
 
-    let moduleMember dt = function
-        | ModuleTypeDef _
-        | ModuleModuleDef _ -> ()
-        | ModuleValDef(isMutable, name, ft) ->
-            let f = field dt (true, isMutable, name, ft)
-            ()
-        | ModuleMethodDef m -> moduleMethod dt m
+let defineModuleMember dt = function
+    | ModuleTypeDef _
+    | ModuleModuleDef _ -> ()
+    | ModuleValDef(isMutable, name, ft) ->
+        let f = defineField dt (true, isMutable, name, ft)
+        ()
+    | ModuleMethodDef m -> defineModuleMethod dt m
 
-    let defineMembers map =
-        for ({ d = d } as ti) in values map do
-            match d with
-            | Choice1Of2 td -> typeDef ti td
-            | Choice2Of2 members -> for m in members do moduleMember ti m
-
-// type C (a) = fun M (b) (a, b) : b
-//
-// call C(char)::M (int) (char, int)
-// call C(char)::M (int) (char, char) // invalid
-// call C(char)::M (int) (int, char) // invalid
-// call C(char)::M (int) (int, int) // invalid
-//
-// call C(char)::M (char) (char, char)
-// call C(char)::M (char) (int, char) // invalid
-// call C(char)::M (char) (char, int) // invalid
-// call C(char)::M (char) (int, int) // invalid
+let defineMembers map =
+    for ({ d = d } as ti) in values map do
+        match d with
+        | Choice1Of2 td -> defineTypeDef ti td
+        | Choice2Of2 members -> for m in members do defineModuleMember ti m
 
 /// check: varMap.Length = typeArgs.Length;
 /// require: Array.forall (box >> inNull >> not) varMap && Array.forall (fst >> Var.hasValue >> not) varMap
@@ -644,7 +621,7 @@ let findMethod { mmap = mmap; varMap = varMap; typeArgs = typeArgs } name mTypeA
             List.length mTypeParams = List.length mTypeArgs &&
             substTypeArgs mVarMap mTypeArgs <| fun _ ->
                 List.forall2
-                    (fun (Parameter(_,parType)) argType -> parType = argType)
+                    (fun (Parameter(_,parType)) argType -> typeSpecEq parType argType)
                     pars
                     argTypes
     )
@@ -733,6 +710,6 @@ let emitIL m (IL ds) =
     let map = HashMap()
     for d in ds do DefineTypes.topDef m map d
     defineTypeParams map
-    DefineMembers.defineMembers map
+    defineMembers map
     emit map
     createTypes map

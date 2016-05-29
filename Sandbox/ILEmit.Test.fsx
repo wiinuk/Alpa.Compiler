@@ -20,29 +20,65 @@ let solveT = solveType emptyTypeMap emptyVarMap  emptyVarMap
 open System
 open System.Reflection
 open System.Reflection.Emit
-let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName "test10", AssemblyBuilderAccess.RunAndSave)
-let m = a.DefineDynamicModule("test10.dll")
-let t = m.DefineType("Ty")
 
-t.DefineGenericParameters [|"a"|]
+let emitOfCurrent name f =
+    let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
+    let m = a.DefineDynamicModule(name + ".dll")
 
-let tint = t.MakeGenericType([|typeof<int>|])
-tint.GetType()
+    let map = HashMap()
+    f map m
+    
+// type C (a) = fun M (b) (a, b) : b
+//
+// call C(char)::M (int) (char, int)
+// call C(char)::M (int) (char, char) // invalid
+// call C(char)::M (int) (int, char) // invalid
+// call C(char)::M (int) (int, int) // invalid
+//
+// call C(char)::M (char) (char, char)
+// call C(char)::M (char) (int, char) // invalid
+// call C(char)::M (char) (char, int) // invalid
+// call C(char)::M (char) (int, int) // invalid
 
-let t2 = m.DefineType("Ty2")
-
-t2.SetParent t
-t2.BaseType
-
-solveT typeOf<int> ==? typeof<int>
-solveT typeOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
-
-IL [
-    type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
-        override0 "Equals" [paramT intT] typeOf<bool> [ldc_i4 1; ret]
+let test1 _ = emitOfCurrent "test1" <| fun map m ->
+    let ds = [
+        type1D "C" "a" <| fun f a ->
+            f None [] [
+                method1 "M" "b" <| fun b -> [paramT a; paramT b], b, [ldarg 1; ret]
+            ]
     ]
-]
-|> emitDll "test3" ===? ".assembly extern mscorlib
+
+    for d in ds do DefineTypes.topDef m map d
+    defineTypeParams map
+    defineMembers map
+    emit map
+    createTypes map
+
+
+let test0 _ =
+    let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName "test10", AssemblyBuilderAccess.RunAndSave)
+    let m = a.DefineDynamicModule("test10.dll")
+    let t = m.DefineType("Ty")
+
+    t.DefineGenericParameters [|"a"|] |> ignore
+
+    let tint = t.MakeGenericType([|typeof<int>|])
+    tint.GetType() |> ignore
+
+    let t2 = m.DefineType("Ty2")
+
+    t2.SetParent t
+    t2.BaseType |> ignore
+
+    solveT typeOf<int> ==? typeof<int>
+    solveT typeOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
+
+    IL [
+        type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
+            override0 "Equals" [paramT intT] typeOf<bool> [ldc_i4 1; ret]
+        ]
+    ]
+    |> emitDll "test3" ===? ".assembly extern mscorlib
 {
   .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
   .ver 4:0:0:0

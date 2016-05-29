@@ -88,6 +88,11 @@ let methodInfo0 name pars retT body = MethodInfo(methodHead0 name pars retT, bod
 let abstract0 name pars retT = AbstractDef <| methodHead0 name pars retT
 let override0 name pars retT instrs = MethodDef(Some Override, methodInfo0 name pars retT <| MethodBody instrs)
 
+let method1 name v1 f =
+    let v1 = newTypeVar v1
+    let pars, ret, instrs = f <| TypeVar v1
+    MethodDef(None, MethodInfo(MethodHead(name, [v1], pars, paramT ret), MethodBody instrs))
+
 let ctor pars is = CtorDef(pars, MethodBody is)
 
 let field n t = Field(false, false, n, t)
