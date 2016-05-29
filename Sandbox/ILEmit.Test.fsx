@@ -1,4 +1,4 @@
-﻿module internal ILEmit.Test
+﻿module ILEmit.Test
 #load "ILEmit.Helpers.fsx"
 open ILEmit
 open ILEmit.Helpers
@@ -6,6 +6,7 @@ open ILEmit.Helpers.SimpleInstructions
 
 let intT = typeOf<int>
 let voidT = typeOfT typeof<System.Void>
+let charT = typeOf<char>
 let bigintT = typeOf<bigint>
 
 let (==?) act exp = 
@@ -14,20 +15,19 @@ let (==?) act exp =
 
 let (===?) act exp = fst act ==? exp
 
-let emptyTypeMap = HashMap()
-let solveT = solveType emptyTypeMap emptyVarMap  emptyVarMap
+let solveT = solveType (TypeMap()) emptyVarMap  emptyVarMap
 
 open System
 open System.Reflection
 open System.Reflection.Emit
 
-let emitOfCurrent name f =
+let emitOfCurrent name =
     let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
     let m = a.DefineDynamicModule(name + ".dll")
 
-    let map = HashMap()
-    f map m
-    
+    let map = TypeMap()
+    map, m, a
+
 // type C (a) = fun M (b) (a, b) : b
 //
 // call C(char)::M (int) (char, int)
@@ -40,7 +40,49 @@ let emitOfCurrent name f =
 // call C(char)::M (char) (char, int) // invalid
 // call C(char)::M (char) (int, int) // invalid
 
-let test1 _ = emitOfCurrent "test1" <| fun map m ->
+#r @"C:\Users\pc-2\AppData\Local\Temp\test1.dll"
+Program.Main()
+
+let map, module', asm = emitOfCurrent "test1"
+let t = module'.DefineType("C", T.Public ||| T.Sealed)
+let a = t.DefineGenericParameters("a").[0]
+let m = t.DefineMethod("M", M.Public ||| M.Static)
+let b = m.DefineGenericParameters("b").[0]
+m.SetReturnType b
+m.SetParameters(a, b)
+
+let t2d = typedefof<_*_>
+
+let t1, t2 =
+    let vs = t2d.GetGenericArguments()
+    vs.[0], vs.[1]
+
+t2d.GetConstructor([|t1; t2|])
+t2d.MakeGenericType()
+
+do
+    let g = m.GetILGenerator()
+    g.Emit O.Ldarg_1
+    g.Emit O.Ret
+
+
+let program = module'.DefineType("Program", T.Public ||| T.Sealed ||| T.Abstract)
+let main = program.DefineMethod("Main", M.Public ||| M.Static)
+main.SetReturnType typeof<System.Void>
+main.SetParameters()
+
+do
+    let g = main.GetILGenerator()
+    g.Emit O.Ldc_I4_5
+    g.Emit(O.Call, m.MakeGenericMethod typeof<int>)
+    g.Emit O.Ret
+
+t.CreateType() |> ignore
+program.CreateType() |> ignore
+asm.Save("test1.dll")
+
+let test1 _ = 
+    let map, m = emitOfCurrent "test1"
     let ds = [
         type1D "C" "a" <| fun f a ->
             f None [] [
@@ -51,8 +93,26 @@ let test1 _ = emitOfCurrent "test1" <| fun map m ->
     for d in ds do DefineTypes.topDef m map d
     defineTypeParams map
     defineMembers map
-    emit map
-    createTypes map
+
+    let cCharT = TypeSpec(FullName("C", [], [], None), [charT])
+    let cCharTI = 
+        match solveTypeCore map emptyVarMap emptyVarMap cCharT with
+        | ILConstructedGenericType(_, ti) -> ti
+        | t -> failwithf "error %A" t
+
+    cCharTI.t.MakeGenericType(typeof<int>).GetMethod("M",)
+    let mb = findMethod cCharTI "M" [intT] [charT; intT]
+    let m =
+        match mb.mb with
+        | Choice1Of2 m -> m
+        | _ -> failwith ""
+
+    m.GetGenericArguments()
+    m.MakeGenericMethod(typeof<int>)
+    mb.m
+
+//    emit map
+//    createTypes map
 
 
 let test0 _ =

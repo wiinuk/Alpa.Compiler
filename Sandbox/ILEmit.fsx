@@ -1,4 +1,4 @@
-﻿module internal ILEmit
+﻿module ILEmit
 
 open System
 open System.Collections.Generic
@@ -21,57 +21,6 @@ module List =
             | [], [] -> true
             | _ -> false
         aux ls rs
-
-//[<Struct>]
-//type Vector<'a> =
-//    val internal items: 'a array
-//    internal new (items) = { items = items }
-//
-//module Vector =
-//    type EmptyArray<'a> () =
-//        static let a: 'a array = [||]
-//        static member Value = a
-//
-//    let empty<'a> = Vector EmptyArray<'a>.Value
-//    let private unsafeUnwrap (xs: _ Vector) = xs.items
-//
-//    let tryFindIndexOrM1 pred xs =
-//        let items = unsafeUnwrap xs
-//        let l = items.Length
-//        let rec aux i =
-//            if l <= i then -1
-//            elif pred items.[i] then i
-//            else aux(i+1)
-//        aux 0
-//
-//    let item i xs = unsafeUnwrap(xs).[i]
-//    let length xs = unsafeUnwrap(xs).Length
-//    let isEmpty xs = length xs = 0
-//
-//    let replicate count initial = Vector(Array.replicate count initial)
-//
-//    let ofList xs = Vector(Array.ofList xs)
-//    let ofArray xs = Vector(Array.copy xs)
-//
-//    let tryIter2 f xs1 xs2 =
-//        let items1 = unsafeUnwrap xs1
-//        let items2 = unsafeUnwrap xs2
-//        items1.Length = items2.Length &&
-//            let l = items1.Length
-//            let rec aux i = l <= i || (f items1.[i] items2.[i]; aux(i+1))
-//            aux 0
-//
-//    let iter f xs =
-//        let items = unsafeUnwrap xs
-//        let l = items.Length
-//        let rec aux i = if l <= i then () else f items.[i]; aux (i+1)
-//        aux 0
-//
-//    let toSeq xs = unsafeUnwrap xs :> _ seq
-//    let mapToArray mapping xs = Array.map mapping (unsafeUnwrap xs)
-//    let mapToList mapping xs =
-//        let items = unsafeUnwrap xs
-//        Array.foldBack (fun x rs -> mapping x::rs) items []
 
 let mutable private seed = 0
 
@@ -101,8 +50,8 @@ type Var<'T> =
             self.value <- value
 
     override x.ToString() =
-        if x.hasValue then sprintf "Var(\"%s\", %A)" x.Name x.value
-        else sprintf "Var(\"%s\")" x.Name
+        if x.hasValue then sprintf "Var(\"%s\", %d, %A)" x.Name x.Id x.value
+        else sprintf "Var(\"%s\", %d)" x.Name x.Id
 
 module Var =
     /// Option.isSome x.value
@@ -235,6 +184,7 @@ and ILMethodBuilder = {
     /// Method
     m: MethodInfo
     mVarMap: TypeVarMap
+    mTypeArgs: TypeSpec list
 }
 and MethodMap = HashMap<MethodSign, ILMethodBuilder list>
 and TypeMap = HashMap<FullName, ILTypeBuilder>
@@ -461,7 +411,7 @@ let defineMethodHead { map = map; t = t; varMap = varMap } attr callconv (Method
 
 let defineMethodInfo ({ mmap = mmap } as dt) a c (MethodInfo(head, _) as m) =
     let mb, mVarMap = defineMethodHead dt a c head
-    addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap }
+    addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap; mTypeArgs = [] }
 
 let defineMethodDef dt ov m =
     match ov with
@@ -559,7 +509,7 @@ let defineCtor ({ t = t; map = map; varMap = varMap; mmap = mmap } as dt) pars b
 
     let h = ctorHead dt pars
     let m = MethodInfo(h, body)
-    addMethod mmap h { mb = Choice2Of2 c; m = m; dt = dt; mVarMap = emptyVarMap }
+    addMethod mmap h { mb = Choice2Of2 c; m = m; dt = dt; mVarMap = emptyVarMap; mTypeArgs = [] }
 
 let defineMember dt = function
     | Field(isStatic, isMutable, n, ft) ->
@@ -576,7 +526,7 @@ let defineMember dt = function
 
 let defineModuleMethod ({ mmap = mmap } as dt) (MethodInfo(head, _) as m) =
     let mb, mVarMap = defineMethodHead dt (M.Public ||| M.Static) CC.Standard head
-    addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap }
+    addMethod mmap head { mb = Choice1Of2 mb; m = m; dt = dt; mVarMap = mVarMap; mTypeArgs = [] }
 
 let defineTypeDef ({ t = t; map = map; varMap = varMap } as ti) { parent = parent; impls = impls; members = members } =
     match parent with
@@ -611,7 +561,7 @@ let substTypeArgs (TypeVarMap(typeParams,_)) typeArgs f =
             else invalidArg "typeArgs" "length diff"
         finally
             List.iter Var.setNoneValue typeParams
-
+            
 let findMethod { mmap = mmap; varMap = varMap; typeArgs = typeArgs } name mTypeArgs argTypes = substTypeArgs varMap typeArgs <| fun _ ->
     get mmap name
     |> List.find (function
@@ -625,6 +575,7 @@ let findMethod { mmap = mmap; varMap = varMap; typeArgs = typeArgs } name mTypeA
                     pars
                     argTypes
     )
+    |> fun mi -> { mi with mTypeArgs = mTypeArgs }
 
 //    match solveTypeCore map varMap mVarMap t with
 //    | SType t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
