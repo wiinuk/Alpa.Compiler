@@ -15,7 +15,7 @@ let (==?) act exp =
 let (===?) act exp = fst act ==? exp
 
 let emptyTypeMap = HashMap()
-let solveT = solveType emptyTypeMap emptyVarMap 
+let solveT = solveType emptyTypeMap emptyVarMap  emptyVarMap
 
 open System
 open System.Reflection
