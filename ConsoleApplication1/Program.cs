@@ -2,6 +2,16 @@
 using System.Reflection;
 using System.Reflection.Emit;
 
+public class Base<T>
+{
+    public Base(T x) { }
+    public Base(int x) { }
+}
+public class Extend : Base<int>
+{
+    public Extend() : base(0) { }
+}
+
 public class Make<T1>
 {
     public static Tuple<T1, T2> Tuple<T2>(T1 item1, T2 item2) =>
@@ -40,7 +50,7 @@ public static class Prog
         var g = tupleM.GetILGenerator();
         g.Emit(OpCodes.Ldarg_0);
         g.Emit(OpCodes.Ldarg_1);
-        g.Emit(OpCodes.Newobj, typeof(Tuple<int,int>).GetGenericTypeDefinition().MakeGenericType(t1, t2).GetConstructor(new[] { t1, t2 }));
+        g.Emit(OpCodes.Newobj, typeof(Tuple<int, int>).GetGenericTypeDefinition().MakeGenericType(t1, t2).GetConstructor(new[] { t1, t2 }));
         g.Emit(OpCodes.Ret);
 
         // }
@@ -55,7 +65,7 @@ public static class Prog
         mainM.SetReturnType(typeof(void));
         mainM.SetParameters(typeof(string[]));
         tupleM.DefineParameter(2, ParameterAttributes.None, "args");
-            
+
         //         Make<int>.Tuple<string>(1, "2");
         g = mainM.GetILGenerator();
         g.Emit(OpCodes.Ldc_I4_1);

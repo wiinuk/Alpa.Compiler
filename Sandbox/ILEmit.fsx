@@ -213,19 +213,6 @@ let toTypeName = function
 
         b.ToString()
 
-//type SolvedType =
-//    | SBuilderType of TypeBuilderInfo
-//    | SBuilderGeneric of t: Type * genericDef: TypeBuilderInfo * genericArgs: SolvedType list
-//    | SType of Type
-//    | STypeVar of TypeVar * GenericTypeParameterBuilder
-
-type ILType =
-    /// | ILRuntimeType t -> t.GetType() <> typeof<TypeBuilder>
-    | ILRuntimeType of Type
-    | ILTypeBuilder of ILTypeBuilder
-    | ILTypeParamBuilder of TypeVar * GenericTypeParameterBuilder ref
-    | ILConstructedGenericType of ofTypeBuilder: Type * ILTypeBuilder
-    
 let rec typeSpecEq l r =
     match l, r with
     | TypeSpec(ln, ls), TypeSpec(rn, rs) -> ln = rn && List.length ls = List.length rs && List.forall2 typeSpecEq ls rs
@@ -259,37 +246,33 @@ let solveVar varMap mVarMap v =
         | Some pb -> pb
         | None -> raise <| KeyNotFoundException()
 
-let getType = function
-    | ILRuntimeType t
-    | ILConstructedGenericType(t, _) -> t
-    | ILTypeBuilder { t = t } -> upcast t
-    | ILTypeParamBuilder(_, t) -> upcast !t
+typeof<int>.IsConstructedGenericType
+type SolveKind =
+    | Builder
+    | ConstructedBuilder
+    | ParamBuilder
+    | RuntimeType
 
 let rec solveTypeCore map varMap mVarMap t =
     let getGenericTypeDef map pathRev =
         let mutable ti = Unchecked.defaultof<_>
-        if tryGet map pathRev &ti then Choice1Of2 ti
-        else Choice2Of2 <| Type.GetType(toTypeName pathRev, true)
+        if not <| tryGet map pathRev &ti then RuntimeType, Type.GetType(toTypeName pathRev, true)
+        else let { t = t } = ti in Builder, upcast t
         
     let rec aux = function
-    | TypeSpec(pathRev, []) ->
-        match getGenericTypeDef map pathRev with
-        | Choice1Of2 td -> ILTypeBuilder td
-        | Choice2Of2 t -> ILRuntimeType t
-
+    | TypeSpec(pathRev, []) -> getGenericTypeDef map pathRev
     | TypeSpec(pathRev, ts) ->
-        let vs = List.map (fun t -> solveTypeCore map varMap mVarMap t) ts
-        let vts = Seq.map getType vs |> Seq.toArray
-        match getGenericTypeDef map pathRev with
-        | Choice1Of2({ t = t } as td) -> ILConstructedGenericType(t.MakeGenericType vts, { td with typeArgs = ts })
-        | Choice2Of2 td -> ILRuntimeType <| td.MakeGenericType vts
+        let vs = Seq.map (solveTypeCore map varMap mVarMap >> snd) ts |> Seq.toArray
+        let k, t = getGenericTypeDef map pathRev
+        let k = if k = Builder then ConstructedBuilder else k
+        k, t.MakeGenericType vs
 
     | TypeVar v ->
-        if Var.hasValue v then solveTypeCore map varMap mVarMap <| Var.getValueOrDefault v
-        else ILTypeParamBuilder(v, ref <| solveVar varMap mVarMap v)
+        if Var.hasValue v then solveTypeCore map varMap mVarMap (Var.getValueOrDefault v)
+        else ParamBuilder, upcast solveVar varMap mVarMap v
     aux t
 
-let solveType map varMap mVarMap t = solveTypeCore map varMap mVarMap t |> getType
+let solveType map varMap mVarMap t = solveTypeCore map varMap mVarMap t |> snd
 let solveTypes map varMap mVarMap ts =
     Seq.map (solveType map varMap mVarMap) ts
     |> Seq.toArray
@@ -588,12 +571,18 @@ let findMethod { mmap = mmap; varMap = varMap; typeArgs = typeArgs } name mTypeA
 let emitMacroInstr (g: ILGenerator) { mVarMap = mVarMap; dt = { map = map; varMap = varMap; d = d }} = function
     | BaseInit ts ->
         let ctor =
+            // new Tuple<MyInt, MyString>(MyInt, MyString); ->
+            //
             match d with
             | Choice1Of2 { parent = Some parent } ->
                 match solveTypeCore map varMap mVarMap parent with
-                | ILRuntimeType t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
-                | ILTypeBuilder ti
-                | ILConstructedGenericType(_, ti) ->
+                | RuntimeType, t
+                | Builder, t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
+
+                | ConstructedBuilder, t ->
+                    let td = t.GetGenericTypeDefinition()
+                    TypeBuilder.GetConstructor(t, )
+
                     match findMethod ti ".ctor" [] ts with
                     | { mb = Choice2Of2 c } -> upcast c
 

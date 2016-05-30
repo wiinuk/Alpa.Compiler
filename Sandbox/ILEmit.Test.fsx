@@ -41,30 +41,46 @@ let emitOfCurrent name =
 // call C(char)::M (char) (int, int) // invalid
 
 #r @"C:\Users\pc-2\AppData\Local\Temp\test1.dll"
-Program.Main()
+let x = Make.Tuple(1, 2)
+//Program.Main()
 
-let map, module', asm = emitOfCurrent "test1"
-let t = module'.DefineType("C", T.Public ||| T.Sealed)
-let a = t.DefineGenericParameters("a").[0]
-let m = t.DefineMethod("M", M.Public ||| M.Static)
-let b = m.DefineGenericParameters("b").[0]
-m.SetReturnType b
-m.SetParameters(a, b)
+open System
+open System.Reflection
+open System.Reflection.Emit
+type T = TypeAttributes
+type M = MethodAttributes
+type O = OpCodes
 
-let t2d = typedefof<_*_>
+let name = "test1"
+let path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), name + ".dll")
+if System.IO.File.Exists path then System.IO.File.Delete path
 
-let t1, t2 =
-    let vs = t2d.GetGenericArguments()
-    vs.[0], vs.[1]
+let dom = AppDomain.CurrentDomain
+let asm = dom.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
+let mdl = asm.DefineDynamicModule(name + ".dll")
 
-t2d.GetConstructor([|t1; t2|])
-t2d.MakeGenericType()
+// type Make<'T1>() =
+let makeT = mdl.DefineType("Make", T.Public)
+let t1 = makeT.DefineGenericParameters("T1").[0]
 
+//     static member __.Tuple<'T2>(item1: 'T1, item2: 'T2) : 'T1 * 'T2 =
+let tupleM = makeT.DefineMethod("Tuple", M.Public ||| M.Static)
+let t2 = tupleM.DefineGenericParameters("T2").[0]
+let tuple2DefT = typedefof<_*_>
+let tuple2OfT1T2T = tuple2DefT.MakeGenericType(t1, t2)
+tupleM.SetReturnType tuple2OfT1T2T
+tupleM.SetParameters(t1, t2)
+
+//         item1, item2
 do
-    let g = m.GetILGenerator()
+    let g = tupleM.GetILGenerator()
+    g.Emit O.Ldarg_0
     g.Emit O.Ldarg_1
+    g.Emit(O.Newobj, TypeBuilder.GetConstructor(tuple2OfT1T2T, tuple2DefT.GetConstructors().[0]))
     g.Emit O.Ret
 
+makeT.CreateType()
+asm.Save(name + ".dll")
 
 let program = module'.DefineType("Program", T.Public ||| T.Sealed ||| T.Abstract)
 let main = program.DefineMethod("Main", M.Public ||| M.Static)
@@ -77,7 +93,7 @@ do
     g.Emit(O.Call, m.MakeGenericMethod typeof<int>)
     g.Emit O.Ret
 
-t.CreateType() |> ignore
+makeT.CreateType() |> ignore
 program.CreateType() |> ignore
 asm.Save("test1.dll")
 
@@ -458,7 +474,7 @@ let __ _ =
 //    map.[t"Type", []]
 
     IL [
-        TopTypeDef(t"Type", {
+        TopTypeDef(makeT"Type", {
             kind = None
             typeParams = []
             parent = None
