@@ -6,29 +6,6 @@ open System
 
 let newTypeVar name = Var name
 
-let sysTypeValidate (t: Type) =
-    if t.IsNested then failwithf "%A is GenericParameter." t
-    if t.IsGenericParameter then failwithf "%A is GenericParameter." t
-
-let getPath t =
-    sysTypeValidate t
-    let nsRev =
-        t.Namespace.Split Type.Delimiter
-        |> Seq.rev
-        |> Seq.toList
-
-    FullName(t.Name, [], nsRev, Some(t.Assembly.GetName().Name))
-
-let rec typeOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
-and typeOfTypeArgs t = if not t.IsGenericType then [] else t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList
-let typeRefOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
-
-[<RequiresExplicitTypeArguments>]
-let typeOf<'a> = typeOfT typeof<'a>
-
-[<RequiresExplicitTypeArguments>]
-let typeRefOf<'a> = typeRefOfT typeof<'a>
-
 let t n = n
 let p n = FullName(t n, [], [], None)
 

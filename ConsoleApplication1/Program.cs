@@ -4,8 +4,8 @@ using System.Reflection.Emit;
 
 public class Base<T>
 {
-    public Base(T x) { }
-    public Base(int x) { }
+    public Base(T x) { Console.Write("T"); }
+    public Base(int x) { Console.Write("int"); }
 }
 public class Extend : Base<int>
 {
@@ -18,11 +18,17 @@ public class Make<T1>
         new Tuple<T1, T2>(item1, item2);
 }
 
+
+public class Naming {
+}
 public class Program
 {
     public static void Main(string[] args) =>
         Make<int>.Tuple<string>(1, "2");
 }
+
+class B<U> { }
+class A<T> : B<A<A<T>>> { }
 
 public static class Prog
 {
