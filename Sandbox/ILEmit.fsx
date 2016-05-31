@@ -290,10 +290,10 @@ type SolveEnv = {
     tmap: TypeMap
     varMap: TypeVarMap
     mVarMap: TypeVarMap
-    typeArgs: TypeSpec list
-    mTypeArgs: TypeSpec list
+    typeArgs: SolvedType list
+    mTypeArgs: SolvedType list
 }
-let rec solveTypeCore (TypeVarMap(mTypeArgs,_) as mVarMap) ({ map = map; varMap = TypeVarMap(typeArgs,_) as varMap } as env) t =
+let rec solveTypeCore ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
     let getGenericTypeDef map pathRev =
         let mutable ti = Unchecked.defaultof<_>
         if tryGet map pathRev &ti then Builder ti
@@ -302,7 +302,7 @@ let rec solveTypeCore (TypeVarMap(mTypeArgs,_) as mVarMap) ({ map = map; varMap 
     let rec aux = function
     | TypeSpec(pathRev, []) -> getGenericTypeDef map pathRev
     | TypeSpec(pathRev, ts) ->
-        let vs = List.map (solveTypeCore mVarMap env) ts
+        let vs = List.map (solveTypeCore env) ts
         let ts = Seq.map getType vs |> Seq.toArray
         match getGenericTypeDef map pathRev with
         | Builder({ t = t } as ti) -> TypeBuilderInstantiation(t.MakeGenericType ts, Some ti, vs)
@@ -314,24 +314,17 @@ let rec solveTypeCore (TypeVarMap(mTypeArgs,_) as mVarMap) ({ map = map; varMap 
         | _ -> failwith "unreach"
 
     | TypeVar v ->
-        if Var.hasValue v then solveTypeCore mVarMap env (Var.getValueOrDefault v)
+        if Var.hasValue v then solveTypeCore env (Var.getValueOrDefault v)
         else GenericParamBuilder(v, solveVar varMap mVarMap v)
 
-    | TypeArgRef i ->
-        let v = List.item i typeArgs
-        if Var.hasValue v then Var.getValueOrDefault v else TypeVar v
-        |> solveTypeCore mVarMap env
-
-    | MethodTypeArgRef i ->
-        let v = List.item i mTypeArgs
-        if Var.hasValue v then Var.getValueOrDefault v else TypeVar v
-        |> solveTypeCore mVarMap env
+    | TypeArgRef i -> List.item i typeArgs
+    | MethodTypeArgRef i -> List.item i mTypeArgs
 
     aux t
 
-let solveType mVarMap env t = solveTypeCore mVarMap env t |> getType
-let solveTypes mVarMap env ts = Seq.map (solveType mVarMap env) ts |> Seq.toArray
-let solveParamTypes mVarMap env pars = Seq.map (paramType >> solveType mVarMap env) pars |> Seq.toArray
+let solveType env t = solveTypeCore env t |> getType
+let solveTypes env ts = Seq.map (solveType env) ts |> Seq.toArray
+let solveParamTypes env pars = Seq.map (paramType >> solveType env) pars |> Seq.toArray
 
 let defineVarMap typeParams defineGenericParameters =
     match typeParams with
@@ -429,12 +422,20 @@ let addCtor (cmap: CtorMap) c = cmap.Add c
 let defineParam defineParameter i (Parameter(n, _)) = defineParameter(i, P.None, Option.toObj n) |> ignore
 let defineParams defineParameter pars = List.iteri (fun i a -> defineParam defineParameter (i + 1) a) pars
 
+let envOfTypeBuilder mVarMap { map = map; varMap = varMap } = {
+    tmap = map
+    varMap = varMap
+    mVarMap = mVarMap
+    typeArgs = []
+    mTypeArgs = []
+}
+
 let defineMethodHead ({ t = t } as ti) attr callconv (MethodHead(name,typeParams,pars,ret)) =
     let m = t.DefineMethod(name, attr, callconv)
     let mVarMap = defineVarMap typeParams <| mDefineGP m
     
-    m.SetReturnType(solveType mVarMap ti (paramType ret))
-    m.SetParameters(solveParamTypes mVarMap ti pars)
+    m.SetReturnType(solveType (envOfTypeBuilder mVarMap ti) (paramType ret))
+    m.SetParameters(solveParamTypes (envOfTypeBuilder mVarMap ti) pars)
 
     defineParam m.DefineParameter 0 ret
     defineParams m.DefineParameter pars
@@ -503,7 +504,7 @@ let defineField ({ t = t; fmap = fmap } as ti) (isStatic, isMutable, name, ft) =
     let a = F.Public
     let a = if isStatic then a ||| F.Static else a
     let a = if isMutable then a else a ||| F.InitOnly
-    let ft = solveType emptyVarMap ti ft
+    let ft = solveType (envOfTypeBuilder emptyVarMap ti) ft
     let f = t.DefineField(name, ft, a)
     add fmap name f
 
@@ -528,15 +529,15 @@ let defineLiteral ({ t = t; fmap = fmap } as ti) name value =
 
         match value with
         | LiteralValue v -> let v = literalValue v in v, v.GetType()
-        | Enum(t, v) -> literalValue v, solveType emptyVarMap ti t
-        | Null t -> null, solveType emptyVarMap ti t
+        | Enum(t, v) -> literalValue v, solveType (envOfTypeBuilder emptyVarMap ti) t
+        | Null t -> null, solveType (envOfTypeBuilder emptyVarMap ti) t
 
     let f = t.DefineField(name, ft, a)
     f.SetConstant fv
     add fmap name f
 
 let defineCtor ({ t = t; cmap = cmap } as dt) pars body =
-    let pts = solveParamTypes emptyVarMap dt pars
+    let pts = solveParamTypes (envOfTypeBuilder emptyVarMap dt) pars
     let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
     defineParams c.DefineParameter pars
     addCtor cmap { cb = c; dt = dt; pars = pars; body = body }
@@ -557,10 +558,10 @@ let defineModuleMethod ({ mmap = mmap } as dt) (MethodInfo(head, _) as m) =
 
 let defineTypeDef ({ t = t } as ti) { parent = parent; impls = impls; members = members } =
     match parent with
-    | Some parent -> t.SetParent <| solveType emptyVarMap ti parent
+    | Some parent -> t.SetParent <| solveType (envOfTypeBuilder emptyVarMap ti) parent
     | _ -> ()
 
-    for impl in impls do t.AddInterfaceImplementation <| solveType emptyVarMap ti impl
+    for impl in impls do t.AddInterfaceImplementation <| solveType (envOfTypeBuilder emptyVarMap ti) impl
     for m in members do defineMember ti m
 
 let defineModuleMember ({ fmap = fmap } as dt) = function
@@ -634,8 +635,8 @@ let rec typeOfT t =
 [<RequiresExplicitTypeArguments>]
 let typeOf<'a> = typeOfT typeof<'a>
 
-let getField mVarMap env parent name =
-    match solveTypeCore mVarMap env parent with
+let getField env parent name =
+    match solveTypeCore env parent with
     | RuntimeType t -> t.GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
     | Builder { fmap = fmap } -> upcast get fmap name
     | TypeBuilderInstantiation(tb, Some { fmap = fmap }, _) -> TypeBuilder.GetField(tb, get fmap name)
@@ -645,23 +646,48 @@ let getField mVarMap env parent name =
 
     | GenericParamBuilder _ -> failwith "getField: GenericParameterBuilder"
 
+// (Dictionary(C, int)) [] "Add" [C; int]
+let getMethodRuntimeTypeOfBuilder env (constructedTypeBuilder: Type) mTypeArgs name argTypes =
+    // genericTypeDef is RuntimeType
+    // genericTypeDef = Dictionary(TKey, TValue)
+    let genericTypeDef = constructedTypeBuilder.GetGenericTypeDefinition()
+
+    // [TKey; TValue]
+    let typeParams = genericTypeDef.GetGenericArguments() |> Seq.map RuntimeType |> Seq.toList
+
+    let genericMethodDef =
+        genericTypeDef.GetMethods(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance)
+        |> Seq.filter (fun m -> m.Name = name)
+        |> Seq.filter (fun m ->
+            let mTypeParams = if m.IsGenericMethod then m.GetGenericArguments() else Type.EmptyTypes
+            Array.length mTypeParams = List.length mTypeArgs &&
+            let pars = m.GetParameters()
+            Array.length pars = List.length argTypes &&
+            let env' = {
+                env with
+                    typeArgs = typeParams
+                    mTypeArgs = Seq.map RuntimeType mTypeParams |> Seq.toList
+            }
+            let genericMethodDefParamTypes = solveTypes env' argTypes
+            let paramTypes = pars |> Seq.map (fun p -> p.ParameterType)
+            Seq.forall2 (=) genericMethodDefParamTypes paramTypes
+        )
+        |> Seq.exactlyOne
+
+    TypeBuilder.GetMethod(constructedTypeBuilder, genericMethodDef)
+
 // call class [mscorlib]System.Tuple`2<!0, !!0> class Make`1<int32>::Tuple<string>(!0, !!0)
-let getMethod mVarMap ({ ILTypeBuilder.varMap = varMap } as env) parent name mTypeArgs argTypes =
+let getMethod env parent name mTypeArgs argTypes =
     let a = B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic
     let c = CC.Any
 
-    match solveTypeCore mVarMap env parent with
+    match solveTypeCore env parent with
     | GenericParamBuilder _ -> failwith "param builder"
 
     // class Make`1<int32>::Tuple<string>(!0, !!0)
     | RuntimeType t ->
-        let typeArgs =
-            if t.IsGenericType
-            then t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList else []
-
-        substTypeArgs varMap typeArgs <| fun _ ->
-            let argTypes = Seq.map (solveType mVarMap env) argTypes |> Seq.toArray
-            t.GetMethod(name, a, null, c, argTypes, null)
+        let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+        t.GetMethod(name, a, null, c, argTypes, null)
 
     | Builder { mmap = mmap } ->
         // type C =
@@ -696,55 +722,14 @@ let getMethod mVarMap ({ ILTypeBuilder.varMap = varMap } as env) parent name mTy
     //     fun M () (List(T)) : List T = ...;
     //     fun M () (string) : string = ...;
     //
-    // call C`1(string)::M () (string) => error "method ambiguous."
-    // call C`1(string)::M () (!0) => ok
+    // call C`1(string)::M () (string) => ok "fun M () (string) : string = ...;"
+    // call C`1(string)::M () (!0) => ok "fun M () (!0) : !0 = ...;"
     //
     // [T,List(a)]
     // fun Main(a) () = call C`1(List(a))::() (List(a)) => ok
     // fun Main(a) () = call C`1(a)::() (a) => ok
 
-    | TypeBuilderInstantiation(constructedTypeBuilder, None, _) ->
-        let genericTypeDefinition = constructedTypeBuilder.GetGenericTypeDefinition()
-        let genericMethodDefs = genericTypeDefinition.GetMethods() |> Seq.filter(fun m -> m.Name = name)
-
-        let typeParams = genericTypeDefinition.GetGenericArguments()
-        let typeArgs =
-            match parent with
-            | TypeSpec(_, ts) -> ts
-            | TypeVar _
-            | TypeArgRef _
-            | MethodTypeArgRef _ -> []
-
-        let parEq (par: Reflection.ParameterInfo) typeParams typeArgs mTypeParams argType =
-            let rec eq parType = function
-                | TypeVar a ->
-                    if Var.hasValue a then eq parType <| Var.getValueOrDefault a
-                    else
-                        match List.tryFindIndex (function TypeVar v when not <| Var.hasValue v -> Var.id v = Var.id a) typeArgs with
-                        | Some i -> Array.item i typeParams = parType
-                        | None ->
-                            let i = List.findIndex (function TypeVar v when not <| Var.hasValue v -> Var.id v = Var.id a) mTypeArgs
-                            Array.item i mTypeParams = parType
-
-                | TypeSpec(n, ts) ->
-                    match List.tryFindIndex ((=) parType) typeParams with
-                    | Some i ->
-                        let parType = List.item i typeArgs
-                        typeSpecEq parType ts
-
-            eq par.ParameterType argType
-
-        genericMethodDefs
-        |> Seq.filter (fun m ->
-            let mTypeParams = if m.IsGenericMethod then m.GetGenericArguments() else [||]
-            Array.length mTypeParams = List.length mTypeArgs &&
-            let pars = m.GetParameters()
-            Array.length pars = List.length argTypes &&
-            Seq.forall2 parEq pars argTypes
-        )
-        |> ignore
-        failwith ""
-
+    | TypeBuilderInstantiation(constructedTypeBuilder, None, _) -> getMethodRuntimeTypeOfBuilder env constructedTypeBuilder mTypeArgs name argTypes
     | TypeBuilderInstantiation(constructedTypeBuilder, Some genericTypeDefinition, _) ->
         // constructedTypeBuilder = Make`1(int32)
         // genericTypeDefinition = Make`(T1)
