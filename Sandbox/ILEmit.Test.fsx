@@ -1,13 +1,12 @@
-﻿module ILEmit.Test
+﻿module internal ILEmit.Test
 #load "ILEmit.Helpers.fsx"
 open ILEmit
 open ILEmit.Helpers
 open ILEmit.Helpers.SimpleInstructions
 
-let intT = typeOf<int>
+let intT = typeSpecOf<int>
 let voidT = typeOfT typeof<System.Void>
-let charT = typeOf<char>
-let bigintT = typeOf<bigint>
+let bigintT = typeSpecOf<bigint>
 
 let (==?) act exp = 
     if act <> exp then printfn "(==?) {act = %A; exp = %A}" act exp
@@ -15,18 +14,12 @@ let (==?) act exp =
 
 let (===?) act exp = fst act ==? exp
 
-let solveT = solveType (TypeMap()) emptyVarMap  emptyVarMap
+let emptyTypeMap = HashMap()
+let solveT = solveType emptyTypeMap emptyVarMap  emptyVarMap
 
 open System
 open System.Reflection
 open System.Reflection.Emit
-
-let emitOfCurrent name =
-    let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
-    let m = a.DefineDynamicModule(name + ".dll")
-
-    let map = TypeMap()
-    map, m, a
 
 // type C (a) = fun M (b) (a, b) : b
 //
@@ -39,99 +32,31 @@ let emitOfCurrent name =
 // call C(char)::M (char) (int, char) // invalid
 // call C(char)::M (char) (char, int) // invalid
 // call C(char)::M (char) (int, int) // invalid
-
-#r @"C:\Users\pc-2\AppData\Local\Temp\test1.dll"
-let x = Make.Tuple(1, 2)
-//Program.Main()
-
-open System
-open System.Reflection
-open System.Reflection.Emit
-type T = TypeAttributes
-type M = MethodAttributes
-type O = OpCodes
-
-let name = "test1"
-let path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), name + ".dll")
-if System.IO.File.Exists path then System.IO.File.Delete path
-
-let dom = AppDomain.CurrentDomain
-let asm = dom.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
-let mdl = asm.DefineDynamicModule(name + ".dll")
-
-// type Make<'T1>() =
-let makeT = mdl.DefineType("Make", T.Public)
-let t1 = makeT.DefineGenericParameters("T1").[0]
-
-//     static member __.Tuple<'T2>(item1: 'T1, item2: 'T2) : 'T1 * 'T2 =
-let tupleM = makeT.DefineMethod("Tuple", M.Public ||| M.Static)
-let t2 = tupleM.DefineGenericParameters("T2").[0]
-let tuple2DefT = typedefof<_*_>
-let tuple2OfT1T2T = tuple2DefT.MakeGenericType(t1, t2)
-tupleM.SetReturnType tuple2OfT1T2T
-tupleM.SetParameters(t1, t2)
-
-//         item1, item2
-do
-    let g = tupleM.GetILGenerator()
-    g.Emit O.Ldarg_0
-    g.Emit O.Ldarg_1
-    g.Emit(O.Newobj, TypeBuilder.GetConstructor(tuple2OfT1T2T, tuple2DefT.GetConstructors().[0]))
-    g.Emit O.Ret
-
-makeT.CreateType()
-asm.Save(name + ".dll")
-
-let program = module'.DefineType("Program", T.Public ||| T.Sealed ||| T.Abstract)
-let main = program.DefineMethod("Main", M.Public ||| M.Static)
-main.SetReturnType typeof<System.Void>
-main.SetParameters()
-
-do
-    let g = main.GetILGenerator()
-    g.Emit O.Ldc_I4_5
-    g.Emit(O.Call, m.MakeGenericMethod typeof<int>)
-    g.Emit O.Ret
-
-makeT.CreateType() |> ignore
-program.CreateType() |> ignore
-asm.Save("test1.dll")
-
-let test1 _ = 
-    let map, m = emitOfCurrent "test1"
+begin
     let ds = [
         type1D "C" "a" <| fun f a ->
             f None [] [
-                method1 "M" "b" <| fun b -> [paramT a; paramT b], b, [ldarg 1; ret]
+                method1 "M" "b" <| fun f b -> f [paramT a; paramT b] b [ldarg 1; ret]
             ]
     ]
-
+    let name = "test1"
+    let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
+    let m = a.DefineDynamicModule(name + ".dll")
+    let map = HashMap()
     for d in ds do DefineTypes.topDef m map d
     defineTypeParams map
     defineMembers map
 
+    let charT = typeSpecOf<char>
     let cCharT = TypeSpec(FullName("C", [], [], None), [charT])
-    let cCharTI = 
-        match solveTypeCore map emptyVarMap emptyVarMap cCharT with
-        | ILConstructedGenericType(_, ti) -> ti
-        | t -> failwithf "error %A" t
-
-    cCharTI.t.MakeGenericType(typeof<int>).GetMethod("M",)
-    let mb = findMethod cCharTI "M" [intT] [charT; intT]
-    let m =
-        match mb.mb with
-        | Choice1Of2 m -> m
-        | _ -> failwith ""
-
-    m.GetGenericArguments()
-    m.MakeGenericMethod(typeof<int>)
-    mb.m
+    let (ILType.ILConstructedGenericType(_, cCharTI)) = solveTypeCore map emptyVarMap emptyVarMap cCharT
+    findMethod cCharTI "M" [intT] [charT; intT]
 
 //    emit map
 //    createTypes map
+end
 
-
-let test0 _ =
+begin
     let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName "test10", AssemblyBuilderAccess.RunAndSave)
     let m = a.DefineDynamicModule("test10.dll")
     let t = m.DefineType("Ty")
@@ -144,17 +69,18 @@ let test0 _ =
     let t2 = m.DefineType("Ty2")
 
     t2.SetParent t
-    t2.BaseType |> ignore
+    t2.BaseType
+end
 
-    solveT typeOf<int> ==? typeof<int>
-    solveT typeOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
+solveT typeSpecOf<int> ==? typeof<int>
+solveT typeSpecOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
 
-    IL [
-        type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
-            override0 "Equals" [paramT intT] typeOf<bool> [ldc_i4 1; ret]
-        ]
+IL [
+    type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
+        override0 "Equals" [paramT intT] typeSpecOf<bool> [ldc_i4 1; ret]
     ]
-    |> emitDll "test3" ===? ".assembly extern mscorlib
+]
+|> emitDll "test3" ===? ".assembly extern mscorlib
 {
   .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
   .ver 4:0:0:0
@@ -474,7 +400,7 @@ let __ _ =
 //    map.[t"Type", []]
 
     IL [
-        TopTypeDef(makeT"Type", {
+        TopTypeDef(t"Type", {
             kind = None
             typeParams = []
             parent = None

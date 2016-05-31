@@ -1,10 +1,33 @@
-﻿module ILEmit.Helpers
+﻿module internal ILEmit.Helpers
 #load "ILEmit.fsx"
 
 open ILEmit
 open System
 
 let newTypeVar name = Var name
+
+let sysTypeValidate (t: Type) =
+    if t.IsNested then failwithf "%A is GenericParameter." t
+    if t.IsGenericParameter then failwithf "%A is GenericParameter." t
+
+let getPath t =
+    sysTypeValidate t
+    let nsRev =
+        t.Namespace.Split Type.Delimiter
+        |> Seq.rev
+        |> Seq.toList
+
+    FullName(t.Name, [], nsRev, Some(t.Assembly.GetName().Name))
+
+let rec typeOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
+and typeOfTypeArgs t = if not t.IsGenericType then [] else t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList
+let typeRefOfT t = TypeSpec(getPath t, typeOfTypeArgs t)
+
+[<RequiresExplicitTypeArguments>]
+let typeSpecOf<'a> = typeOfT typeof<'a>
+
+[<RequiresExplicitTypeArguments>]
+let typeRefOf<'a> = typeRefOfT typeof<'a>
 
 let t n = n
 let p n = FullName(t n, [], [], None)
@@ -64,11 +87,10 @@ let methodInfo0 name pars retT body = MethodInfo(methodHead0 name pars retT, bod
 
 let abstract0 name pars retT = AbstractDef <| methodHead0 name pars retT
 let override0 name pars retT instrs = MethodDef(Some Override, methodInfo0 name pars retT <| MethodBody instrs)
-
 let method1 name v1 f =
     let v1 = newTypeVar v1
-    let pars, ret, instrs = f <| TypeVar v1
-    MethodDef(None, MethodInfo(MethodHead(name, [v1], pars, paramT ret), MethodBody instrs))
+    let make pars ret instrs = MethodDef(None, MethodInfo(MethodHead(name, [v1], pars, paramT ret), MethodBody instrs))
+    f make <| TypeVar v1
 
 let ctor pars is = CtorDef(pars, MethodBody is)
 
