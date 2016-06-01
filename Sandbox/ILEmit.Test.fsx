@@ -8,6 +8,554 @@ let intT = typeSpecOf<int>
 let voidT = typeOfT typeof<System.Void>
 let bigintT = typeSpecOf<bigint>
 
+type R = System.Text.RegularExpressions.Regex
+let lexTrivia = R @"\s+|//[^\n]*|/\*.*?\*/"
+
+type Custom<'t,'r> = Custom of name: string * regex: 'r * (string -> 't)
+type LexData<'t,'r> = {
+    trivia: 'r
+    keyword: Custom<'t,'r>
+    custom: Custom<'t,'r> array
+}
+let custom n r f = Custom(n, r, f)
+let table name table =
+    let concat pred sep table =
+        Seq.filter (fst >> pred) table
+        |> Seq.map (fst >> System.Text.RegularExpressions.Regex.Escape)
+        |> String.concat sep
+
+    let chars = concat (String.length >> (=) 1) "" table
+    let strings = concat (String.length >> (<>) 1) "|" table
+
+    let regex = if String.length chars = 0 then strings else "[" + chars + "]|" + strings
+    let map = System.Collections.Generic.Dictionary()
+    for k, v in table do map.Add(k, v)
+
+    custom name regex <| fun t -> map.[t]
+    
+open System.Text.RegularExpressions
+
+let compile { trivia = trivia; keyword = keyword; custom = custom } =
+    let r p = Regex(p, RegexOptions.Compiled)
+    let customR (Custom(n, p, f)) = Custom(n, r p, f)
+    {
+        trivia = r trivia
+        keyword = customR keyword
+        custom = Array.map customR custom
+    }
+type Result<'T,'E> = Ok of 'T | Error of 'E
+let lexer data =
+    let {
+        trivia = trivia
+        keyword = keyword 
+        custom = custom
+        } = compile data
+
+    fun source ->
+        let scanR (r: Regex) source i =
+            let m = r.Match(source, i)
+            if m.Success && m.Index = i then i + m.Length
+            else -1
+            
+        let rs = ResizeArray()
+        let mutable errorIndex = -1
+
+        let scanC (Custom(n, r: Regex, f)) source i =
+            let m = r.Match(source, i)
+            if m.Success && m.Index = i then
+                rs.Add(f m.Value)
+                i + m.Length
+            else -1
+
+        let rec skipTrivias i = match scanR trivia source i with -1 -> i | i -> skipTrivias i
+        
+        let rec scanToken i customI customs =
+            if customI = Array.length customs then -1
+            else
+                match scanC customs.[customI] source i with
+                | -1 -> scanToken i (customI + 1) customs
+                | i' ->
+                    match scanC keyword source i with
+                    | -1 -> i'
+                    | i'' when i' <= i'' -> rs.RemoveAt(rs.Count-2); i''
+                    | _ -> rs.RemoveAt(rs.Count-1); i'
+
+        let rec scan i =
+            let i = skipTrivias i
+            if String.length source <= i then Ok <| rs.ToArray()
+            else
+                let i = scanToken i 0 custom
+                if i = -1 then Error errorIndex
+                else scan i
+        scan 0
+
+type token =
+    /// "("
+    | LParen
+    /// ")"
+    | RParen
+    /// "["
+    | LSBraket
+    /// "]"
+    | RSBraket
+    /// ":"
+    | Coron
+    /// "="
+    | Equals
+    /// "/"
+    | Slash
+    /// "!"
+    | Bang
+    /// ","
+    | Comma
+    /// "."
+    | Dot
+    /// ";"
+    | SemiCoron
+    /// "+"
+    | Plus
+    /// "!!"
+    | DoubleBang
+    /// "::"
+    | DoubleCoron
+    /// ";;"
+    | DoubleSemiCoron
+    /// "<:"
+    | LessThanCoron
+    /// "->"
+    | HyphenGreaterThan
+
+    | Abstract
+    | Export
+    | Fun
+    | Override
+    | Type
+    | Static
+    | Val
+    | Open
+    | Interface
+    | Sealed
+    | Mutable
+    | Literal
+    | Module
+
+    | Null
+    | True
+    | False
+
+    | Op of System.Reflection.Emit.OpCode
+
+    | Id of string
+
+    | Int32 of int32
+    | Int64 of int64
+    | Float64 of double
+    | QString of string
+    | SQString of string
+
+let ops =
+    typeof<System.Reflection.Emit.OpCodes>.GetFields()
+    |> Array.map (fun f -> f.GetValue null |> unbox<System.Reflection.Emit.OpCode>)
+
+let delimiter = [|
+    "(", LParen
+    ")", RParen
+    "[", LSBraket
+    "]", RSBraket
+    ":", Coron
+    "=", Equals
+    "/", Slash
+    "!", Bang
+    ",", Comma
+    ".", Dot
+    ";", SemiCoron
+    "+", Plus
+    "!!", DoubleBang
+    "::", DoubleCoron
+    ";;", DoubleSemiCoron
+    "<:", LessThanCoron
+    "->", HyphenGreaterThan
+|]
+
+let keyword = [|
+    "abstract", Abstract
+    "export", Export
+    "fun", Fun
+    "override", Override
+    "type", Type
+    "static", Static
+    "val", Val
+    "open", Open
+    "interface", Interface
+    "sealed", Sealed
+    "mutable", Mutable
+    "literal", Literal
+    "module", Module
+    
+    "null", Null
+    "true", True
+    "false", False
+|]
+
+//| Bool of bool
+//    | I1 of int8
+//    | U1 of uint8
+//    | I2 of int16
+//    | U2 of uint16
+//    | I4 of int32
+//    | U4 of uint32
+//    | I8 of int64
+//    | U8 of uint64
+//    | F4 of single
+//    | F8 of double
+//    | Char of char
+//    | String of string
+
+let opTable = [| for op in ops -> op.Name, Op op |]
+
+let floatingR = 
+    let e = "[eE][+-]?[0-9]+"
+    @"(([0-9]*\.[0-9]+|[0-9]+\.)(" + e + ")?)|([0-9]+" + e + ")"
+
+let escape s =
+    let hex2int c = (int c &&& 15) + (int c >>> 6) * 9
+    let rec aux ret = function
+        | '\\'::'u'::c1::c2::c3::c4::cs ->
+            let c = (hex2int c1 <<< 12) ||| (hex2int c2 <<< 8) ||| (hex2int c3 <<< 4) ||| hex2int c4
+            aux (char c::ret) cs
+
+        | '\\'::c::cs ->
+            let c =
+                match c with
+                | 'r' -> '\r'
+                | 'n' -> '\n'
+                | 't' -> '\t'
+                | 'v' -> '\v'
+                | c -> c
+            aux (c::ret) cs
+
+        | c::cs -> aux (c::ret) cs
+        | [] -> List.rev ret
+
+    Seq.toList s |> aux [] |> List.toArray |> System.String
+
+let lexData = {
+    trivia = @"\s+|//[^\n]"
+    keyword = table "keyword" (Array.append keyword opTable)
+    custom =
+    [|
+        custom "id" @"[a-zA-Z_\p{Ll}\p{Lu}\p{Lt}\p{Lo}\p{Lm}][\w`]*" Id
+        table "delimiter" delimiter
+        custom "integer" @"0[xX][0-9a-fA-F]+|[+-]?[0-9]+" <| fun s ->
+            let integer s style = 
+                let mutable i = 0
+                if System.Int32.TryParse(s, style, null, &i) then Int32 i
+                else Int64 <| System.Int64.Parse(s, style)
+
+            if 2 <= s.Length && s.[0] = '0' && s.[1] = 'x'
+            then integer s.[2..] System.Globalization.NumberStyles.AllowHexSpecifier
+            else integer s System.Globalization.NumberStyles.None
+
+        custom "floating" floatingR (double >> Float64)
+        custom "qstring" """("([^"\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*")""" <| fun s ->
+            let s = s.[1..s.Length-2]
+            if String.forall ((<>) '\\') s then QString s
+            else QString <| escape s
+
+        custom "sqstring" """('([^'\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*')""" <| fun s ->
+            let s = s.[1..s.Length-2]
+            if String.forall ((<>) '\\') s then SQString s
+            else SQString <| escape s
+    |]
+}
+
+let lex = lexer lexData
+
+let findOp name = Array.find (fst >> (=) name) opTable |> snd
+
+lex "0xff" = Ok [| Int32 255 |]
+lex "type" = Ok [| token.Type |]
+lex "typeof" = Ok [| Id "typeof" |]
+lex "ldc" = Ok [| Id "ldc" |]
+lex "ldc.i4" = Ok [| findOp "ldc.i4" |]
+lex "ldc.i4.0" = Ok [| findOp "ldc.i4.0" |]
+lex "''" = Ok [| SQString "" |]
+lex "'\\t\\'\\u0061'" = Ok [| SQString "\t'a" |]
+
+type Stream<'a> = {
+    items: 'a array
+    mutable current: int
+}
+let opt p ({ current = i } as xs) =
+    let init = i
+    match p xs with
+    | Ok x -> Ok <| Some x
+    | Error _ ->
+        xs.current <- init
+        Ok None
+
+let manyRev p xs =
+    let rec aux rs =
+        let { current = init } = xs
+        match p xs with
+        | Ok r -> aux (r::rs)
+        | Error _ ->
+            xs.current <- init
+            Ok rs
+    aux []
+
+let sepBy1Rev p sep xs =
+    match p xs with
+    | Error e -> Error e
+    | Ok r ->
+        let rec aux rs =
+            let { current = init } = xs
+            match sep xs with
+            | Error _ ->
+                xs.current <- init
+                Ok rs
+
+            | Ok _ ->
+                match p xs with
+                | Error e ->
+                    xs.current <- init
+                    Ok rs
+
+                | Ok r -> aux (r::rs)
+        aux [r]
+
+let (|>>) p f xs =
+    match p xs with
+    | Ok x -> Ok <| f x
+    | Error e -> Error e
+
+let sepBy1 p sep = sepBy1Rev p sep |>> List.rev
+
+let sepBy p sep = opt (sepBy1 p sep) |>> function None -> [] | Some xs -> xs
+let (<|>) p1 p2 ({ current = init } as xs) =
+    match p1 xs with
+    | Error _ ->
+        xs.current <- init
+        p2 xs
+
+    | r -> r
+    
+type ParseErrors<'e> =
+    | UserError of 'e
+    | RequireEos
+
+let satisfyE e pred =
+    let e = Error <| UserError e
+    fun { items = items; current = i } ->
+        if items.Length <= i then e
+        else
+            let x = items.[i]
+            if pred x then Ok x
+            else e
+
+let chooseE e chooser =
+    let e = UserError e
+    fun { items = items; current = i } ->
+        if items.Length <= i then Error e
+        else
+            let x = items.[i]
+            match chooser x with
+            | Some x -> Ok x
+            | None -> Error e
+
+let (.>>.) p1 p2 xs =
+    match p1 xs with
+    | Error e -> Error e
+    | Ok x1 ->
+        match p2 xs with
+        | Error e -> Error e
+        | Ok x2 -> Ok(x1, x2)
+
+let pipe2 p1 p2 f =
+    let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt f
+    fun xs ->
+        match p1 xs with
+        | Error e -> Error e
+        | Ok x1 ->
+            match p2 xs with
+            | Error e -> Error e
+            | Ok x2 -> Ok <| f.Invoke(x1, x2)
+
+let pipe3 p1 p2 p3 f =
+    let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt f
+    fun xs ->
+        match p1 xs with
+        | Error e -> Error e
+        | Ok x1 ->
+            match p2 xs with
+            | Error e -> Error e
+            | Ok x2 ->
+                match p3 xs with
+                | Error e -> Error e
+                | Ok x3 -> Ok <| f.Invoke(x1, x2, x3)
+
+let pipe5 p1 p2 p3 p4 p5 f =
+    let f = OptimizedClosures.FSharpFunc<_,_,_,_,_,_>.Adapt f
+    fun xs ->
+        match p1 xs with
+        | Error e -> Error e
+        | Ok x1 ->
+            match p2 xs with
+            | Error e -> Error e
+            | Ok x2 ->
+                match p3 xs with
+                | Error e -> Error e
+                | Ok x3 ->
+                    match p4 xs with
+                    | Error e -> Error e
+                    | Ok x4 ->
+                        match p5 xs with
+                        | Error e -> Error e
+                        | Ok x5 -> Ok <| f.Invoke(x1, x2, x3, x4, x5)
+
+let (.>>) p1 p2 xs =
+    match p1 xs with
+    | Ok _ as r ->
+        match p2 xs with
+        | Ok _ -> r
+        | Error e -> Error e
+    | e -> e
+
+let (>>.) p1 p2 xs =
+    match p1 xs with
+    | Ok _ -> p2 xs
+    | Error e -> Error e
+
+let (>>%) p v xs =
+    match p xs with
+    | Ok _ -> Ok v
+    | Error e -> Error e
+
+let eos { items = items; current = i } =
+    if items.Length <= i then Ok()
+    else Error RequireEos
+
+let createParserForwardedToRef() =
+    let p = ref <| fun xs -> failwith "uninitialized"
+    (fun xs -> (!p) xs), p
+
+type Errors =
+    | RequireToken of token
+    | RequireName
+    | RequireTypeKind
+
+let (!) symbol = satisfyE (RequireToken symbol) (fun t -> t = symbol)
+
+/// ex: Int32, List`2, 'type', (->)
+let name =
+    chooseE RequireName (function Id v | SQString v -> Some v | _ -> None) <|>
+    (!LParen .>> !HyphenGreaterThan .>> !RParen >>% "->`2")
+
+let typeKind = chooseE RequireTypeKind <| function 
+    | token.Abstract
+    | token.Interface
+    | token.Open
+    | token.Sealed as t ->
+        match t with
+        | token.Abstract -> TypeKind.Abstract
+        | token.Interface -> TypeKind.Interface
+        | token.Open -> TypeKind.Open
+        | token.Sealed -> TypeKind.Sealed
+        | _ -> failwith "unreach"
+        |> Some
+    | _ -> None
+
+/// ($p, ...)
+let tupleLike p = !LParen >>. sepBy p !Comma .>> !RParen
+let tupleOrValueLike p = tupleLike p <|> (p |>> List.singleton)
+typeof<System.Environment.SpecialFolderOption>.FullName
+let assemblyName = !LSBraket >>. name .>> !RSBraket
+let namespaceRev = sepBy1Rev name !Dot
+let nestersRev = manyRev (!Plus >>. name)
+let fullName = pipe3 (opt assemblyName) namespaceRev nestersRev <| fun asmName nsRev nestRev ->
+    match nsRev, nestRev with
+    | [], [] -> failwith "unreach"
+    | [], name::nest -> FullName(name, nest, [], asmName)
+    | ns::nsRev, name::nest -> FullName(name, nest @ [ns], nsRev, asmName)
+    | name::nsRev, [] -> FullName(name, [], nsRev, asmName)
+
+let typeParams = tupleOrValueLike name >>= fun xs ->
+    updateEnv (fun vars -> for x in xs do vars.Add(x, newTypeVar x))
+
+let typeSpec, typeSpecRef = createParserForwardedToRef()
+do
+    let typeSpec = 
+        choice [
+            pipe2 fullName (tupleOrValueLike typeSpec) <| fun n vs -> TypeSpec(n, vs)
+            pipe2
+        ]
+    typeSpecRef := typeSpec
+
+let inherits = tupleLike typeSpec <|> (typeSpec |>> List.singleton)
+
+/// ex: type open List`1 (T) = ...
+let topTypeDef = pipe5 !Type (opt typeKind) name (opt typeParams) (opt inherits .>>. (!Equals >>. members)) <| fun _ k n ps (is, ms) -> TopTypeDef(n, t)
+
+/// ex: type A =;; module B =;;
+let top = sepBy (topTypeDef <|> topModuleDef) !DoubleCoron .>> eos
+
+ResizeArray().ConvertAll()
+
+
+//let findMethod { mmap = mmap; varMap = varMap; typeArgs = typeArgs } name mTypeArgs argTypes = substTypeArgs varMap typeArgs <| fun _ ->
+//    get mmap name
+//    |> List.find (function
+//        | { mVarMap = TypeVarMap(mTypeParams,_) as mVarMap; m = MethodInfo(MethodHead(pars = pars), _)
+//            } ->
+//            List.length pars = List.length argTypes &&
+//            List.length mTypeParams = List.length mTypeArgs &&
+//            substTypeArgs mVarMap mTypeArgs <| fun _ ->
+//                List.forall2
+//                    (fun (Parameter(_,parType)) argType -> typeSpecEq parType argType)
+//                    pars
+//                    argTypes
+//    )
+//    |> fun mi -> { mi with mTypeArgs = mTypeArgs }
+
+//    match solveTypeCore map varMap mVarMap t with
+//    | SType t -> t.GetConstructor(B.Public ||| B.NonPublic, null, solveTypes map varMap mVarMap ts, null)
+//
+//    | SBuilderType { mmap = parentMMap } -> findMethod ts parentMMap
+//
+//    | SBuilderGeneric(t, genericDef, genericParams) -> failwith "Not implemented yet"
+//    | STypeVar(_, _) -> failwith "Not implemented yet"
+
+// class Make`1<int32>::Tuple<string>(!0, !!0)
+
+    // Builder::GetMethod is not implemented
+
+        // type C =
+        //     fun M (a) (a): a = ...;
+        //     fun M () (string): string = ...;;
+        //
+        // getMethod C "M" () (string)
+        // getMethod C "M" (string) (string)
+        // getMethod C "M" (string) (!!0)
+
+    // type Make`1 (T1) =
+    //     fun Tuple (T2) (T1, T2) : Tuple(T1, T2) = ...;
+    //
+    // call Make`1(int32)::Tuple (string) (!0, !!0)
+
+    // type C`1(T) =
+    //     fun M () (T) : T = ...;
+    //     fun M () (List(T)) : List T = ...;
+    //     fun M () (string) : string = ...;
+    //
+    // call C`1(string)::M () (string) => ok "fun M () (string) : string = ...;"
+    // call C`1(string)::M () (!0) => ok "fun M () (!0) : !0 = ...;"
+    //
+    // [T,List(a)]
+    // fun Main(a) () = call C`1(List(a))::() (List(a)) => ok
+    // fun Main(a) () = call C`1(a)::() (a) => ok
+
+
+// call class [mscorlib]System.Tuple`2<!0, !!0> class Make`1<int32>::Tuple<string>(!0, !!0)
 let (==?) act exp = 
     if act <> exp then printfn "(==?) {act = %A; exp = %A}" act exp
     else printfn "ok"
@@ -42,6 +590,7 @@ begin
     let name = "test1"
     let a = AppDomain.CurrentDomain.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.RunAndSave)
     let m = a.DefineDynamicModule(name + ".dll")
+
     let map = HashMap()
     for d in ds do DefineTypes.topDef m map d
     defineTypeParams map

@@ -112,6 +112,11 @@ namespace ConsoleApplication1
         }
     }
 
+    public static class Literal
+    {
+        public static const DateTime D = new DateTime();
+    }
+
     static class Program
     {
         public static bool RetBool() => true;

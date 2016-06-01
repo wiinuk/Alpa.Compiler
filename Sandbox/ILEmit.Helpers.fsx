@@ -115,7 +115,6 @@ let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
     | n -> Instr("", i4Op, OpI4 n)
     
 module SimpleInstructions =
-    let base_init ts = Macro(BaseInit ts)
     let ret = Instr("", O.Ret, OpNone)
 
     let newobj thisType argTypes = Instr("", O.Newobj, OpCtor(thisType, argTypes))
@@ -143,9 +142,9 @@ module SimpleInstructions =
     let stsfld t n = Instr("", O.Stsfld, OpField(t, n))
     let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
 
-    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpCall(false, parent, name, typeArgs, argTypes))
-    let call isStatic thisType name typeArgs argTypes = Instr("", O.Call, OpCall(isStatic, thisType, name, typeArgs, argTypes))
-    let call_static thisType name typeArgs argTypes = call true thisType name typeArgs argTypes
+    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpCall(parent, name, typeArgs, argTypes))
+    let call thisType name typeArgs argTypes = Instr("", O.Call, OpCall(thisType, name, typeArgs, argTypes))
+    let call_static thisType name typeArgs argTypes = call thisType name typeArgs argTypes
 
 
 open System.Diagnostics
