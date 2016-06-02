@@ -8,7 +8,16 @@ open ILEmit.PreDefinedTypes
 
 let findOp name = Array.find (fst >> (=) name) opTable |> snd
 
-lex "0xff" = Ok [| LInt32(true, 0xFF) |]
+lex "-3" = Ok [| LInt32(false, -3) |]
+lex "0xFFFFFFFF" = Ok [| LInt32(true, 0xFFFFFFFF) |]
+lex "0x100000000" = Ok [| LInt64(true, 0x100000000L) |]
+lex "0xFFFFFFFFFFFFFFFF" = Ok [| LInt64(true, 0xFFFFFFFFFFFFFFFFL) |]
+lex "0x10000000000000000"
+lex "1.2e12" = Ok [| LFloat64 1.2e12 |]
+lex "10e" = Ok [| LInt32(false, 10); Id "e" |]
+
+lex "- 3" = Error 0
+
 lex "type" = Ok [| token.Type |]
 lex "typeof" = Ok [| Id "typeof" |]
 lex "ldc" = Ok [| Id "ldc" |]
@@ -17,6 +26,7 @@ lex "ldc.i4.0" = Ok [| findOp "ldc.i4.0" |]
 lex "''" = Ok [| SQString "" |]
 lex "'\\t\\'\\u0061'" = Ok [| SQString "\t'a" |]
 
+lex ";" = Ok [| Semicolon |]
 lex ";;" = Ok [| DSemicolon |]
 lex "," = Ok [|Comma|]
 lex "()" = Ok[|LParen; RParen|]
@@ -135,7 +145,7 @@ module Program =
         ret
 """
 
-toIlasm "" """
+toIlasm "MakeTuple2" """
 type Make`1(T1) =
     fun static Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) =
         ldarg.0
@@ -151,27 +161,38 @@ module Program =
         ret
 """
 
-toIlasm "test1" """
-type Make`1(T1) =
-    fun static Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = ldnull ret;;
+toIlasm "" "
+module Ops =
+    fun Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
+    fun Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
 
-module Prodram =
-    fun main(): void =
-        ldnull
-        ldnull
-        call Make`1(string)::Tuple(string)(!0, !!0)
-        pop
+module Main =
+    fun main(): float32 =
+        ldc.i4.1
+        ldc.i4.3
+        call Ops::Add(int32, int32)
+        conv.r4
+        ldc.r4 7.11
+        call Ops::Add(float32, float32)
         ret
-"""
-
-#r @"C:\Users\pc-2\AppData\Local\Temp\anon20160602_102431_3079427.dll"
-Program.main()
-//Prodram.main()
+"
+parseWith instr "ldc.r4"
+O.Ldc_R4
+let asm = @"C:\Users\pc-2\AppData\Local\Temp\MakeTuple2.dll"
 
 toIlasm "test1" """
 type Make`1(T1) =
-    fun Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = ldnull ret;
-    fun Tuple (string, string) : [mscorlib]System.Tuple`2(string, string) = ldnull ret;;
+    fun Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = 
+        ldarg.0
+        ldarg.1
+        newobj [mscorlib]System.Tuple`2(!T1,!!T2)(!0, !1)
+        ret;
+
+    fun Tuple (string, string) : [mscorlib]System.Tuple`2(string, string) =
+        ldarg.0
+        ldarg.1
+        newobj [mscorlib]System.Tuple`2(string, string)(!0, !1)
+        ret;;
 
 module Prodram =
     fun main(): void =

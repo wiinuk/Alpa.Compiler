@@ -220,23 +220,26 @@ let escape s =
     Seq.toList s |> aux [] |> List.toArray |> System.String
 
 let lexData = {
-    trivia = @"\s+|//[^\n]"
+    trivia = @"\s+|//[^\n]*"
     keyword = table "keyword" (Array.append keyword opTable)
     custom =
     [|
         custom "id" @"[a-zA-Z_\p{Ll}\p{Lu}\p{Lt}\p{Lo}\p{Lm}][\w`]*" Id
         table "delimiter" delimiter
-        custom "integer" @"0[xX][0-9a-fA-F]+|[+-]?[0-9]+" <| fun s ->
-            let integer isDecimal s style = 
-                let mutable i = 0
-                if System.Int32.TryParse(s, style, null, &i) then LInt32(isDecimal, i)
-                else LInt64(isDecimal, System.Int64.Parse(s, style))
-
-            if 2 <= s.Length && s.[0] = '0' && s.[1] = 'x'
-            then integer true s.[2..] System.Globalization.NumberStyles.AllowHexSpecifier
-            else integer false s System.Globalization.NumberStyles.None
-
         custom "floating" floatingR (double >> LFloat64)
+
+        custom "integer" @"0[xX][0-9a-fA-F]+|[+-]?[0-9]+" (
+            let format = System.Globalization.NumberFormatInfo.InvariantInfo
+            fun s ->
+                let integer isDecimal s style = 
+                    let mutable i = 0
+                    if Int32.TryParse(s, style, format, &i) then LInt32(isDecimal, i)
+                    else LInt64(isDecimal, Int64.Parse(s, style))
+
+                if 2 <= s.Length && s.[0] = '0' && (let c = s.[1] in c = 'x' || c = 'X')
+                then integer true s.[2..] System.Globalization.NumberStyles.AllowHexSpecifier
+                else integer false s System.Globalization.NumberStyles.AllowLeadingSign
+        )
         custom "qstring" """("([^"\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*")""" <| fun s ->
             let s = s.[1..s.Length-2]
             if String.forall ((<>) '\\') s then QString s
@@ -263,7 +266,7 @@ let tOp = satisfyMapE (function Op _ -> true | _ -> false) (function Op x -> x |
 let name =
     satisfyMapE
         (function Id _ | SQString _ -> true | _ -> false)
-        (function Id v | SQString v -> v | _ -> null)
+        (function Id v | SQString v -> v | _ -> "")
         RequireName
 
 let typeKind =

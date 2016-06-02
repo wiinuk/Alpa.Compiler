@@ -28,7 +28,7 @@ let table name table =
     custom name regex <| fun t -> map.[t]
     
 let compile { trivia = trivia; keyword = keyword; custom = custom } =
-    let r p = Regex(p, RegexOptions.Compiled)
+    let r p = Regex(p, RegexOptions.Compiled ||| RegexOptions.CultureInvariant ||| RegexOptions.ExplicitCapture )
     let customR (Custom(n, p, f)) = Custom(n, r p, f)
     {
         trivia = r trivia
