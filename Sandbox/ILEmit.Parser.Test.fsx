@@ -36,7 +36,14 @@ fsi.AddPrinter <| fun (x: System.Reflection.Emit.OpCode) -> x.Name
 let toIlasm name source =
     match parse source with
     | Error e -> failwithf "%A" e
-    | Ok il -> let source, _ = emitDll name il in source
+    | Ok il ->
+        let name =
+            match name with 
+            | null
+            | "" -> sprintf "anon%s" <| System.DateTime.Now.ToString "yyyyMMdd_hhmmss_FFFFFFF"
+            | n -> n
+
+        let source, _ = emitDll name il in source
 
 let il ds = { topDefs = ds }
 
@@ -115,9 +122,38 @@ type T2 =
 }"
 
 
+toIlasm "" """
+type Make`1(T1) =
+    fun static Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = ldnull ret;;
+
+module Program =
+    fun main(): void =
+        ldnull
+        ldnull
+        call Make`1(string)::Tuple(string)(!0, !!0)
+        pop
+        ret
+"""
+
+toIlasm "" """
+type Make`1(T1) =
+    fun static Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) =
+        ldarg.0
+        ldarg.1
+        newobj [mscorlib]System.Tuple`2(!T1,!!T2)(!0, !1)
+        ret;;
+
+module Program =
+    fun main(): [mscorlib]System.Tuple`2(int32, string) =
+        ldc.i4.1
+        ldstr "2"
+        call Make`1(int32)::Tuple(string)(!0, !!0)
+        ret
+"""
+
 toIlasm "test1" """
 type Make`1(T1) =
-    fun Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = ldnull ret;;
+    fun static Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = ldnull ret;;
 
 module Prodram =
     fun main(): void =
@@ -127,6 +163,10 @@ module Prodram =
         pop
         ret
 """
+
+#r @"C:\Users\pc-2\AppData\Local\Temp\anon20160602_102431_3079427.dll"
+Program.main()
+//Prodram.main()
 
 toIlasm "test1" """
 type Make`1(T1) =

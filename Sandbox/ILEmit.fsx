@@ -568,7 +568,7 @@ let isCtorOfRt = {
 }
 let isTypeOfRt = {
     getMethodsOfName = fun name (t: Type) -> t.GetMethods(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance) |> Seq.filter (fun m -> m.Name = name)
-    getCtors = fun t -> upcast t.GetConstructors(B.DeclaredOnly ||| B.Public ||| B.NonPublic)
+    getCtors = fun t -> upcast t.GetConstructors(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance)
     getTypeParams = fun t -> t.GetGenericArguments() |> Seq.map RuntimeType |> Seq.toList
 }
 
@@ -682,7 +682,7 @@ let getCtor env parent argTypes =
     | TypeParam _ -> failwith "TypeParam"
     | RuntimeType t ->
         let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-        t.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic, null, CC.Any, argTypes, null)
+        t.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance, null, CC.Any, argTypes, null)
 
     | Builder { cmap = cmap } ->
         let argTypes = solveTypes env argTypes
