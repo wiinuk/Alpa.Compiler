@@ -5,13 +5,13 @@ open System.Collections.Generic
 open System.Reflection.Emit
 open System.Threading
 
-type B = global.System.Reflection.BindingFlags
-type CC = global.System.Reflection.CallingConventions
-type T = global.System.Reflection.TypeAttributes
-type M = global.System.Reflection.MethodAttributes
-type P = global.System.Reflection.ParameterAttributes
-type F = global.System.Reflection.FieldAttributes
-type O = global.System.Reflection.Emit.OpCodes
+type B = System.Reflection.BindingFlags
+type CC = System.Reflection.CallingConventions
+type T = System.Reflection.TypeAttributes
+type M = System.Reflection.MethodAttributes
+type P = System.Reflection.ParameterAttributes
+type F = System.Reflection.FieldAttributes
+type O = System.Reflection.Emit.OpCodes
 
 module List =
     let tryIter2 action ls rs =
@@ -22,84 +22,35 @@ module List =
             | _ -> false
         aux ls rs
 
-let mutable private seed = 0
-
-/// type Var<'a> = { id: int; value: 'a option ref }
-[<Sealed; NoEquality; NoComparison>]
-type Var<'T> =
-    val Name: string
-    val Id: int
-    [<DefaultValue>]
-    val mutable internal hasValue: bool
-    [<DefaultValue>]
-    val mutable internal value: 'T
-    new (name) =
-        let x = Interlocked.Increment &seed
-        {
-            Name = name
-            Id = x
-        }
-    new (name, value) as self =
-        let x = Interlocked.Increment &seed
-        {
-            Name = name
-            Id = x
-        }
-        then
-            self.hasValue <- true
-            self.value <- value
-
-    override x.ToString() =
-        if x.hasValue then sprintf "Var(\"%s\", %d, %A)" x.Name x.Id x.value
-        else sprintf "Var(\"%s\", %d)" x.Name x.Id
-
-module Var =
-    /// Option.isSome x.value
-    let hasValue (x: _ Var) = x.hasValue
-
-    let id (x: _ Var) = x.Id
-
-    /// match !x.value with Some x -> x | None -> Unchecked.defaultof<_>
-    let getValueOrDefault (x: _ Var) = x.value
-
-    /// x.value := Some value
-    let setSomeValue (x: _ Var) value =
-        x.hasValue <- true
-        x.value <- value
-
-    /// x.value := None
-    let setNoneValue (x: _ Var) =
-        x.hasValue <- false
-        x.value <- Unchecked.defaultof<_>
-
-    let name (v: _ Var) = v.Name
-
 type FullName = FullName of name: string * nestersRev: string list * namespaceRev: string list * assemblyName: string option
 
-type TypeVar = Var<TypeSpec>
-and [<NoEquality; NoComparison>] TypeSpec =
+type TypeVar = string
+and TypeSpec =
     /// ex: [mscorlib]System.Tuple(..., ...)
     | TypeSpec of pathRev: FullName * TypeSpec list
-    /// ex: T1
-    | TypeVar of Var<TypeSpec>
+    /// ex: !T1
+    | TypeVar of TypeVar
+    /// ex: !!T1
+    | MethodTypeVar of TypeVar
     /// ex: !0
     | TypeArgRef of int
     /// ex: !!0
     | MethodTypeArgRef of int
 
-type ExtendTypeSpec =
-    | ExtendTypeSpec of TypeSpec
-    | TypeParamIndex of int
-    | MethodTypeParamIndex of int
-
+type MethodName = string
 type Operand =
     | OpNone
-    | OpCtor of thisType: TypeSpec * argTypes: TypeSpec list
     | OpI1 of int8
+    | OpI2 of int16
     | OpI4 of int
+    | OpI8 of int64
+    | OpF4 of single
+    | OpF8 of double
+    | OpString of string
     | OpType of TypeSpec
     | OpField of thisType: TypeSpec * name: string
-    | OpCall of thisType: TypeSpec * name: string * typeArgs: TypeSpec list * argTypes: TypeSpec list
+    | OpCtor of thisType: TypeSpec * argTypes: TypeSpec list
+    | OpMethod of thisType: TypeSpec * name: MethodName * typeArgs: TypeSpec list * argTypes: TypeSpec list
 
 type Macro =
     | BaseInit of TypeSpec list
@@ -109,15 +60,15 @@ type Instr =
 
 type Override =
     | Override
-    | BaseMethod of baseMethod: (TypeSpec * string)
+    | BaseMethod of baseMethod: (TypeSpec * MethodName)
 
 type Parameter = Parameter of name: string option * TypeSpec
 type MethodBody = MethodBody of Instr list
-type MethodHead = MethodHead of name: string * typeParams: TypeVar list * pars: Parameter list * ret: Parameter
+type MethodHead = MethodHead of name: MethodName * typeParams: TypeVar list * pars: Parameter list * ret: Parameter
 type MethodInfo = MethodInfo of MethodHead * MethodBody
 type StaticMethodInfo = MethodInfo
 
-type LiteralValue =
+type Literal =
     | Bool of bool
     | I1 of int8
     | U1 of uint8
@@ -131,20 +82,18 @@ type LiteralValue =
     | F8 of double
     | Char of char
     | String of string
-
-type Literal =
-    | LiteralValue of LiteralValue
-    | Enum of TypeSpec * LiteralValue
-    | Null of TypeSpec
+    | Null
 
 type MemberDef =
-    | Literal of name: string * Literal
+    | Literal of name: string * TypeSpec * Literal
     | Field of isStatic: bool * isMutable: bool * name: string * TypeSpec
     | AbstractDef of MethodHead
     | CtorDef of pars: Parameter list * MethodBody
     | MethodDef of Override option * MethodInfo
+    | StaticMethodDef of StaticMethodInfo
 
 type TypeKind = Abstract | Interface | Open | Sealed
+
 type TypeDef = {
     kind: TypeKind option
     typeParams: TypeVar list
@@ -158,19 +107,21 @@ type ModuleMember =
     | ModuleTypeDef of name: string * TypeDef
     | ModuleModuleDef of name: string * ModuleMember list
     | ModuleValDef of isMutable: bool * name: string * TypeSpec
+    | ModuleLiteralDef of name: string * TypeSpec * Literal
 
 type TopDef =
     | TopTypeDef of name: string * TypeDef
-    | TopModuleDef of name: string * ModuleMember list
+    | TopModuleDef of name: MethodName * ModuleMember list
 
-type IL = IL of TopDef list
+type AssemblyDef = string
+type IL = { topDefs: TopDef list }
 
 [<Sealed; AllowNullLiteral>]
 type HashMap<'k,'v when 'k : equality>() = inherit Dictionary<'k,'v>()
 
 /// typeParams.Length = typeParamBuilders.Length
 type TypeVarMap = TypeVarMap of typeParams: TypeVar list * typeParamBuilders: GenericTypeParameterBuilder list
-type MethodSign = string
+type MethodSign = MethodName
 type FieldSign = string
 
 type ILTypeBuilder = {
@@ -207,6 +158,7 @@ and TypeMap = HashMap<FullName, ILTypeBuilder>
 and CtorMap = ResizeArray<ILCtorBuilder>
 
 let add (map: HashMap<_,_>) k v = map.Add(k, v)
+let assign (map: HashMap<_,_>) k v = map.[k] <- v
 let get (map: HashMap<_,_>) k = map.[k]
 let tryGet (map: HashMap<_,_>) k (v: _ byref) = map.TryGetValue(k, &v)
 
@@ -230,68 +182,40 @@ let toTypeName = function
 
         b.ToString()
 
-let rec typeSpecEq l r =
-    match l, r with
-    | TypeSpec(ln, ls), TypeSpec(rn, rs) -> ln = rn && List.length ls = List.length rs && List.forall2 typeSpecEq ls rs
-    | TypeVar l, TypeSpec _ -> Var.hasValue l && typeSpecEq (Var.getValueOrDefault l) r
-    | TypeSpec _, TypeVar r -> Var.hasValue r && typeSpecEq l (Var.getValueOrDefault r)
-    | TypeVar l, TypeVar r -> typeVarEq l r
-
-    | TypeArgRef l, TypeArgRef r -> l = r
-    | MethodTypeArgRef l, MethodTypeArgRef r -> l = r
-    | _ -> false
-
-and typeVarEq l r =
-    match Var.hasValue l, Var.hasValue r with
-    | false, false -> Var.id l = Var.id r
-    | true, true -> typeSpecEq (Var.getValueOrDefault l) (Var.getValueOrDefault r)
-    | false, true ->
-        match Var.getValueOrDefault r with
-        | TypeVar r -> typeVarEq l r
-        | TypeSpec _
-        | TypeArgRef _
-        | MethodTypeArgRef _ -> false
-
-
-    | true, false ->
-        match Var.getValueOrDefault l with
-        | TypeVar l -> typeVarEq l r
-        | TypeSpec _
-        | TypeArgRef _
-        | MethodTypeArgRef _ -> false
-
-let solveTypeVarMap (TypeVarMap(vs,ts)) v =
-    match List.tryFindIndex (fun v' -> typeVarEq v v') vs with
-    | None -> None
-    | Some i -> Some(List.item i ts)
-
-let solveVar varMap mVarMap v =
-    match solveTypeVarMap varMap v with
-    | Some pb -> pb
-    | None ->
-        match solveTypeVarMap mVarMap v with
-        | Some pb -> pb
-        | None -> raise <| KeyNotFoundException()
-
+let solveTypeVarMap vs v = List.find (fst >> (=) v) vs |> snd
+type SolvedTypeParam =
+    | RuntimeTypeParam of Type
+    | TypeParamBuilder of GenericTypeParameterBuilder
 type SolvedType =
     | RuntimeType of Type
     | Builder of ILTypeBuilder
     | InstantiationType of instantiation: Type * genericTypeDefinition: ILTypeBuilder option * typeArgs: SolvedType list
-    | GenericParamBuilder of TypeVar * GenericTypeParameterBuilder
 
-let getType = function
+    | TypeParam of TypeVar * SolvedTypeParam
+
+let rec getType = function
     | RuntimeType t
+    | TypeParam(_, RuntimeTypeParam t)
     | InstantiationType(instantiation = t) -> t
+    | TypeParam(_, TypeParamBuilder t) -> upcast t
     | Builder { t = t } -> upcast t
-    | GenericParamBuilder(_, t) -> upcast t
 
 type SolveEnv = {
     tmap: TypeMap
-    varMap: TypeVarMap
-    mVarMap: TypeVarMap
+    varMap: (TypeVar * SolvedTypeParam) list
+    mVarMap: (TypeVar * SolvedTypeParam) list
     typeArgs: SolvedType list
     mTypeArgs: SolvedType list
 }
+let rec getReplacedType subst = function
+    | TypeSpec(n, ts) -> TypeSpec(n, List.map (getReplacedType subst) ts)
+    | TypeVar v as t ->
+        match List.tryFind (fun (v',_) -> v = v') subst with
+        | Some(_,t) -> getReplacedType subst t
+        | None -> t
+
+    | t -> t
+
 let rec solveTypeCore ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
     let getGenericTypeDef map pathRev =
         let mutable ti = Unchecked.defaultof<_>
@@ -312,10 +236,8 @@ let rec solveTypeCore ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArg
 
         | _ -> failwith "unreach"
 
-    | TypeVar v ->
-        if Var.hasValue v then solveTypeCore env (Var.getValueOrDefault v)
-        else GenericParamBuilder(v, solveVar varMap mVarMap v)
-
+    | TypeVar v -> TypeParam(v, solveTypeVarMap varMap v)
+    | MethodTypeVar v -> TypeParam(v, solveTypeVarMap mVarMap v)
     | TypeArgRef i -> List.item i typeArgs
     | MethodTypeArgRef i -> List.item i mTypeArgs
 
@@ -329,7 +251,7 @@ let defineVarMap typeParams defineGenericParameters =
     match typeParams with
     | [] -> emptyVarMap
     | _ ->
-        let names = Seq.map Var.name typeParams |> Seq.toArray
+        let names = List.toArray typeParams
         TypeVarMap(typeParams, List.ofArray <| defineGenericParameters names)
 
 let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
@@ -368,6 +290,7 @@ module DefineTypes =
             | Literal _
             | Field _
             | MethodDef _
+            | StaticMethodDef _
             | CtorDef _ -> false
             | AbstractDef _ -> true
 
@@ -393,7 +316,8 @@ module DefineTypes =
 
     and moduleMember path (t: TypeBuilder) map = function
         | ModuleMethodDef _
-        | ModuleValDef _ -> ()
+        | ModuleValDef _ 
+        | ModuleLiteralDef _ -> ()
         | ModuleModuleDef(name, ms) -> module' t.DefineNestedType (addTypeName path name) map ms
         | ModuleTypeDef(name, td) -> type' t.DefineNestedType (addTypeName path name) map td
 
@@ -413,18 +337,21 @@ let toSign (MethodHead(name=name)) = name
 let addMethod mmap head m =
     let sign = toSign head
     let mutable ms = Unchecked.defaultof<_>
-    let ms = if tryGet mmap sign &ms then m::ms else [m]
-    add mmap sign ms
+    if tryGet mmap sign &ms then assign mmap sign (m::ms)
+    else add mmap sign [m]
 
 let addCtor (cmap: CtorMap) c = cmap.Add c
 
 let defineParam defineParameter i (Parameter(n, _)) = defineParameter(i, P.None, Option.toObj n) |> ignore
 let defineParams defineParameter pars = List.iteri (fun i a -> defineParam defineParameter (i + 1) a) pars
 
+let typeVarMapToSolvedType (TypeVarMap(vs,vs')) =
+    List.map2 (fun v v' -> v, TypeParamBuilder v') vs vs'
+
 let envOfTypeBuilder mVarMap { map = map; varMap = varMap } = {
     tmap = map
-    varMap = varMap
-    mVarMap = mVarMap
+    varMap = typeVarMapToSolvedType varMap
+    mVarMap = typeVarMapToSolvedType mVarMap
     typeArgs = []
     mTypeArgs = []
 }
@@ -507,31 +434,27 @@ let defineField ({ t = t; fmap = fmap } as ti) (isStatic, isMutable, name, ft) =
     let f = t.DefineField(name, ft, a)
     add fmap name f
 
-let defineLiteral ({ t = t; fmap = fmap } as ti) name value =
+let defineLiteral ({ t = t; fmap = fmap } as ti) name ft fv =
     let a = F.Public ||| F.Static ||| F.Literal
-    let fv, ft =
-        let literalValue = function
-            | I1 v -> box v
-            | U1 v -> box v
-            | I2 v -> box v
-            | U2 v -> box v
-            | I4 v -> box v
-            | U4 v -> box v
-            | I8 v -> box v
-            | U8 v -> box v
-            | Bool v -> box v
-            | F4 v -> box v
-            | F8 v -> box v
-            | Char v -> box v
-            | String v -> box v
-
-        match value with
-        | LiteralValue v -> let v = literalValue v in v, v.GetType()
-        | Enum(t, v) -> literalValue v, solveType (envOfTypeBuilder emptyVarMap ti) t
-        | Null t -> null, solveType (envOfTypeBuilder emptyVarMap ti) t
-
+    let ft = solveType (envOfTypeBuilder emptyVarMap ti) ft
     let f = t.DefineField(name, ft, a)
-    f.SetConstant fv
+    let literalValue = function
+        | I1 v -> box v
+        | U1 v -> box v
+        | I2 v -> box v
+        | U2 v -> box v
+        | I4 v -> box v
+        | U4 v -> box v
+        | I8 v -> box v
+        | U8 v -> box v
+        | Bool v -> box v
+        | F4 v -> box v
+        | F8 v -> box v
+        | Char v -> box v
+        | String v -> box v
+        | Null -> null
+
+    f.SetConstant <| literalValue fv
     add fmap name f
 
 let defineCtor ({ t = t; cmap = cmap } as dt) pars body =
@@ -539,20 +462,21 @@ let defineCtor ({ t = t; cmap = cmap } as dt) pars body =
     let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
     defineParams c.DefineParameter pars
     addCtor cmap { cb = c; dt = dt; pars = pars; body = body }
+    
+let defineStaticMethod ({ mmap = mmap } as dt) (MethodInfo(head, _) as m) =
+    let mb, mVarMap = defineMethodHead dt (M.Public ||| M.Static) CC.Standard head
+    addMethod mmap head { mb = mb; mVarMap = mVarMap; m = m; dt = dt }
 
 let defineMember dt = function
     | Field(isStatic, isMutable, n, ft) -> defineField dt (isStatic, isMutable, n, ft)
-    | Literal(n, l) -> defineLiteral dt n l
+    | Literal(n, t, l) -> defineLiteral dt n t l
     | MethodDef(ov, m) -> defineMethodDef dt ov m
+    | StaticMethodDef m -> defineStaticMethod dt m
     | CtorDef(pars, body) -> defineCtor dt pars body
     | AbstractDef head ->
         let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
         defineMethodHead dt a CC.HasThis head
         |> ignore
-
-let defineModuleMethod ({ mmap = mmap } as dt) (MethodInfo(head, _) as m) =
-    let mb, mVarMap = defineMethodHead dt (M.Public ||| M.Static) CC.Standard head
-    addMethod mmap head { mb = mb; mVarMap = mVarMap; m = m; dt = dt }
 
 let defineTypeDef ({ t = t } as ti) { parent = parent; impls = impls; members = members } =
     match parent with
@@ -566,7 +490,8 @@ let defineModuleMember dt = function
     | ModuleTypeDef _
     | ModuleModuleDef _ -> ()
     | ModuleValDef(isMutable, name, ft) -> defineField dt (true, isMutable, name, ft)
-    | ModuleMethodDef m -> defineModuleMethod dt m
+    | ModuleLiteralDef(name, ft, v) -> defineLiteral dt name ft v
+    | ModuleMethodDef m -> defineStaticMethod dt m
 
 let defineMembers map =
     for ({ d = d } as ti) in values map do
@@ -574,18 +499,6 @@ let defineMembers map =
         | Choice1Of2 td -> defineTypeDef ti td
         | Choice2Of2 members -> for m in members do defineModuleMember ti m
 
-/// check: varMap.Length = typeArgs.Length;
-/// require: Array.forall (box >> inNull >> not) varMap && Array.forall (fst >> Var.hasValue >> not) varMap
-let substTypeArgs (TypeVarMap(typeParams,_)) typeArgs f =
-    match typeArgs with
-    | [] -> f()
-    | _ ->
-        try
-            if List.tryIter2 Var.setSomeValue typeParams typeArgs then f()
-            else invalidArg "typeArgs" "length diff"
-        finally
-            List.iter Var.setNoneValue typeParams
-            
 let sysTypeValidate (t: Type) =
     if t.IsNested then failwithf "%A is GenericParameter." t
     if t.IsGenericParameter then failwithf "%A is GenericParameter." t
@@ -618,11 +531,11 @@ let getField env parent name =
         let fd = tb.GetGenericTypeDefinition().GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
         TypeBuilder.GetField(tb, fd)
 
-    | GenericParamBuilder _ -> failwith "getField: GenericParameterBuilder"
+    | TypeParam _ -> failwith "getField: TypeParam"
 
 type IsMethodBase<'m> = {
     getMTypeParams: 'm -> SolvedType list
-    getParameters: 'm -> Reflection.ParameterInfo array
+    getParameters: 'm -> SolvedType list
 }
 type IsMethodInfo<'m,'i,'b> = {
     baseClass: IsMethodBase<'b>
@@ -634,10 +547,14 @@ type IsType<'t,'m,'c> = {
     getCtors: 't -> 'c seq
     getTypeParams: 't -> SolvedType list
 }
+let parameterType (p: Reflection.ParameterInfo) = p.ParameterType
 
 let isMethodBaseOfRt = {
     getMTypeParams = fun (m: Reflection.MethodBase) -> if m.IsGenericMethod then m.GetGenericArguments() |> Seq.map RuntimeType |> Seq.toList else []
-    getParameters = fun m -> m.GetParameters()
+    getParameters = fun m ->
+        m.GetParameters()
+        |> Seq.map (parameterType >> RuntimeType)
+        |> Seq.toList
 }
 let isMethodInfoOfRt = {
     baseClass = isMethodBaseOfRt
@@ -655,13 +572,14 @@ let isTypeOfRt = {
     getTypeParams = fun t -> t.GetGenericArguments() |> Seq.map RuntimeType |> Seq.toList
 }
 
-let toTypeParams (TypeVarMap(typeParams, typeParams')) = List.map2 (fun t t' -> GenericParamBuilder(t, t')) typeParams typeParams'
+let toTypeParams (TypeVarMap(typeParams, typeParams')) = List.map2 (fun t t' -> TypeParam(t, TypeParamBuilder t')) typeParams typeParams'
 
 let isMethodInfoOfTb = {
     baseClass =
         {
         getMTypeParams = fun { ILMethodBuilder.mVarMap = mVarMap } -> toTypeParams mVarMap
-        getParameters = fun { mb = mb } -> mb.GetParameters()
+        getParameters = fun { dt = dt; mVarMap = mVarMap; m = MethodInfo(MethodHead(pars=pars),_) } ->
+            List.map (paramType >> solveTypeCore (envOfTypeBuilder mVarMap dt)) pars
         }
     toBase = id
     getSystemMethod = fun { mb = mb } -> mb
@@ -670,7 +588,8 @@ let isCtorOfTb = {
     baseClass =
         {
         getMTypeParams = fun _ -> []
-        getParameters = fun { cb = cb } -> cb.GetParameters()
+        getParameters = fun { dt = dt; pars = pars } ->
+            List.map (paramType >> solveTypeCore (envOfTypeBuilder emptyVarMap dt)) pars
         }
     toBase = id
     getSystemMethod = fun { cb = cb } -> cb
@@ -681,7 +600,6 @@ let isTypeOfTb = {
     getTypeParams = fun { varMap = varMap } -> toTypeParams varMap
 }
 
-let parameterType (p: Reflection.ParameterInfo) = p.ParameterType
 let getGenericMethod
     { getMethodsOfName = getMethodsOfName; getTypeParams = getTypeParams }
     { getSystemMethod = getSystemMethod
@@ -692,17 +610,18 @@ let getGenericMethod
     let typeParams = getTypeParams genericTypeDef
     let m =
         getMethodsOfName name genericTypeDef
-        |> Seq.filter (fun m ->
+        |> Seq.toList
+        |> List.filter (fun m ->
             let m = toBase m
-            let pars = getParameters m
-            Array.length pars = List.length argTypes &&
             let mTypeParams = getMTypeParams m
             List.length mTypeParams = List.length mTypeArgs &&
-            let genericMethodDefParamTypes = solveTypes { env with typeArgs = typeParams; mTypeArgs = mTypeParams } argTypes
-            let paramTypes = Seq.map parameterType pars
-            Seq.forall2 (=) genericMethodDefParamTypes paramTypes
+            let env = { env with typeArgs = typeParams; mTypeArgs = mTypeParams }
+            let pars = getParameters m
+            List.length pars = List.length argTypes &&
+            let genericMethodDefParamTypes = solveTypes env argTypes
+            Seq.forall2 (=) genericMethodDefParamTypes (List.map getType pars)
         )
-        |> Seq.exactlyOne
+        |> List.exactlyOne
 
     let m = TypeBuilder.GetMethod(constructedTypeBuilder, getSystemMethod m)
     let mTypeArgs = Seq.map (solveType env) mTypeArgs |> Seq.toArray
@@ -713,25 +632,25 @@ let getMethod env parent name mTypeArgs argTypes =
     let c = CC.Any
 
     match solveTypeCore env parent with
-    | GenericParamBuilder _ -> failwith "param builder"
-
+    | TypeParam _ -> failwith "TypeParam"
     | RuntimeType t ->
         let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
         t.GetMethod(name, a, null, c, argTypes, null)
 
+    // fun Make(T1,T2)(T1,T2) : Tuple(T1,T2) = ...
     | Builder { mmap = mmap } ->
         let { mb = mb } =
             get mmap name
-            |> Seq.filter (fun { mVarMap = mVarMap; m = MethodInfo(MethodHead(_,tpars,pars,_),_) } ->
+            |> List.filter (fun { mVarMap = TypeVarMap(mTypeParams,_); m = MethodInfo(MethodHead(_,tpars,pars,_),_) } ->
                 List.length tpars = List.length mTypeArgs &&
                 List.length pars = List.length argTypes &&
-                substTypeArgs mVarMap mTypeArgs <| fun _ ->
-                    List.forall2
-                        (fun (Parameter(_,parType)) argType -> typeSpecEq parType argType)
-                        pars
-                        argTypes
+                let subst = List.zip mTypeParams mTypeArgs
+                List.forall2
+                    (fun (Parameter(_,parT)) argT -> getReplacedType subst parT = argT)
+                    pars
+                    argTypes
             )
-            |> Seq.exactlyOne
+            |> List.exactlyOne
         upcast mb
 
     | InstantiationType(instantiation, None, _) -> getGenericMethod isTypeOfRt isMethodInfoOfRt (env, instantiation, instantiation.GetGenericTypeDefinition(), name, mTypeArgs, argTypes)
@@ -745,21 +664,22 @@ let getGenericCtor
     let typeParams = getTypeParams genericTypeDef
     let m =
         getCtors genericTypeDef
-        |> Seq.filter (fun m ->
+        |> Seq.toList
+        |> List.filter (fun m ->
             let m = toBase m
             let pars = getParameters m
-            Array.length pars = List.length argTypes &&
+            List.length pars = List.length argTypes &&
             let genericMethodDefParamTypes = solveTypes { env with typeArgs = typeParams } argTypes
-            let paramTypes = Seq.map parameterType pars
+            let paramTypes = Seq.map getType pars
             Seq.forall2 (=) genericMethodDefParamTypes paramTypes
         )
-        |> Seq.exactlyOne
+        |> List.exactlyOne
 
     TypeBuilder.GetConstructor(constructedTypeBuilder, getSystemMethod m)
 
 let getCtor env parent argTypes =
     match solveTypeCore env parent with
-    | GenericParamBuilder _ -> failwith "param builder"
+    | TypeParam _ -> failwith "TypeParam"
     | RuntimeType t ->
         let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
         t.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic, null, CC.Any, argTypes, null)
@@ -783,10 +703,15 @@ let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
     match operand with
     | OpNone -> g.Emit op
     | OpI1 n -> g.Emit(op, n)
+    | OpI2 n -> g.Emit(op, n)
     | OpI4 n -> g.Emit(op, n)
+    | OpI8 n -> g.Emit(op, n)
+    | OpF4 n -> g.Emit(op, n)
+    | OpF8 n -> g.Emit(op, n)
+    | OpString s -> g.Emit(op, s)
     | OpType t -> g.Emit(op, solveType (envOfTypeBuilder mVarMap dt) t)
     | OpField(parent, name) -> g.Emit(op, getField (envOfTypeBuilder mVarMap dt) parent name)
-    | OpCall(parent, name, mTypeArgs, argTypes) -> g.Emit(op, getMethod (envOfTypeBuilder mVarMap dt) parent name mTypeArgs argTypes)
+    | OpMethod(parent, name, mTypeArgs, argTypes) -> g.Emit(op, getMethod (envOfTypeBuilder mVarMap dt) parent name mTypeArgs argTypes)
     | OpCtor(parent, argTypes) -> g.Emit(op, getCtor (envOfTypeBuilder mVarMap dt) parent argTypes)
 
 let emitMethod g mVarMap dt (MethodBody instrs) =
@@ -803,10 +728,30 @@ let emit map =
 
 let createTypes map = for { t = t } in values map do t.CreateType() |> ignore
 
-let emitIL m (IL ds) =
+let emitIL m { topDefs = ds } =
     let map = HashMap()
     for d in ds do DefineTypes.topDef m map d
     defineTypeParams map
     defineMembers map
     emit map
     createTypes map
+
+module PreDefinedTypes =
+    let int8T = typeOf<int8>
+    let int16T = typeOf<int16>
+    let int32T = typeOf<int32>
+    let int64T = typeOf<int64>
+    
+    let uint8T = typeOf<uint8>
+    let uint16T = typeOf<uint16>
+    let uint32T = typeOf<uint32>
+    let uint64T = typeOf<uint64>
+    
+    let float32T = typeOf<single>
+    let float64T = typeOf<double>
+
+    let voidT = typeOfT typeof<System.Void>
+    let boolT = typeOf<bool>
+    let charT = typeOf<Char>
+    let stringT = typeOf<string>
+    let objectT = typeOf<obj>

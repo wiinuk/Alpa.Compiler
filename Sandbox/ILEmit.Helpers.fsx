@@ -1,10 +1,10 @@
 ﻿module internal ILEmit.Helpers
-#load "ILEmit.fsx"
+#load "ILEmit.Parser.fsx"
 
 open ILEmit
 open System
 
-let newTypeVar name = Var name
+let newTypeVar name = name
 
 let sysTypeValidate (t: Type) =
     if t.IsNested then failwithf "%A is GenericParameter." t
@@ -39,6 +39,16 @@ let typeDef = {
     impls = []
     members = []
 }
+
+let typeD name typeParams parent impls ms =
+    let def = {
+        kind = None
+        typeParams = typeParams
+        parent = parent
+        impls = impls
+        members = ms
+    }
+    TopTypeDef(name, def)
 
 let type0D name parent impls members =
     TopTypeDef(name, {
@@ -82,6 +92,8 @@ let abstract2T name v1 v2 f =
 let param n t = Parameter(Some n, t)
 let paramT t = Parameter(None, t)
 
+let methodD name mTypeParams parameters returnType instrs =
+    MethodDef(None, MethodInfo(MethodHead(name, mTypeParams, parameters, paramT returnType), MethodBody instrs))
 let methodHead0 name pars retT = MethodHead(name, [], pars, Parameter(None, retT))
 let methodInfo0 name pars retT body = MethodInfo(methodHead0 name pars retT, body)
 
@@ -142,8 +154,8 @@ module SimpleInstructions =
     let stsfld t n = Instr("", O.Stsfld, OpField(t, n))
     let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
 
-    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpCall(parent, name, typeArgs, argTypes))
-    let call thisType name typeArgs argTypes = Instr("", O.Call, OpCall(thisType, name, typeArgs, argTypes))
+    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpMethod(parent, name, typeArgs, argTypes))
+    let call thisType name typeArgs argTypes = Instr("", O.Call, OpMethod(thisType, name, typeArgs, argTypes))
     let call_static thisType name typeArgs argTypes = call thisType name typeArgs argTypes
 
 

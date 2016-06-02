@@ -373,8 +373,7 @@ type Buffer<'T> = {
 }
 module Buffer =
     let newBuffer() = { items = Array.zeroCreate 4; size = 0 }
-
-    let toSeq xs = seq { for i in 0..xs.size-1 -> xs.items.[i] }
+    
     let add xs x =            
         let extend xs =
             let ys = Array.zeroCreate(min 2146435071 (xs.items.Length * 2))
@@ -388,6 +387,20 @@ module Buffer =
         xs.size <- size+1
 
     let get xs i = if 0 <= i && i < xs.size then Some xs.items.[i] else None
+
+    let toSeq xs = seq { for i in 0..xs.size-1 -> xs.items.[i] }
+    let ofSeq xs =
+        match xs : 'a seq with
+        | :? array<'a> as xs ->
+            {
+                items = Array.copy xs
+                size = xs.Length
+            }
+
+        | _ ->
+            let b = newBuffer()
+            for x in xs do add b x
+            b
 
 type CharStream = {
     buffer: nativeptr<char>

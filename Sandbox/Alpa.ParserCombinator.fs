@@ -53,6 +53,20 @@ let (.>>.) (Parser p1) (Parser p2) = fun xs ->
         else
             Reply((r1.Value, r2.Value))
 
+let optMap defaultValue map (Parser p) xs =
+    let i = xs.Index
+    let u = xs.UserState
+    let r = p xs
+    if r.Status = Ok then Reply(map r.Value)
+    else
+        xs.Index <- i
+        xs.UserState <- u
+        Reply defaultValue
+
+let optDefault defaultValue p = optMap defaultValue id p
+let optBool p = optMap false (fun _ -> true) p
+let opt p = optMap None Some p
+
 let pipe2 (Parser p1) (Parser p2) f =
     let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt f
     fun xs ->
@@ -118,7 +132,7 @@ let pipe5(Parser p1, Parser p2, Parser p3, Parser p4, Parser p5, f) =
                             Reply(f.Invoke(r1.Value, r2.Value, r3.Value, r4.Value, r5.Value))
     p
          
-let many (Parser p) =
+let manyRev (Parser p) =
     let p xs =
         let rec aux rs =
             let i = xs.Index
@@ -130,14 +144,16 @@ let many (Parser p) =
             else
                 xs.Index <- i
                 xs.UserState <- u
-                List.rev rs
+                rs
 
         Reply(aux [])
     p
 
+let many p = manyRev p |>> List.rev
 let many1 p = p .>>. many p
 
 let separateBy1 p sep = p .>>. many (sep .>>. p)
+let sepBy p sep = opt (p .>>. many (sep >>. p)) |>> function None -> [] | Some(x,xs) -> x::xs
 let sepBy1 p sep = p .>>. many (sep >>. p)
 
 let chainL1 (Parser p) (Parser op) f =
@@ -193,16 +209,6 @@ let choice = function
     
 let (<|>) l r = choice [l; r]
 
-let opt (Parser p) xs =
-    let i = xs.Index
-    let u = xs.UserState
-    let r = p xs
-    if r.Status = Ok then Reply(Some r.Value)
-    else
-        xs.Index <- i
-        xs.UserState <- u
-        Reply None
-
 let createParserForwardedToRef() =
     let r = ref <| fun _ -> failwith "not initialized"
     (fun xs -> !r xs), r
@@ -218,10 +224,24 @@ let satisfyE p e =
             else e
         else e
 
+let satisfyMapE p f e =
+    let e = Reply((), e)
+    fun xs ->
+        if xs.Index < xs.Items.size then
+            let t = xs.Items.items.[xs.Index]
+            if p t then
+                xs.Index <- xs.Index + 1
+                Reply(f t)
+            else e
+        else e
+
 let specialE r e = satisfyE (Token.isR r) e
 let operatorE e = satisfyE Token.isOp e
 let identifierE e = satisfyE Token.isId e
 let constantE e = satisfyE Token.isConstant e
+
+let getUserState xs = Reply xs.UserState
+let updateState f xs = xs.UserState <- f xs.UserState; Reply(())
 
 let eof xs =
     if xs.Items.size <= xs.Index then Reply(())

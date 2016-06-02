@@ -4,6 +4,9 @@ type Class1() =
     member this.X = "F#"
 
 module X = 
+    let f1 x xs = List.find (fun x' -> x = x') xs
+    let f2 x xs = List.find ((=) x) xs
+
     let x0 = 0I
     let x1 = 1I
     let x10 = 10I
