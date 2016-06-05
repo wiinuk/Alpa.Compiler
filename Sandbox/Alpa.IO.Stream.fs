@@ -13,7 +13,7 @@ module Stream =
     let canRead xs = xs.Items.size <= xs.Index
     let get xs i = xs.Items.items.[xs.Index + i]
 
-type ReplyError = AnyError = 0 | RequireEof = -2
+type ReplyError = AnyError = 0 | RequireEof = -2 | RequireAnyToken = -3
 type ReplyStatus = Ok = 1 | Error = 0
 
 [<Struct>]

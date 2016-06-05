@@ -240,6 +240,13 @@ let operatorE e = satisfyE Token.isOp e
 let identifierE e = satisfyE Token.isId e
 let constantE e = satisfyE Token.isConstant e
 
+let peekToken xs =
+    if xs.Index < xs.Items.size then
+        let t = xs.Items.items.[xs.Index]
+        Reply t
+    else
+        Reply((), (), ReplyError.RequireAnyToken)
+
 let getUserState xs = Reply xs.UserState
 let updateState f xs = xs.UserState <- f xs.UserState; Reply(())
 

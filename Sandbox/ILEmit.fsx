@@ -110,8 +110,8 @@ type ModuleMember =
     | ModuleLiteralDef of name: string * TypeSpec * Literal
 
 type TopDef =
-    | TopTypeDef of name: string * TypeDef
-    | TopModuleDef of name: MethodName * ModuleMember list
+    | TopTypeDef of pathRev: (string * string list) * TypeDef
+    | TopModuleDef of pathRev: (string * string list) * ModuleMember list
 
 type AssemblyDef = string
 type IL = { topDefs: TopDef list }
@@ -266,7 +266,8 @@ let ctorHead { path = path; varMap = varMap } pars =
 let addTypeName (FullName(name, nestersRev, nsRev, asmName)) typeName =
     FullName(typeName, name::nestersRev, nsRev, asmName)
 
-let ofTypeName typeName = FullName(typeName, [], [], None)
+let ofTypeName (typeName, nsRev) = FullName(typeName, [], nsRev, None)
+let getName (FullName(name=name)) = name
 
 module DefineTypes =
     let newILTypeBuilder d t path map = {
@@ -280,12 +281,13 @@ module DefineTypes =
         fmap = HashMap()
     }
 
-    let rec module' defineType (FullName(name=name) as path) map ms =
-        let t = defineType(name, T.Public ||| T.Abstract ||| T.Sealed)
-        add map path <| newILTypeBuilder (Choice2Of2 ms) t path map
-        for m in ms do moduleMember path t map m
+    let rec module'(defineType, toName, a, fullName, map, ms) =
+        let a = a ||| T.Abstract ||| T.Sealed
+        let t = defineType(toName fullName, a)
+        add map fullName <| newILTypeBuilder (Choice2Of2 ms) t fullName map
+        for m in ms do moduleMember fullName t map m
 
-    and type' defineType (FullName(name=name) as path) map ({ kind = kind; members = members } as d) =
+    and type'(defineType, toName, a, fullName, map, ({ kind = kind; members = members } as d)) =
         let isInterfaceMember = function 
             | Literal _
             | Field _
@@ -303,27 +305,28 @@ module DefineTypes =
                 | _ when List.forall isInterfaceMember members -> Interface
                 | _ -> Sealed
 
-        let a =
+        let a = 
             match kind with
             | Interface -> T.Abstract ||| T.Interface
             | Abstract -> T.Abstract
             | Sealed -> T.Sealed
             | Open -> T.Class
+            ||| a
+            ||| T.BeforeFieldInit
 
-        let a = a ||| T.Public ||| T.BeforeFieldInit
-        let t = defineType(name, a)
-        add map path <| newILTypeBuilder (Choice1Of2 d) t path map
+        let t = defineType(toName fullName, a)
+        add map fullName <| newILTypeBuilder (Choice1Of2 d) t fullName map
 
     and moduleMember path (t: TypeBuilder) map = function
         | ModuleMethodDef _
         | ModuleValDef _ 
         | ModuleLiteralDef _ -> ()
-        | ModuleModuleDef(name, ms) -> module' t.DefineNestedType (addTypeName path name) map ms
-        | ModuleTypeDef(name, td) -> type' t.DefineNestedType (addTypeName path name) map td
+        | ModuleModuleDef(name, ms) -> module'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, map, ms)
+        | ModuleTypeDef(name, td) -> type'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, map, td)
 
     let topDef (m: ModuleBuilder) map = function
-        | TopModuleDef(name, ms) -> module' m.DefineType (ofTypeName name) map ms
-        | TopTypeDef(name, td) -> type' m.DefineType (ofTypeName name) map td
+        | TopModuleDef(path, ms) -> module'(m.DefineType, toTypeName, T.Public, ofTypeName path, map, ms)
+        | TopTypeDef(name, td) -> type'(m.DefineType, toTypeName, T.Public, ofTypeName name, map, td)
 
 let defineTypeParams map =
     for ({ d = d; t = t } as ti) in values map do
@@ -524,14 +527,13 @@ let typeOf<'a> = typeOfT typeof<'a>
 
 let getField env parent name =
     match solveTypeCore env parent with
+    | TypeParam _ -> failwith "getField: TypeParam"
     | RuntimeType t -> t.GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
     | Builder { fmap = fmap } -> upcast get fmap name
     | InstantiationType(tb, Some { fmap = fmap }, _) -> TypeBuilder.GetField(tb, get fmap name)
     | InstantiationType(tb, None, _) ->
         let fd = tb.GetGenericTypeDefinition().GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
         TypeBuilder.GetField(tb, fd)
-
-    | TypeParam _ -> failwith "getField: TypeParam"
 
 type IsMethodBase<'m> = {
     getMTypeParams: 'm -> SolvedType list
@@ -600,6 +602,36 @@ let isTypeOfTb = {
     getTypeParams = fun { varMap = varMap } -> toTypeParams varMap
 }
 
+typedefof<_*_>.Module.ResolveMethod(typeof<int*char>.GetConstructors().[0].MetadataToken, [| typeof<int>; typeof<char> |], null)
+
+/// require: closeType.GetType().Name = "RuntimeType" && closeType.IsGenericType
+let getMemberOfRuntimeOpenType getMembers resolveMember (closeType: Type) (memberOfOpenType: Reflection.MemberInfo) =
+    let openTypeParemeters = closeType.GetGenericTypeDefinition().GetGenericArguments()
+    let methodGerenicArgs =
+        match memberOfOpenType with 
+        | :? Reflection.MethodBase as m when m.IsGenericMethod -> m.GetGenericArguments()
+        | _ -> Type.EmptyTypes
+
+    let mOpenTypeMd = memberOfOpenType.MetadataToken
+    getMembers closeType (B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance ||| B.Static)
+    |> Seq.find (fun (m: #Reflection.MemberInfo) ->
+        m.Name = memberOfOpenType.Name &&
+        let m' : Reflection.MemberInfo = resolveMember m.Module m.MetadataToken openTypeParemeters methodGerenicArgs
+        m'.MetadataToken = mOpenTypeMd
+    )
+
+let getMethodOfRuntimeOpenType closeType (methodOfOpenType: Reflection.MethodInfo) =
+    getMemberOfRuntimeOpenType
+        (fun t b -> t.GetMethods b)
+        (fun m md tps mtps -> upcast m.ResolveMethod(md, tps, mtps))
+        closeType methodOfOpenType
+
+let getCtorOfRuntimeOpenType closeType (ctorOfOpenType: Reflection.ConstructorInfo) =
+    getMemberOfRuntimeOpenType
+        (fun t b -> t.GetConstructors b)
+        (fun m md tps mtps -> upcast m.ResolveMethod(md, tps, mtps))
+        closeType ctorOfOpenType
+
 let getGenericMethod
     { getMethodsOfName = getMethodsOfName; getTypeParams = getTypeParams }
     { getSystemMethod = getSystemMethod
@@ -634,10 +666,17 @@ let getMethod env parent name mTypeArgs argTypes =
     match solveTypeCore env parent with
     | TypeParam _ -> failwith "TypeParam"
     | RuntimeType t ->
-        let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-        t.GetMethod(name, a, null, c, argTypes, null)
+        if t.IsGenericType then
+            let openType = t.GetGenericTypeDefinition()
+            let typeParams = openType.GetGenericArguments()
+            let env = { env with typeArgs = Seq.map RuntimeType typeParams |> Seq.toList }
+            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+            let methodOfOpenType = openType.GetMethod(name, B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance, null, argTypes, null)
+            getMethodOfRuntimeOpenType t methodOfOpenType
+        else
+            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+            t.GetMethod(name, a, null, c, argTypes, null)
 
-    // fun Make(T1,T2)(T1,T2) : Tuple(T1,T2) = ...
     | Builder { mmap = mmap } ->
         let { mb = mb } =
             get mmap name
@@ -681,8 +720,16 @@ let getCtor env parent argTypes =
     match solveTypeCore env parent with
     | TypeParam _ -> failwith "TypeParam"
     | RuntimeType t ->
-        let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-        t.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance, null, CC.Any, argTypes, null)
+        if t.IsGenericType then
+            let openType = t.GetGenericTypeDefinition()
+            let typeParams = openType.GetGenericArguments()
+            let env = { env with typeArgs = Seq.map RuntimeType typeParams |> Seq.toList }
+            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+            let ctorOfOpenType = openType.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance, null, argTypes, null)
+            getCtorOfRuntimeOpenType t ctorOfOpenType
+        else
+            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+            t.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance, null, CC.Any, argTypes, null)
 
     | Builder { cmap = cmap } ->
         let argTypes = solveTypes env argTypes

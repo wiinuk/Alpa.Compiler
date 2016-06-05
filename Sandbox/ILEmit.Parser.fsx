@@ -8,7 +8,7 @@ open Alpa.IO
 open ILEmit
 open RegexLexer
 
-type token =
+type TokenKind =
     /// "("
     | LParen
     /// ")"
@@ -84,7 +84,9 @@ type token =
     | LFloat64 of double
     | QString of string
     | SQString of string
-    
+
+type Token = Source<TokenKind>
+
 type PrimNumericTypes =
     | I1
     | I2
@@ -101,10 +103,13 @@ type OperandType =
     | OpNumericType of PrimNumericTypes
     | OpStringType
 
-type Errors =
-    | ScanError of index: int
+type ScanErrors =
+    | IntegerOverflow
 
-    | RequireToken of token
+type Errors =
+    | ScanError of index: int * ScanErrors option
+
+    | RequireToken of TokenKind
     | RequireInt32Token
     | RequireLiteralToken
     | RequireIdToken
@@ -221,31 +226,32 @@ let escape s =
 
 let lexData = {
     trivia = @"\s+|//[^\n]*"
-    keyword = table "keyword" (Array.append keyword opTable)
+    keyword = makeTokenOfTable "keyword" (Array.append keyword opTable)
     custom =
     [|
-        custom "id" @"[a-zA-Z_\p{Ll}\p{Lu}\p{Lt}\p{Lo}\p{Lm}][\w`]*" Id
-        table "delimiter" delimiter
-        custom "floating" floatingR (double >> LFloat64)
-
-        custom "integer" @"0[xX][0-9a-fA-F]+|[+-]?[0-9]+" (
+        makeToken "id" @"[a-zA-Z_\p{Ll}\p{Lu}\p{Lt}\p{Lo}\p{Lm}][\w`]*" Id
+        makeTokenOfTable "delimiter" delimiter
+        makeToken "floating" floatingR (double >> LFloat64)
+        makeTokenOrError "integer" @"0[xX][0-9a-fA-F]+|[+-]?[0-9]+" (
             let format = System.Globalization.NumberFormatInfo.InvariantInfo
             fun s ->
                 let integer isDecimal s style = 
                     let mutable i = 0
-                    if Int32.TryParse(s, style, format, &i) then LInt32(isDecimal, i)
-                    else LInt64(isDecimal, Int64.Parse(s, style))
+                    let mutable n = 0L
+                    if Int32.TryParse(s, style, format, &i) then ValueOk <| LInt32(isDecimal, i)
+                    elif Int64.TryParse(s, style, format, &n) then ValueOk <| LInt64(isDecimal, n)
+                    else ValueError IntegerOverflow
 
                 if 2 <= s.Length && s.[0] = '0' && (let c = s.[1] in c = 'x' || c = 'X')
                 then integer true s.[2..] System.Globalization.NumberStyles.AllowHexSpecifier
                 else integer false s System.Globalization.NumberStyles.AllowLeadingSign
         )
-        custom "qstring" """("([^"\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*")""" <| fun s ->
+        makeToken "qstring" """("([^"\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*")""" <| fun s ->
             let s = s.[1..s.Length-2]
             if String.forall ((<>) '\\') s then QString s
             else QString <| escape s
 
-        custom "sqstring" """('([^'\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*')""" <| fun s ->
+        makeToken "sqstring" """('([^'\\]|\\([rntv\\"']|u[0-9a-fA-F]{4}))*')""" <| fun s ->
             let s = s.[1..s.Length-2]
             if String.forall ((<>) '\\') s then SQString s
             else SQString <| escape s
@@ -254,13 +260,64 @@ let lexData = {
 
 let lex = lexer lexData
 
+module SourceParsers =
+    open RegexLexer.Source
+
+    let manyRev1 p = pipe2 p (manyRev (p |>> value)) <| fun x xs -> map (fun x -> x::xs) x
+    let many1 p = pipe2 p (many (p |>> value)) <| fun x xs -> map (fun x -> x,xs) x
+
+    let satisfyE p e = satisfyE (value >> p) e
+    let satisfyMapE p m e = satisfyMapE (value >> p) (map m) e
+    let sepBy p sep = sepBy (p |>> value) (sep |>> value) |>> VirtualSource
+    let sepBy1 p sep = sepBy1 (p |>> value) (sep |>> value) |>> VirtualSource
+    let pipe2 p1 p2 f =
+        let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt f
+        pipe2 p1 p2 <| fun x1 x2 -> range x1 (f.Invoke(value x1, value x2)) x2
+
+    let pipe3 p1 p2 p3 f =
+        let f = OptimizedClosures.FSharpFunc<_,_,_,_>.Adapt f
+        pipe3 p1 p2 p3 <| fun x1 x2 x3 ->
+            let l = startPos x1 <<- startPos x2 <<- startPos x3
+            let r = endPos x1 ->> endPos x2 ->> endPos x3
+            Source l (f.Invoke(value x1, value x2, value x3)) r
+
+    let pipe4 p1 p2 p3 p4 f =
+        let f = OptimizedClosures.FSharpFunc<_,_,_,_,_>.Adapt f
+        pipe4 p1 p2 p3 p4 <| fun x1 x2 x3 x4 ->
+            let l = startPos x1 <<- startPos x2 <<- startPos x3 <<- startPos x4
+            let r = endPos x1 ->> endPos x2 ->> endPos x3 ->> endPos x4
+            Source l (f.Invoke(value x1, value x2, value x3, value x4)) r
+
+    let pipe5(p1, p2, p3, p4, p5, f) =
+        let f = OptimizedClosures.FSharpFunc<_,_,_,_,_,_>.Adapt f
+        pipe5(p1, p2, p3, p4, p5, fun x1 x2 x3 x4 x5 ->
+            let l = startPos x1 <<- startPos x2 <<- startPos x3 <<- startPos x4 <<- startPos x5
+            let r = endPos x1 ->> endPos x2 ->> endPos x3 ->> endPos x4 ->> endPos x5
+            Source l (f.Invoke(value x1, value x2, value x3, value x4, value x5)) r
+        )
+
+    let opt p = opt p |>> function None -> VirtualSource None | Some x -> map Some x
+    let (|>>) p f = p |>> map f
+
+    let optDefault defaultValue p = optDefault (VirtualSource defaultValue) p
+    let optBool p = optMap (VirtualSource false) (fun x -> map (fun _ -> true) x) p
+
+    // deriving parsers
+
+    let (>>.) p1 p2 = pipe2 p1 p2 <| fun _ x -> x
+    let (.>>.) p1 p2 = pipe2 p1 p2 <| fun x1 x2 -> x1, x2
+    let between openP closeP p = pipe3 openP p closeP <| fun _ x _ -> x
+    let manyRev p = opt (manyRev1 p) |>> function None -> [] | Some xs -> xs
+
+open SourceParsers
+
 let (!) symbol = satisfyE ((=) symbol) <| RequireToken symbol
 
 let tInt32 = satisfyMapE (function LInt32 _ -> true | _ -> false) (function LInt32(_,x) -> x | _ -> 0) RequireInt32Token
 
 let tId = satisfyMapE (function Id _ -> true | _ -> false) (function Id x -> x | _ -> "") RequireIdToken
 
-let tOp = satisfyMapE (function Op _ -> true | _ -> false) (function Op x -> x | _ -> Unchecked.defaultof<_>) RequireOpToken
+let tOp = satisfyMapE (function Op _ -> true | _ -> false) (function Op x -> x | _ -> O.Nop) RequireOpToken
 
 /// ex: Int32, List`2, 'type'
 let name =
@@ -272,36 +329,38 @@ let name =
 let typeKind =
     satisfyMapE
         (function
-            | token.Abstract
-            | token.Interface
-            | token.Open
-            | token.Sealed -> true
+            | TokenKind.Abstract
+            | TokenKind.Interface
+            | TokenKind.Open
+            | TokenKind.Sealed -> true
             | _ -> false
         )
         (function
-            | token.Abstract -> TypeKind.Abstract
-            | token.Interface -> TypeKind.Interface
-            | token.Open -> TypeKind.Open
-            | token.Sealed -> TypeKind.Sealed
+            | TokenKind.Abstract -> TypeKind.Abstract
+            | TokenKind.Interface -> TypeKind.Interface
+            | TokenKind.Open -> TypeKind.Open
+            | TokenKind.Sealed -> TypeKind.Sealed
             | _ -> TypeKind.Sealed
         )
         RequireTypeKind
 
 /// ($p, ...) | ()
-let tupleLike0 p = !LParen >>. sepBy p !Comma .>> !RParen
+let tupleLike0 p = between !LParen !RParen (sepBy p !Comma)
 /// ($p, ...)
-let tupleLike1 p = !LParen >>. sepBy1 p !Comma .>> !RParen
+let tupleLike1 p = between !LParen !RParen (sepBy1 p !Comma)
 /// ($p, ...) | $p | ()
 let tupleOrValueLike0 p = tupleLike0 p <|> (p |>> List.singleton)
 /// ($p, ...) | $p
 let tupleOrValueLike1 p = tupleLike1 p <|> (p |>> fun x -> x, [])
 
-let assemblyName = !LSBraket >>. name .>> !RSBraket
+let assemblyName = between !LSBraket !RSBraket name
 let namespaceRev = manyRev (name .>> !Dot)
 let nestersRev = manyRev (name .>> !Plus)
 
 /// ex: [mscorlib]System.Diagnostics.Stopwatch+InternalTimers+LowTimer
 let fullName = pipe4 (opt assemblyName) namespaceRev nestersRev name <| fun asmName nsRev nestRev name -> FullName(name, nestRev, nsRev, asmName)
+
+let pathRev = pipe2 namespaceRev name <| fun ns n -> n, ns
 
 open PreDefinedTypes
 let preDefinedTypeName =
@@ -365,10 +424,12 @@ do
 let inherits = !LessThanColon >>. tupleOrValueLike1 typeSpec
 
 #nowarn "9"
-let reinterpret<'f,'t when 'f : unmanaged and 't : unmanaged> (x: 'f) =
-    let p = NativeInterop.NativePtr.stackalloc 1
-    NativeInterop.NativePtr.write p x
-    NativeInterop.NativePtr.read<'t>(NativeInterop.NativePtr.ofNativeInt(NativeInterop.NativePtr.toNativeInt p))
+module Unsafe =
+    module P = NativeInterop.NativePtr
+    let reinterpret<'f,'t when 'f : unmanaged and 't : unmanaged> (x: 'f) =
+        let p = P.stackalloc 1
+        P.write p x
+        P.read<'t>(P.ofNativeInt(P.toNativeInt p))
 
 let unreachable<'a> : 'a = failwith "unreachable"
 
@@ -396,7 +457,7 @@ let literal =
     
     let numericTypeSpecifier = optDefault None (!Colon >>. numericTypeName)
 
-    let int32BitsToSingle x = reinterpret<int32,float32> x
+    let int32BitsToSingle x = Unsafe.reinterpret<int32,float32> x
 
     let convInt32OrRaise isDecimal n = function
         | None -> Literal.I4 n
@@ -448,8 +509,10 @@ let literal =
         if r1.Status = Primitives.Ok then
             let r2 = numericTypeSpecifier xs
             if r2.Status = Primitives.Ok then
-                try Reply(convOrRaise r1.Value r2.Value) with
-                | :? OverflowException -> Reply((), NumericRange)
+                let r1 = r1.Value
+                let r2 = r2.Value
+                try Reply(Source.range r1 (convOrRaise (Source.value r1) (Source.value r2)) r2) 
+                with :? OverflowException -> Reply((), NumericRange)
 
             else Reply((), r2.Error)
         else Reply((), r1.Error)
@@ -553,9 +616,10 @@ let opMethod =
 let opMethodBase = opMethod <|> opCtor
 let instr =
     let label = optDefault "" (tId .>> !Colon)
+    let opNone = Reply <| Source.VirtualSource OpNone
     let operand t xs =
         match t with
-        | OT.InlineNone -> Reply OpNone
+        | OT.InlineNone -> opNone
         | OT.ShortInlineI -> opI1 xs
         | OT.ShortInlineVar -> opI1 xs
         | OT.InlineVar -> opI2 xs
@@ -583,10 +647,17 @@ let instr =
             if r2.Status <> Primitives.Ok then Reply((), r2.Error)
             else
                 let op = r2.Value
-                let r3 = operand op.OperandType xs
+                let r3 = operand (Source.value op).OperandType xs
                 if r3.Status <> Primitives.Ok then Reply((), r3.Error)
                 else
-                    Reply(Instr(r1.Value, op, r3.Value))
+                    let r1 = r1.Value
+                    let r2 = r2.Value
+                    let r3 = r3.Value
+                    let l = Source.(<<-) (Source.(<<-) (Source.startPos r1) (Source.startPos r2)) (Source.startPos r3)
+                    let r = Source.(->>) (Source.(->>) (Source.endPos r1) (Source.endPos r2)) (Source.endPos r3)
+
+                    let instr = Instr(Source.value r1, Source.value op, Source.value  r3)
+                    Reply(Source.Source l instr r)
     p
 
 let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
@@ -615,7 +686,7 @@ let typeMember =
 let members = sepBy typeMember !Semicolon
 
 /// ex: type open List`1 (T) <: [mscorlib]System.Object = ...
-let typeDef ctor =
+let typeDef name ctor =
     let make _ k n ps (is, ms) =
         let parent, impls =
             match is with
@@ -637,7 +708,7 @@ let moduleModuleDef, moduleDefRef = createParserForwardedToRef()
 let moduleMember =
     choice [
         !Fun >>. methodInfo |>> ModuleMethodDef
-        typeDef ModuleTypeDef
+        typeDef name ModuleTypeDef
         moduleModuleDef
         pipe5(!Val, optBool !Mutable, name, !Colon, typeSpec, fun _ m n _ t -> ModuleValDef(m, n, t))
         pipe5(!Val, name, !Colon, typeSpec, (!Equals >>. literal), fun _ n _ t l -> ModuleLiteralDef(n, t, l))
@@ -647,19 +718,19 @@ let moduleMembers = sepBy moduleMember !Semicolon
 
 moduleDefRef := pipe5(!Module, name, !Equals, moduleMembers, !DSemicolon, fun _ n _ ms _ -> ModuleModuleDef(n, ms))
 
-let topModuleDef = pipe4 !Module name !Equals moduleMembers <| fun _ n _ ms -> TopModuleDef(n, ms)
+let topModuleDef = pipe4 !Module pathRev !Equals moduleMembers <| fun _ n _ ms -> TopModuleDef(n, ms)
 
-/// ex: type A =;; module B =;;
-let top = sepBy (typeDef TopTypeDef <|> topModuleDef) !DSemicolon |>> fun ds -> { topDefs = ds }
+/// ex: type Ns.A =;; module B =;;
+let top = sepBy (typeDef pathRev TopTypeDef <|> topModuleDef) !DSemicolon |>> fun ds -> { topDefs = ds }
 let initialState = ()
 
 let parseWith p source =
     match lex source with
-    | Error i -> Error(ScanError i, None)
+    | Error(i, e, lastT) -> Error(ScanError(i, e), lastT)
     | Ok ts ->
         let ts = Buffer.ofSeq ts
         match runWithState (p .>> eof) initialState ts with
-        | Success x -> Ok x
+        | Success x -> Ok <| Source.value x
         | Failure(e,_,lastT,_) -> Error(e, lastT)
 
 let parse source = parseWith top source

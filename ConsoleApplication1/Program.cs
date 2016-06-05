@@ -1,4 +1,75 @@
 ﻿using System;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using static System.Console;
+
+class MyList<T>
+{
+    public void Add(object x) => WriteLine("Add(object)");
+    public void Add(T x) => WriteLine("Add(T)");
+}
+
+static class Program
+{
+    static MethodBase ResolveMethodOfOpenType(Type closeType, MethodInfo methodOfOpenType, MethodInfo methodOfCloseType) =>
+        methodOfCloseType.Module.ResolveMethod(
+            methodOfCloseType.MetadataToken,
+            methodOfCloseType.DeclaringType.GetGenericTypeDefinition().GetGenericArguments(),
+            methodOfOpenType.GetGenericArguments());
+
+    static MethodInfo GetMethod(Type closeType, MethodInfo methodOfOpenType) =>
+        closeType
+            .GetMethods()
+            .Single(m =>
+                m.Name == methodOfOpenType.Name &&
+                ResolveMethodOfOpenType(closeType, methodOfOpenType, m) == methodOfOpenType);
+
+    static MethodInfo GetMethod<T>(MyList<T> myList) => ((Action<object>)myList.Add).Method;
+    static MethodInfo GetGenericMethod<T>(MyList<T> myList) => ((Action<T>)myList.Add).Method;
+    static MethodInfo GetAddMethod<T>()
+    {
+        Expression<Action<MyList<T>>> lambda = x => x.Add(null);
+        return ((MethodCallExpression)lambda.Body).Method;
+    }
+    static MethodInfo GetGemericAddMethod<T>()
+    {
+        Expression<Action<MyList<T>, T>> lambda = (x, v) => x.Add(v);
+        return ((MethodCallExpression)lambda.Body).Method;
+    }
+
+    static void Palette()
+    {
+        var addString = GetMethod(typeof(MyList<object>), typeof(MyList<>).GetMethod("Add", new[] { typeof(object) }));
+        var addT = GetMethod(typeof(MyList<object>), typeof(MyList<>).GetMethod("Add", new[] { typeof(MyList<>).GetGenericArguments()[0] }));
+
+        var adds = typeof(MyList<object>).GetMethods().Where(m => m.Name == "Add").ToList();
+        addString != addT &&
+            adds.Count == 2 &&
+            adds.Contains(addString) &&
+            adds.Contains(addT)
+
+        adds.Contains(GetAddMethod<object>())
+            adds.Contains(GetGemericAddMethod<object>())
+           // GetMethod (MyList<T> myList) => ((Action<object>)myList.Add(null))
+           var myList = new MyList<object>();
+        var b = GetMethod(myList) == GetGenericMethod(myList);
+        MulticastDelegate.CreateDelegate()
+        var listOfObject = new MyList<object>();
+        listOfObject.Add(null);
+
+        var listOfInt = new MyList<int>();
+        listOfInt.Add(0);
+        typeof(MyList<object>).GetMethod("Add", new[] { typeof(object) });
+        typeof(MyList<object>).GetMethod("Add", new[] { typeof(MyList<>).GetGenericArguments()[0] });
+
+        //var addObject = typeof(MyList<>).GetMethod("Add", new[] { typeof(object) });
+        //typeof(MyList<object>)
+        //    .GetMethods()
+        //    .Where(m => m.Name == "Add" && m != addObject)
+        //    .Count();
+    }
+}
 
 namespace ConsoleApplication1
 {
@@ -86,7 +157,7 @@ namespace ConsoleApplication1
     {
         bool InterfaceEq<int>.Eq(int left, int right) => left == right;
     }
-    
+
     public class Any { public int Fun(int a) => a; }
 
     public sealed class Any_ClassSealed { public int Fun(int a) => a; }
@@ -110,11 +181,6 @@ namespace ConsoleApplication1
                 public Tuple<T1, T2, T3> F;
             }
         }
-    }
-
-    public static class Literal
-    {
-        public static const DateTime D = new DateTime();
     }
 
     static class Program

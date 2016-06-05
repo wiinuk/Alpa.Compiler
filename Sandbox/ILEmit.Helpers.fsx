@@ -40,7 +40,7 @@ let typeDef = {
     members = []
 }
 
-let typeD name typeParams parent impls ms =
+let typeD ns name typeParams parent impls ms =
     let def = {
         kind = None
         typeParams = typeParams
@@ -48,10 +48,10 @@ let typeD name typeParams parent impls ms =
         impls = impls
         members = ms
     }
-    TopTypeDef(name, def)
+    TopTypeDef((name, List.rev ns), def)
 
-let type0D name parent impls members =
-    TopTypeDef(name, {
+let type0D ns name parent impls members =
+    TopTypeDef((name, List.rev ns), {
         kind = None
         typeParams = []
         parent = parent
@@ -59,10 +59,10 @@ let type0D name parent impls members =
         members = members
     })
 
-let type1D name v1 f =
+let type1D ns name v1 f =
     let v1 = newTypeVar v1
     let make parent impls members =
-        TopTypeDef(name, {
+        TopTypeDef((name, List.rev ns), {
             kind = None
             typeParams = [v1]
             parent = parent
@@ -164,21 +164,58 @@ open System.IO
 open System.Reflection
 open System.Reflection.Emit
 open System.Text.RegularExpressions
+open System.Collections.Concurrent
+open System.Text
+
+let start fileName args =
+    let i =
+        ProcessStartInfo(
+            FileName = fileName,
+            Arguments = args,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = false
+        )
+    use p = new Process(StartInfo = i)
+
+    let sources = ConcurrentQueue()
+    let errors = ConcurrentQueue()
+    p.OutputDataReceived.Add <| fun e -> sources.Enqueue e.Data
+    p.ErrorDataReceived.Add <| fun e -> errors.Enqueue e.Data
+
+    p.Start() |> ignore
+
+    p.BeginOutputReadLine()
+    p.BeginErrorReadLine()
+
+    p.WaitForExit()
+    String.concat "\n" sources, String.concat "\n" errors
+
+let ilasm outPath source =
+    let path = Path.GetTempFileName()
+    File.WriteAllText(path, source, Encoding.Unicode)
+    let out = start @"C:\WINDOWS\Microsoft.NET\Framework\v4.0.30319\ilasm.exe" <| sprintf "\"%s\" /output=\"%s\" /dll /clock /nologo" path outPath
+    File.Delete path
+    out
 
 let ildasm path =
     let outPath = Path.ChangeExtension(path, ".il")
-    Process.Start(
-        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe",
+    start
+        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe" <|
         sprintf "\"%s\" /out=\"%s\" /utf8 /metadata=VALIDATE" path outPath
-    ).WaitForExit()
+    |> ignore
 
     let trivia = Regex "\s*//.*$"
     let sourceLines =
         File.ReadLines outPath
         |> Seq.map (fun l -> trivia.Replace(l, ""))
-        |> Seq.filter (not << String.IsNullOrWhiteSpace)
+        |> Seq.filter (not << System.String.IsNullOrWhiteSpace)
 
-    String.concat "\n" sourceLines
+    let src = String.concat "\n" sourceLines
+    File.Delete outPath
+    src
 
 let emitDll name il =
     let moduleName = Path.ChangeExtension(name, ".dll")
