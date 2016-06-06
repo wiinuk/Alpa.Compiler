@@ -176,8 +176,7 @@ type TopDef =
 type AssemblyDef = string
 type IL = { topDefs: TopDef list }
 
-[<Sealed; AllowNullLiteral>]
-type HashMap<'k,'v when 'k : equality>() = inherit Dictionary<'k,'v>()
+type HashMap<'k,'v when 'k : equality> = Dictionary<'k,'v>
 let add (map: HashMap<_,_>) k v = map.Add(k, v)
 let assign (map: HashMap<_,_>) k v = map.[k] <- v
 let get (map: HashMap<_,_>) k = map.[k]
@@ -217,7 +216,7 @@ type ILTypeSkeleton() =
     override __.IsCOMObjectImpl() = notimpl
     override __.GetElementType() = notimpl
     override __.HasElementTypeImpl() = notimpl
-    override __.UnderlyingSystemType = notimpl
+    // override __.UnderlyingSystemType = notimpl
 
     override __.GUID = notimpl
     override __.Assembly = notimpl
@@ -245,6 +244,7 @@ type ILTypeParameter(definition: TypeVar, builder: GenericTypeParameterBuilder) 
     inherit ILTypeSkeleton()
     member val IL = definition
     member val Builder = builder
+    override __.UnderlyingSystemType = upcast builder
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
 
@@ -271,6 +271,7 @@ and [<Sealed>] ILType(definition: Choice<TypeDef, ModuleMember list>, builder: T
     member val ConstructorMap = ResizeArray<ILConstructor>()
     member val FieldMap = HashMap<FieldSign, FieldBuilder>()
 
+    override __.UnderlyingSystemType = upcast builder
     override ti.MakeGenericType ts = upcast ILInstantiationType(builder.MakeGenericType ts, Some ti)
     override t.GetField(name, _) = upcast get t.FieldMap name
     override t.GetMethodImpl(name, bindingAttr, binder, _, types, modifiers) =
@@ -299,6 +300,7 @@ and [<Sealed>] ILInstantiationType(closeType: Type, openType: ILType option) =
         | None -> closeType.GetGenericTypeDefinition()
         | Some t -> upcast t
 
+    override __.UnderlyingSystemType = closeType
     override __.GetField(name, b) = TypeBuilder.GetField(closeType, openType.GetField(name, b))
 
     override __.GetMethodImpl(name, bindingAttr, binder, _, types, modifiers) =
@@ -399,18 +401,21 @@ and [<Sealed>] ILConstructor(declaringType: ILType, builder: ConstructorBuilder,
 type ILSymbolType (symbol) =
     inherit ILTypeSkeleton()
     member val Symbol = symbol
+    override __.UnderlyingSystemType = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
 
 type ILTypeArgumentIndex(index) =
     inherit ILTypeSkeleton()
     member val Index = index
+    override __.UnderlyingSystemType = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
 
 type ILMethodTypeArgumentIndex(index) =
     inherit ILTypeSkeleton()
     member val Index = index
+    override __.UnderlyingSystemType = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
     
@@ -446,6 +451,7 @@ type ILRuntimeGenericType(t: System.Type) =
     inherit ILTypeSkeleton()
 
     let openType = t.GetGenericTypeDefinition()
+    override __.UnderlyingSystemType = t
     override __.GetGenericTypeDefinition() = openType
     override __.GetMethodImpl(name, bindingAttr, binder, callConvention, types, modifiers) =
         openType.GetMethod(name, bindingAttr, binder, callConvention, types, modifiers)
@@ -512,8 +518,17 @@ let rec solveType ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = 
         | t -> t
 
     aux t
-    
-let solveParamTypes env pars = List.mapToArray (paramType >> ILSymbolType >> solveType env) pars
+
+let solveTypeOfSymbol env t = solveType env <| ILSymbolType t
+let getSystemType : Type -> _ = function
+    | :? ILInstantiationType
+    | :? ILRuntimeGenericType
+    | :? ILType
+    | :? ILTypeParameter as t -> t.UnderlyingSystemType
+    | t -> t
+
+let solveSystemTypeOfSymbol env t = solveTypeOfSymbol env t |> getSystemType
+let solveSystemTypeOfParams env pars = List.mapToArray (paramType >> solveSystemTypeOfSymbol env) pars
 
 let defineVarMap typeParams defineGenericParameters =
     match typeParams with
@@ -615,8 +630,8 @@ let defineMethodHead (ti: ILType) attr callconv (MethodHead(name,typeParams,pars
     let mVarMap = defineVarMap typeParams <| mDefineGP m
 
     let env = envOfTypeBuilder mVarMap ti
-    m.SetReturnType(solveType env (ILSymbolType <| paramType ret))
-    m.SetParameters(solveParamTypes env pars)
+    m.SetReturnType(solveSystemTypeOfSymbol env <| paramType ret)
+    m.SetParameters(solveSystemTypeOfParams env pars)
 
     defineParam m.DefineParameter 0 ret
     defineParams m.DefineParameter pars
@@ -645,7 +660,7 @@ let defineField (ti: ILType) (isStatic, isMutable, name, ft) =
     let a = F.Public
     let a = if isStatic then a ||| F.Static else a
     let a = if isMutable then a else a ||| F.InitOnly
-    let ft = solveType (envOfTypeBuilder emptyVarMap ti) <| ILSymbolType ft
+    let ft = solveSystemTypeOfSymbol (envOfTypeBuilder emptyVarMap ti)  ft
     let f = t.DefineField(name, ft, a)
     add fmap name f
 
@@ -653,7 +668,7 @@ let defineLiteral (ti: ILType) name ft fv =
     let t, fmap = ti.Builder, ti.FieldMap
 
     let a = F.Public ||| F.Static ||| F.Literal
-    let ft = solveType (envOfTypeBuilder emptyVarMap ti) <| ILSymbolType ft
+    let ft = solveSystemTypeOfSymbol (envOfTypeBuilder emptyVarMap ti) ft
     let f = t.DefineField(name, ft, a)
     let literalValue = function
         | I1 v -> box v
@@ -677,7 +692,7 @@ let defineLiteral (ti: ILType) name ft fv =
 let defineCtor (dt: ILType) pars body =
     let t, cmap = dt.Builder, dt.ConstructorMap 
 
-    let pts = solveParamTypes (envOfTypeBuilder emptyVarMap dt) pars
+    let pts = solveSystemTypeOfParams (envOfTypeBuilder emptyVarMap dt) pars
     let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
     defineParams c.DefineParameter pars
     addCtor cmap <| ILConstructor(dt, c, pars, body)
@@ -701,10 +716,11 @@ let defineMember dt = function
 let defineTypeDef (ti: ILType) { parent = parent; impls = impls; members = members } =
     let t = ti.Builder
     match parent with
-    | Some parent -> t.SetParent <| solveType (envOfTypeBuilder emptyVarMap ti) (ILSymbolType parent)
+    | Some parent -> t.SetParent <| solveSystemTypeOfSymbol (envOfTypeBuilder emptyVarMap ti) parent
     | _ -> ()
 
-    for impl in impls do t.AddInterfaceImplementation <| solveType (envOfTypeBuilder emptyVarMap ti) (ILSymbolType impl)
+    for impl in impls do
+        t.AddInterfaceImplementation <| solveSystemTypeOfSymbol (envOfTypeBuilder emptyVarMap ti) impl
     for m in members do defineMember ti m
 
 let defineModuleMember dt = function
@@ -804,6 +820,10 @@ let getMethod env parent name mTypeArgs argTypes =
     else
         openMethod
 
+    |> function
+        | :? ILMethod as m -> m.Builder :> Reflection.MethodInfo
+        | m -> m
+
 let getCtor env parent argTypes =
     let parent = solveType env <| ILSymbolType parent
     parent.GetConstructor(
@@ -813,6 +833,9 @@ let getCtor env parent argTypes =
         List.mapToArray (ILSymbolType >> solveType env) argTypes,
         null
     )
+    |> function
+        | :? ILConstructor as m -> m.Builder :> Reflection.ConstructorInfo
+        | m -> m
 
 let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
     match operand with
@@ -824,7 +847,7 @@ let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
     | OpF4 n -> g.Emit(op, n)
     | OpF8 n -> g.Emit(op, n)
     | OpString s -> g.Emit(op, s)
-    | OpType t -> g.Emit(op, solveType (envOfTypeBuilder mVarMap dt) <| ILSymbolType t)
+    | OpType t -> g.Emit(op, solveSystemTypeOfSymbol (envOfTypeBuilder mVarMap dt) t)
     | OpField(parent, name) -> g.Emit(op, getField (envOfTypeBuilder mVarMap dt) parent name)
     | OpMethod(parent, name, mTypeArgs, argTypes) -> g.Emit(op, getMethod (envOfTypeBuilder mVarMap dt) parent name mTypeArgs argTypes)
     | OpCtor(parent, argTypes) -> g.Emit(op, getCtor (envOfTypeBuilder mVarMap dt) parent argTypes)

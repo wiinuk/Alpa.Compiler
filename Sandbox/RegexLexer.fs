@@ -1,4 +1,4 @@
-﻿module internal RegexLexer
+﻿module RegexLexer
 
 open System.Collections.Generic
 open System.Text.RegularExpressions

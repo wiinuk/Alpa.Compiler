@@ -34,8 +34,7 @@ let ildasm name source =
             | null
             | "" -> sprintf "anon%s" <| System.DateTime.Now.ToString "yyyyMMdd_hhmmss_FFFFFFF"
             | n -> n
-
-        emitDll name il |> fst
+        emitDll name il
 
 let il ds = { topDefs = ds }
 
