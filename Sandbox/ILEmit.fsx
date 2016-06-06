@@ -1,4 +1,5 @@
 ﻿module ILEmit
+#load "RegexLexer.fsx"
 
 open System
 open System.Collections.Generic

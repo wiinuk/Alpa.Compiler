@@ -1,4 +1,4 @@
-﻿module internal ILEmit.Helpers
+﻿module ILEmit.Helpers
 #load "ILEmit.Parser.fsx"
 
 open ILEmit

@@ -86,6 +86,7 @@
     <None Include="ILEmit.Test.fsx" />
     <None Include="RegexLexer.fsx" />
     <None Include="ILEmit.Parser.Test.fsx" />
+    <None Include="ILEmit.Lexer.fsx" />
     <None Include="ILEmit.Parser.fsx" />
   </ItemGroup>
   <ItemGroup>
