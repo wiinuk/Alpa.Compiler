@@ -189,10 +189,15 @@ let emptyVarMap = []
 let notimpl<'a> : 'a = raise <| System.NotImplementedException()
 
 [<AbstractClass>]
-type ILTypeSkeleton() =
+type ILTypeSkeleton(t: Type) =
     inherit System.Type()
 
-    // from System.Type
+    // from virtual System.Type
+    override __.IsGenericType = t.IsGenericType
+    override __.GetGenericArguments() = t.GetGenericArguments()
+    override __.GetGenericTypeDefinition() = t.GetGenericTypeDefinition()
+
+    // from abstract System.Type
     override __.GetConstructors _ = notimpl
     //override __.GetConstructorImpl(_,_,_,_,_) = notimpl
     override __.GetMethods _ = notimpl
@@ -216,14 +221,14 @@ type ILTypeSkeleton() =
     override __.IsCOMObjectImpl() = notimpl
     override __.GetElementType() = notimpl
     override __.HasElementTypeImpl() = notimpl
-    // override __.UnderlyingSystemType = notimpl
+    override __.UnderlyingSystemType = if isNull t then notimpl else t
 
-    override __.GUID = notimpl
-    override __.Assembly = notimpl
-    override __.Module = notimpl<System.Reflection.Module>
-    override __.Namespace = notimpl
-    override __.FullName = notimpl
-    override __.AssemblyQualifiedName = notimpl
+    override __.GUID = if isNull t then notimpl else t.GUID
+    override __.Assembly = if isNull t then notimpl else t.Assembly
+    override __.Module = if isNull t then notimpl else t.Module
+    override __.Namespace = if isNull t then notimpl else t.Namespace
+    override __.FullName = if isNull t then notimpl else t.FullName
+    override __.AssemblyQualifiedName = if isNull t then notimpl else t.AssemblyQualifiedName
     override __.BaseType = notimpl
 
     override __.InvokeMember(_,_,_,_,_,_,_,_) = notimpl
@@ -232,19 +237,17 @@ type ILTypeSkeleton() =
     override __.GetCustomAttributes _ = notimpl
     override __.GetCustomAttributes(_,_) = notimpl
     override __.IsDefined(_,_) = notimpl
-    override __.Name = notimpl
+    override __.Name = if isNull t then notimpl else t.Name
 
     // from System.Object
-    override __.Equals(_: obj): bool = notimpl
-    override __.GetHashCode() = notimpl
-    override x.ToString() = sprintf "%A" x
+    override l.Equals(r: obj) = obj.ReferenceEquals(l, r)
+    override __.GetHashCode() = 0
 
 [<Sealed>]
 type ILTypeParameter(definition: TypeVar, builder: GenericTypeParameterBuilder) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(builder)
     member val IL = definition
     member val Builder = builder
-    override __.UnderlyingSystemType = upcast builder
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
 
@@ -261,7 +264,7 @@ type SolveEnv = {
 and TypeMap = HashMap<FullName, ILType>
 
 and [<Sealed>] ILType(definition: Choice<TypeDef, ModuleMember list>, builder: TypeBuilder, map: TypeMap) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(builder)
 
     member __.IL = definition
     member __.Builder = builder
@@ -271,7 +274,6 @@ and [<Sealed>] ILType(definition: Choice<TypeDef, ModuleMember list>, builder: T
     member val ConstructorMap = ResizeArray<ILConstructor>()
     member val FieldMap = HashMap<FieldSign, FieldBuilder>()
 
-    override __.UnderlyingSystemType = upcast builder
     override ti.MakeGenericType ts = upcast ILInstantiationType(builder.MakeGenericType ts, Some ti)
     override t.GetField(name, _) = upcast get t.FieldMap name
     override t.GetMethodImpl(name, bindingAttr, binder, _, types, modifiers) =
@@ -293,14 +295,13 @@ and [<Sealed>] ILType(definition: Choice<TypeDef, ModuleMember list>, builder: T
         )
         
 and [<Sealed>] ILInstantiationType(closeType: Type, openType: ILType option) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(closeType)
 
     let openType =
         match openType with 
         | None -> closeType.GetGenericTypeDefinition()
         | Some t -> upcast t
-
-    override __.UnderlyingSystemType = closeType
+        
     override __.GetField(name, b) = TypeBuilder.GetField(closeType, openType.GetField(name, b))
 
     override __.GetMethodImpl(name, bindingAttr, binder, _, types, modifiers) =
@@ -399,23 +400,20 @@ and [<Sealed>] ILConstructor(declaringType: ILType, builder: ConstructorBuilder,
     override x.ToString() = sprintf "%A" x
 
 type ILSymbolType (symbol) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(null)
     member val Symbol = symbol
-    override __.UnderlyingSystemType = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
 
 type ILTypeArgumentIndex(index) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(null)
     member val Index = index
-    override __.UnderlyingSystemType = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
 
 type ILMethodTypeArgumentIndex(index) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(null)
     member val Index = index
-    override __.UnderlyingSystemType = notimpl
     override __.GetMethodImpl(_,_,_,_,_,_) = notimpl
     override __.GetConstructorImpl(_,_,_,_,_) = notimpl
     
@@ -448,10 +446,9 @@ let getCtorOfRuntimeOpenType closeType (ctorOfOpenType: Reflection.ConstructorIn
         closeType ctorOfOpenType
 
 type ILRuntimeGenericType(t: System.Type) =
-    inherit ILTypeSkeleton()
+    inherit ILTypeSkeleton(t)
 
     let openType = t.GetGenericTypeDefinition()
-    override __.UnderlyingSystemType = t
     override __.GetGenericTypeDefinition() = openType
     override __.GetMethodImpl(name, bindingAttr, binder, callConvention, types, modifiers) =
         openType.GetMethod(name, bindingAttr, binder, callConvention, types, modifiers)
@@ -489,7 +486,8 @@ let rec solveType ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = 
         if not <| tryGet map pathRev &ti then Type.GetType(toTypeName pathRev, true)
         else upcast ti
         
-    let rec aux : Type -> _ = function
+    let rec aux (t: Type) =
+        match t with
         | :? ILSymbolType as t ->
             match t.Symbol with
             | TypeSpec(pathRev, []) -> getGenericTypeDef map pathRev
@@ -501,6 +499,7 @@ let rec solveType ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = 
                     let t = t.MakeGenericType ts
                     if ts |> Array.forall (function :? ILInstantiationType | :? ILType -> false | _ -> true) then upcast ILRuntimeGenericType t
                     else upcast ILInstantiationType(t, None)
+
             | TypeVar v -> upcast solveTypeVarMap varMap v
             | MethodTypeVar v -> upcast solveTypeVarMap mVarMap v
             | TypeArgRef i ->
@@ -777,7 +776,7 @@ let ilBinder env mTypeArgs = { new Reflection.Binder() with
             | :? ILMethod as m -> pred m
             | :? ILConstructor as m -> pred m
             | m ->
-                let mTypeParams = m.GetGenericArguments()
+                let mTypeParams = if m.IsGenericMethod then m.GetGenericArguments() else Type.EmptyTypes
                 Array.length mTypeParams = List.length mTypeArgs &&
                 let parameters = m.GetParameters()
                 Array.length parameters = Array.length argTypes &&
@@ -805,6 +804,7 @@ let getField env parent name =
 
 let getMethod env parent name mTypeArgs argTypes =
     let parent = solveType env <| ILSymbolType parent
+    let env = if parent.IsGenericType then { env with typeArgs = List.ofArray <| parent.GetGenericTypeDefinition().GetGenericArguments() } else env
     let openMethod =
         parent.GetMethod(
             name,
@@ -826,6 +826,7 @@ let getMethod env parent name mTypeArgs argTypes =
 
 let getCtor env parent argTypes =
     let parent = solveType env <| ILSymbolType parent
+    let env = if parent.IsGenericType then { env with typeArgs = List.ofArray <| parent.GetGenericTypeDefinition().GetGenericArguments() } else env
     parent.GetConstructor(
         B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance,
         ilBinder env emptyVarMap,

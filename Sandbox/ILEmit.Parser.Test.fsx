@@ -285,6 +285,14 @@ module NestedType =
     ildasm "NestedType" source = expected
 end
 
+//ildasm "Test" "
+//module Prog.Main =
+//    fun main(): [mscorlib]System.Tuple`2(int32,int32) =
+//        ldc.i4.1
+//        ldc.i4.2
+//        newobj [mscorlib]System.Tuple`2(int32,int32)(!0, !1)
+//        ret
+//"
 begin
     let source = """
     type MakeTuple2.Make`1(T1) =
