@@ -1,5 +1,4 @@
 ﻿module RegexLexer
-#r "./bin/debug/Alpa.Compiler.dll"
 
 open System.Collections.Generic
 open System.Text.RegularExpressions
