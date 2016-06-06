@@ -4,7 +4,8 @@ open ILEmit
 open ILEmit.Parser
 open ILEmit.Helpers
 open ILEmit.Helpers.SimpleInstructions
-open ILEmit.PreDefinedTypes
+open ILEmit.Emit
+open ILEmit.Emit.PreDefinedTypes
 
 module Result =
     let map mapping = function
