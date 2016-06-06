@@ -4,7 +4,8 @@ open ILEmit
 open ILEmit.Parser
 open ILEmit.Helpers
 open ILEmit.Helpers.SimpleInstructions
-open ILEmit.PreDefinedTypes
+open ILEmit.Emit
+open ILEmit.Emit.PreDefinedTypes
 
 module Result =
     let map mapping = function
@@ -33,8 +34,7 @@ let ildasm name source =
             | null
             | "" -> sprintf "anon%s" <| System.DateTime.Now.ToString "yyyyMMdd_hhmmss_FFFFFFF"
             | n -> n
-
-        emitDll name il |> fst
+        emitDll name il
 
 let il ds = { topDefs = ds }
 
@@ -285,6 +285,14 @@ module NestedType =
     ildasm "NestedType" source = expected
 end
 
+//ildasm "Test" "
+//module Prog.Main =
+//    fun main(): [mscorlib]System.Tuple`2(int32,int32) =
+//        ldc.i4.1
+//        ldc.i4.2
+//        newobj [mscorlib]System.Tuple`2(int32,int32)(!0, !1)
+//        ret
+//"
 begin
     let source = """
     type MakeTuple2.Make`1(T1) =

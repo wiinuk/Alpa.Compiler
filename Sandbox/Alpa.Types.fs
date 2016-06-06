@@ -374,7 +374,7 @@ type Buffer<'T> = {
 module Buffer =
     let newBuffer() = { items = Array.zeroCreate 4; size = 0 }
     
-    let add xs x =            
+    let add xs x =
         let extend xs =
             let ys = Array.zeroCreate(min 2146435071 (xs.items.Length * 2))
             Array.Copy(xs.items, 0, ys, 0, xs.size)

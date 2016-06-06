@@ -1,7 +1,8 @@
 ﻿module internal ILEmit.Helpers
-#load "ILEmit.Parser.fsx"
+#r "./bin/debug/Alpa.Compiler.dll"
 
 open ILEmit
+open ILEmit.Emit
 open System
 
 let newTypeVar name = name
@@ -201,21 +202,20 @@ let ilasm outPath source =
     out
 
 let ildasm path =
-    let outPath = Path.ChangeExtension(path, ".il")
-    start
-        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe" <|
-        sprintf "\"%s\" /out=\"%s\" /utf8 /metadata=VALIDATE" path outPath
-    |> ignore
+    let paths = [
+        @"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe"
+        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe"
+    ]
+    let out, error = start (List.find File.Exists paths)<| sprintf "\"%s\" /text /unicode /nobar /metadata=VALIDATE" path
 
     let trivia = Regex "\s*//.*$"
+    let source = out + "\n" + error
     let sourceLines =
-        File.ReadLines outPath
+        source.Split '\n'
         |> Seq.map (fun l -> trivia.Replace(l, ""))
         |> Seq.filter (not << System.String.IsNullOrWhiteSpace)
 
-    let src = String.concat "\n" sourceLines
-    File.Delete outPath
-    src
+    String.concat "\n" sourceLines
 
 let emitDll name il =
     let moduleName = Path.ChangeExtension(name, ".dll")
@@ -228,4 +228,4 @@ let emitDll name il =
     let m = a.DefineDynamicModule moduleName
     emitIL m il
     a.Save moduleName
-    ildasm path, File.ReadAllBytes path
+    ildasm path

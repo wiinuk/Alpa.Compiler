@@ -81,12 +81,12 @@
     <None Include="PolyTyping2.fsx" />
     <None Include="PolyTyping2.Test.fsx" />
     <None Include="PolyTyping2.Emit.fsx" />
-    <None Include="ILEmit.fsx" />
+    <Compile Include="RegexLexer.fs" />
+    <Compile Include="ILEmit.Emit.fs" />
+    <Compile Include="ILEmit.Parser.fs" />
     <None Include="ILEmit.Helpers.fsx" />
     <None Include="ILEmit.Test.fsx" />
-    <None Include="RegexLexer.fsx" />
     <None Include="ILEmit.Parser.Test.fsx" />
-    <None Include="ILEmit.Parser.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">
