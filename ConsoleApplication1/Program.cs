@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -10,6 +11,11 @@ class MyList<T>
     public void Add(T x) => WriteLine("Add(T)");
 }
 
+class C
+{
+    public static T M<TSource, T>(TSource a) where TSource : IEnumerable<T> => a;
+    public static T M<TSource, T>(TSource a) where TSource : IEquatable<T> => a;
+}
 static class Program
 {
     static MethodBase ResolveMethodOfOpenType(Type closeType, MethodInfo methodOfOpenType, MethodInfo methodOfCloseType) =>

@@ -1,7 +1,8 @@
 ﻿module internal ILEmit.Helpers
-#load "ILEmit.Parser.fsx"
+#r "./bin/debug/Alpa.Compiler.dll"
 
 open ILEmit
+open ILEmit.Emit
 open System
 
 let newTypeVar name = name
