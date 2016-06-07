@@ -232,4 +232,6 @@ let emitDll name il =
     let m = a.DefineDynamicModule moduleName
     emitIL m il
     a.Save moduleName
-    ildasm path, File.ReadAllBytes path
+    let source = ildasm path
+    File.Delete path
+    source

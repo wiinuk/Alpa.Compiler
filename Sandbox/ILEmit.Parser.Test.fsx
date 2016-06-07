@@ -4,8 +4,7 @@ open ILEmit
 open ILEmit.Parser
 open ILEmit.Helpers
 open ILEmit.Helpers.SimpleInstructions
-open ILEmit.Emit
-open ILEmit.Emit.PreDefinedTypes
+open ILEmit.PreDefinedTypes
 
 module Result =
     let map mapping = function
@@ -144,19 +143,19 @@ end
 
 begin
     let source = "
-module Ops =
-    let Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
-    let Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
+    module Ops =
+        let Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
+        let Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
 
-module Main =
-    let main(): float32 =
-        ldc.i4.1
-        ldc.i4.3
-        call Ops::Add(int32, int32)
-        conv.r4
-        ldc.r4 7.11
-        call Ops::Add(float32, float32)
-        ret
+    module Main =
+        let main(): float32 =
+            ldc.i4.1
+            ldc.i4.3
+            call Ops::Add(int32, int32)
+            conv.r4
+            ldc.r4 7.11
+            call Ops::Add(float32, float32)
+            ret
 "
     let expected = ".assembly extern mscorlib
 {
@@ -218,15 +217,15 @@ end
 
 begin
     let source = "
-module NestedType =
-    type Type1 =
-        let Method1() : void = ret;
-    module Module1 =
-        let Fun1() : void = ret;;
-    ;
-    module Module2 =
-        let Fun1() : void = ret
-    ;;
+    module NestedType =
+        type Type1 =
+            let Method1() : void = ret;
+        module Module1 =
+            let Fun1() : void = ret;;
+        ;
+        module Module2 =
+            let Fun1() : void = ret
+        ;;
 "
     let expected = ".assembly extern mscorlib
 {
@@ -286,14 +285,6 @@ module NestedType =
     ildasm "NestedType" source = expected
 end
 
-//ildasm "Test" "
-//module Prog.Main =
-//    fun main(): [mscorlib]System.Tuple`2(int32,int32) =
-//        ldc.i4.1
-//        ldc.i4.2
-//        newobj [mscorlib]System.Tuple`2(int32,int32)(!0, !1)
-//        ret
-//"
 begin
     let source = """
     type MakeTuple2.Make`1(T1) =
@@ -590,4 +581,3 @@ begin
 }"
     ildasm "Field" source = expected
 end
-// #r @"C:\Users\pc-2\AppData\Local\Temp\AddOps.dll"
