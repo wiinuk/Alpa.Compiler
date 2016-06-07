@@ -1,8 +1,20 @@
-﻿module internal ILEmit.Helpers
-#load "ILEmit.Parser.fsx"
+﻿module internal Alpa.IL.Helpers
 
-open ILEmit
+#if INTERACTIVE
+#r "./../packages/FsCheck.2.4.0/lib/net45/FsCheck.dll"
+#r "./../packages/FsCheck.Xunit.2.4.0/lib/net45/FsCheck.Xunit.dll"
+#r "./../packages/xunit.runner.visualstudio.2.1.0/build/net20/../_common/xunit.abstractions.dll"
+#r "./../packages/xunit.assert.2.1.0/lib/dotnet/xunit.assert.dll"
+#r "./../packages/xunit.extensibility.core.2.1.0/lib/dotnet/xunit.core.dll"
+#r "./../packages/xunit.extensibility.execution.2.1.0/lib/net45/xunit.execution.desktop.dll"
+#r "./../Sandbox/bin/debug/Alpa.Compiler.dll"
+#endif
+
+open Alpa.Emit
+open Alpa.Emit.ILEmit
 open System
+
+type O = System.Reflection.Emit.OpCodes
 
 let newTypeVar name = name
 
@@ -35,38 +47,34 @@ let p n = FullName(t n, [], [], None)
 let typeDef = {
     kind = None
     typeParams = []
-    parent = None
-    impls = []
+    inherits = []
     members = []
 }
 
-let typeD ns name typeParams parent impls ms =
+let typeD ns name typeParams inherits ms =
     let def = {
         kind = None
         typeParams = typeParams
-        parent = parent
-        impls = impls
+        inherits = inherits
         members = ms
     }
     TopTypeDef((name, List.rev ns), def)
 
-let type0D ns name parent impls members =
+let type0D ns name inherits members =
     TopTypeDef((name, List.rev ns), {
         kind = None
         typeParams = []
-        parent = parent
-        impls = impls
+        inherits = inherits
         members = members
     })
 
 let type1D ns name v1 f =
     let v1 = newTypeVar v1
-    let make parent impls members =
+    let make inherits members =
         TopTypeDef((name, List.rev ns), {
             kind = None
             typeParams = [v1]
-            parent = parent
-            impls = impls
+            inherits = inherits
             members = members
         })
     f make (TypeVar v1)
@@ -79,12 +87,11 @@ let typeRef2 n v1 v2 = TypeSpec(n, [v1; v2])
 
 let abstract2T name v1 v2 f =
     let v1, v2 = newTypeVar v1, newTypeVar v2
-    let make parent impls members =
+    let make inherits members =
         TopTypeDef(name, {
             kind = Some Abstract
             typeParams = [v1; v2]
-            parent = parent
-            impls = impls
+            inherits = inherits
             members = members
         })
     f make (TypeVar v1) (TypeVar v2)
@@ -205,7 +212,7 @@ let ilasm outPath source =
     File.Delete path
     out
 
-let ildasm path =
+let ildasm nl path =
     let paths = [
         @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe"
         @"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe"
@@ -215,15 +222,15 @@ let ildasm path =
         |> start (List.find File.Exists paths)
 
     let trivia = Regex "\s*//.*$"
-    let source = out + "\n" + error
-    source.Split('\n')
+    let source = out + nl + error
+    source.Split([|"\r\n"; "\n"|], StringSplitOptions.RemoveEmptyEntries)
     |> Seq.map (fun l -> trivia.Replace(l, ""))
     |> Seq.filter (not << System.String.IsNullOrWhiteSpace)
-    |> String.concat "\n"
+    |> String.concat nl
 
-let emitDll name il =
+let emitDll nl name il =
     let moduleName = Path.ChangeExtension(name, ".dll")
-    let path = Path.Combine(Path.GetTempPath(), moduleName)
+    let path = Path.Combine(System.Environment.CurrentDirectory, moduleName)
 
     if File.Exists path then File.Delete path else ()
 
@@ -232,6 +239,6 @@ let emitDll name il =
     let m = a.DefineDynamicModule moduleName
     emitIL m il
     a.Save moduleName
-    let source = ildasm path
+    let source = ildasm nl path
     File.Delete path
     source

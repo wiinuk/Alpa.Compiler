@@ -1,0 +1,9 @@
+﻿module NestedType =
+    type Type1 =
+        let Method1() : void = ret;
+    module Module1 =
+        let Fun1() : void = ret;;
+    ;
+    module Module2 =
+        let Fun1() : void = ret
+    ;;

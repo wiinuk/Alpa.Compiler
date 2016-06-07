@@ -1,10 +1,11 @@
-﻿module ILEmit.Parser
+﻿module Alpa.IL.Parser
+
 open System
+open Alpa.Emit
+open Alpa.Emit.ILEmit
 open Alpa.ParserCombinator
+open Alpa.RegexLexer
 open Alpa.IO
-open ILEmit
-open ILEmit.Emit
-open RegexLexer
 
 type TokenKind =
     /// "("
@@ -37,8 +38,6 @@ type TokenKind =
     | DSemicolon
     /// "<:"
     | LessThanColon
-    /// ":>"
-    | ColonGreaterThan
 
     | Abstract
     | Override
@@ -126,11 +125,7 @@ type Errors =
     | NumericRange
     | OperandTypeMissmatch
 
-let ops =
-    typeof<System.Reflection.Emit.OpCodes>.GetFields()
-    |> Array.map (fun f -> f.GetValue null |> unbox<System.Reflection.Emit.OpCode>)
-
-let delimiter = [|
+let delimiter() = [|
     "(", LParen
     ")", RParen
     "[", LSBraket
@@ -146,10 +141,9 @@ let delimiter = [|
     "::", DColon
     ";;", DSemicolon
     "<:", LessThanColon
-    ":>", ColonGreaterThan
 |]
 
-let keyword = [|
+let keyword() = [|
     "abstract", Abstract
     "override", Override
     "type", Type
@@ -185,21 +179,14 @@ let keyword = [|
     "false", False
 |]
 
-//| Bool of bool
-//    | I1 of int8
-//    | U1 of uint8
-//    | I2 of int16
-//    | U2 of uint16
-//    | I4 of int32
-//    | U4 of uint32
-//    | I8 of int64
-//    | U8 of uint64
-//    | F4 of single
-//    | F8 of double
-//    | Char of char
-//    | String of string
-
-let opTable = [| for op in ops -> op.Name, Op op |]
+let opKeyword() =
+    typeof<System.Reflection.Emit.OpCodes>.GetFields()
+    |> Array.map (fun f ->
+        let op =
+            f.GetValue null
+            |> unbox<System.Reflection.Emit.OpCode>
+        op.Name, Op op
+    )
 
 let floatingR = 
     let e = "[eE][+-]?[0-9]+"
@@ -227,13 +214,13 @@ let escape s =
 
     Seq.toList s |> aux [] |> List.toArray |> System.String
 
-let lexData = {
+let lexData() = {
     trivia = @"\s+|//[^\n]*"
-    keyword = makeTokenOfTable "keyword" (Array.append keyword opTable)
+    keyword = makeTokenOfTable "keyword" (Array.append (keyword()) (opKeyword()))
     custom =
     [|
         makeToken "id" @"[a-zA-Z_\p{Ll}\p{Lu}\p{Lt}\p{Lo}\p{Lm}][\w`]*" Id
-        makeTokenOfTable "delimiter" delimiter
+        makeTokenOfTable "delimiter" <| delimiter()
         makeToken "floating" floatingR (double >> LFloat64)
         makeTokenOrError "integer" @"0[xX][0-9a-fA-F]+|[+-]?[0-9]+" (
             let format = System.Globalization.NumberFormatInfo.InvariantInfo
@@ -261,10 +248,10 @@ let lexData = {
     |]
 }
 
-let lex = lexer lexData
+let lex = lexer <| lexData()
 
 module SourceParsers =
-    open RegexLexer.Source
+    open Alpa.RegexLexer.Source
 
     let manyRev1 p = pipe2 p (manyRev (p |>> value)) <| fun x xs -> map (fun x -> x::xs) x
     let many1 p = pipe2 p (many (p |>> value)) <| fun x xs -> map (fun x -> x,xs) x
@@ -316,7 +303,27 @@ module SourceParsers =
 
 open SourceParsers
 
-let (!) symbol = satisfyE ((=) symbol) <| RequireToken symbol
+[<AutoOpen>]
+module Specials =
+    let d symbol = satisfyE ((=) symbol) <| RequireToken symbol
+    let ``(`` = d LParen
+    let ``)`` = d RParen
+    let ``[`` = d LSBraket
+    let ``]`` = d RSBraket
+    let ``,`` = d Comma
+    let ``.`` = d Dot
+    let ``:`` = d Colon
+    let ``+`` = d Plus
+    let ``!`` = d Bang
+    let ``d=`` = d Equals
+    let ``;``= d Semicolon
+    let ``!!`` = d DBang
+    let ``::`` = d DColon
+    let ``<:`` = d LessThanColon
+    let ``;;`` = d DSemicolon
+
+    let Mutable = d Mutable
+module K = Specials
 
 let tInt32 = satisfyMapE (function LInt32 _ -> true | _ -> false) (function LInt32(_,x) -> x | _ -> 0) RequireInt32Token
 
@@ -350,17 +357,17 @@ let typeKind =
         RequireTypeKind
 
 /// ($p, ...) | ()
-let tupleLike0 p = between !LParen !RParen (sepBy p !Comma)
+let tupleLike0 p = between ``(`` ``)`` (sepBy p ``,``)
 /// ($p, ...)
-let tupleLike1 p = between !LParen !RParen (sepBy1 p !Comma)
+let tupleLike1 p = between ``(`` ``)`` (sepBy1 p ``,``)
 /// ($p, ...) | $p | ()
 let tupleOrValueLike0 p = tupleLike0 p <|> (p |>> List.singleton)
 /// ($p, ...) | $p
 let tupleOrValueLike1 p = tupleLike1 p <|> (p |>> fun x -> x, [])
 
-let assemblyName = between !LSBraket !RSBraket name
-let namespaceRev = manyRev (name .>> !Dot)
-let nestersRev = manyRev (name .>> !Plus)
+let assemblyName = between ``[`` ``]`` name
+let namespaceRev = manyRev (name .>> ``.``)
+let nestersRev = manyRev (name .>> ``+``)
 
 /// ex: [mscorlib]System.Diagnostics.Stopwatch+InternalTimers+LowTimer
 let fullName = pipe4 (opt assemblyName) namespaceRev nestersRev name <| fun asmName nsRev nestRev name -> FullName(name, nestRev, nsRev, asmName)
@@ -420,13 +427,13 @@ do
         choice [
             preDefinedTypeName
             pipe2 fullName (opt (tupleOrValueLike1 typeSpec)) <| fun n vs -> TypeSpec(n, match vs with None -> [] | Some(v,vs) -> v::vs)
-            !Bang >>. tId |>> TypeVar
-            !DBang >>. tId |>> MethodTypeVar
-            !Bang >>. tInt32 |>> TypeArgRef
-            !DBang >>. tInt32 |>> MethodTypeArgRef
+            ``!`` >>. tId |>> TypeVar
+            ``!!`` >>. tId |>> MethodTypeVar
+            ``!`` >>. tInt32 |>> TypeArgRef
+            ``!!`` >>. tInt32 |>> MethodTypeArgRef
         ]
 
-let inherits = !LessThanColon >>. tupleOrValueLike1 typeSpec
+let inherits = ``<:`` >>. sepBy1 typeSpec ``,``
 
 #nowarn "9"
 module Unsafe =
@@ -439,7 +446,7 @@ module Unsafe =
 let unreachable<'a> : 'a = failwith "unreachable"
 
 /// ex: ": int32"
-let typing = !Colon >>. typeSpec
+let typing = ``:`` >>. typeSpec
 
 /// ex: true, null, 'a', "", 10, 10 :> int64, 0xFFFFFFFF :> float32
 let literal =
@@ -598,7 +605,7 @@ let opString =
 let opType = typeSpec |>> OpType
 
 /// ex: System.Type::Delimiter
-let opField = pipe3 typeSpec !DColon name <| fun t _ n -> OpField(t, n)
+let opField = pipe3 typeSpec ``::`` name <| fun t _ n -> OpField(t, n)
 
 /// ex: System.Tuple`2(string, char)(!0, !1)
 let opCtor = pipe2 typeSpec (tupleLike0 typeSpec) <| fun t args -> OpCtor(t, args)
@@ -609,11 +616,11 @@ let opMethod =
         | None -> OpMethod(parent, name, [], ts1)
         | Some ts2 -> OpMethod(parent, name, ts1, ts2)
     
-    pipe5(typeSpec, !DColon, name, tupleLike0 typeSpec, opt (tupleLike0 typeSpec), make)
+    pipe5(typeSpec, ``::``, name, tupleLike0 typeSpec, opt (tupleLike0 typeSpec), make)
 
 let opMethodBase = opMethod <|> opCtor
 let instr =
-    let label = optDefault "" (tId .>> !Colon)
+    let label = optDefault "" (tId .>> ``:``)
     let opNone = Reply <| Source.VirtualSource OpNone
     let operand t xs =
         match t with
@@ -659,9 +666,9 @@ let instr =
     p
 
 let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
-let methodInfo = pipe3 methodHead !Equals methodBody <| fun h _ b -> MethodInfo(h, b)
+let methodInfo = pipe3 methodHead ``d=`` methodBody <| fun h _ b -> MethodInfo(h, b)
 
-let fieldTail make = pipe3 (optBool !Mutable) name typing make
+let fieldTail make = pipe3 (optBool K.Mutable) name typing make
 let literalTail make = 
     let defaultType = function
         | Literal.Null -> objectT
@@ -679,7 +686,7 @@ let literalTail make =
         | Literal.U4 _ -> uint32T
         | Literal.U8 _ -> uint64T
 
-    pipe4 name (opt typing) !Equals literal (fun n t _ l ->
+    pipe4 name (opt typing) ``d=`` literal (fun n t _ l ->
         let t =
             match t with
             | Some t -> t
@@ -703,7 +710,7 @@ let typeMember =
         Let, staticMemberTail
         Member, instanceMemberTail
         // ex: new (x: System.Int32) = ...
-        New, pipe3 parameters !Equals methodBody <| fun ps _ b -> CtorDef(ps, b)
+        New, pipe3 parameters ``d=`` methodBody <| fun ps _ b -> CtorDef(ps, b)
         
         // ex: abstract AddRange (T) (xs: IEmumerable`1(T)) : void
         Abstract, methodHead |>> AbstractDef
@@ -711,21 +718,16 @@ let typeMember =
         // TODO: BaseMethod
         Override, methodInfo |>> fun m -> MethodDef(Some Override.Override, m)
     ]
-let members = sepBy typeMember !Semicolon
+let members = sepBy typeMember ``;``
 
 /// ex: type open List`1 (T) <: [mscorlib]System.Object = ...
 let typeDefTail name make =
     let make k n ps is ms =
-        let parent, impls =
-            match is with
-            | None -> None, []
-            | Some(x, xs) -> Some x, xs
-
+        let is = match is with None -> [] | Some(x,xs) -> x::xs
         let def = {
             kind = k
             typeParams = ps
-            parent = parent
-            impls = impls
+            inherits = is
             members = ms
         }
         make n def
@@ -735,7 +737,7 @@ let typeDefTail name make =
         name,
         optDefault [] (typeParams false),
         opt inherits,
-        !Equals >>. members,
+        ``d=`` >>. members,
         make
     )
 
@@ -753,18 +755,18 @@ let moduleMember =
         Let, letTail
     ]
     
-let moduleMembers = sepBy moduleMember !Semicolon
+let moduleMembers = sepBy moduleMember ``;``
 
-moduleModuleDefTailRef := pipe4 name !Equals moduleMembers !DSemicolon <| fun n _ ms _ -> ModuleModuleDef(n, ms)
+moduleModuleDefTailRef := pipe4 name ``d=`` moduleMembers ``;;`` <| fun n _ ms _ -> ModuleModuleDef(n, ms)
 
 let topMember =
     choiceHead RequireTopMember [
         Type, typeDefTail pathRev <| fun n d -> TopTypeDef(n, d)
-        Module, pipe3 pathRev !Equals moduleMembers <| fun n _ ms -> TopModuleDef(n, ms)
+        Module, pipe3 pathRev ``d=`` moduleMembers <| fun n _ ms -> TopModuleDef(n, ms)
     ]
 
-/// ex: type Ns.A =;; module B =;;
-let top = sepBy topMember !DSemicolon |>> fun ds -> { topDefs = ds }
+/// ex: type Ns.A =;; module B =;; type T =
+let top = sepBy topMember ``;;`` |>> fun ds -> { topDefs = ds }
 let initialState = ()
 
 let parseWith p source =

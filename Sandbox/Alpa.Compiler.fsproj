@@ -69,6 +69,11 @@
     <Compile Include="Alpa.Lexer.fs" />
     <Compile Include="Alpa.IO.Stream.fs" />
     <Compile Include="Alpa.ParserCombinator.fs" />
+    <Compile Include="Alpa.RegexLexer.fs" />
+    <Compile Include="Alpa.Emit.Types.fs" />
+    <Compile Include="Alpa.Emit.Utils.fs" />
+    <Compile Include="Alpa.Emit.ILEmit.fs" />
+    <Compile Include="Alpa.IL.Parser.fs" />
     <None Include="Alpa.Parser.Types.fsx" />
     <None Include="Alpa.Parser.fsx" />
     <None Include="Alpa.Parser.Solve.fsx" />
@@ -81,12 +86,7 @@
     <None Include="PolyTyping2.fsx" />
     <None Include="PolyTyping2.Test.fsx" />
     <None Include="PolyTyping2.Emit.fsx" />
-    <None Include="ILEmit.fsx" />
-    <None Include="ILEmit.Helpers.fsx" />
     <None Include="ILEmit.Test.fsx" />
-    <None Include="RegexLexer.fsx" />
-    <None Include="ILEmit.Parser.fsx" />
-    <None Include="ILEmit.Parser.Test.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

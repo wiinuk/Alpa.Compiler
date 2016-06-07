@@ -1,0 +1,13 @@
+﻿module Ops =
+    let Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
+    let Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
+
+module Main =
+    let main(): float32 =
+        ldc.i4.1
+        ldc.i4.3
+        call Ops::Add(int32, int32)
+        conv.r4
+        ldc.r4 7.11
+        call Ops::Add(float32, float32)
+        ret

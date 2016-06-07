@@ -11,11 +11,11 @@ class MyList<T>
     public void Add(T x) => WriteLine("Add(T)");
 }
 
-class C
-{
-    public static T M<TSource, T>(TSource a) where TSource : IEnumerable<T> => a;
-    public static T M<TSource, T>(TSource a) where TSource : IEquatable<T> => a;
-}
+//class C
+//{
+//    public static T M<TSource, T>(TSource a) where TSource : IEnumerable<T> => a;
+//    public static T M<TSource, T>(TSource a) where TSource : IEquatable<T> => a;
+//}
 static class Program
 {
     static MethodBase ResolveMethodOfOpenType(Type closeType, MethodInfo methodOfOpenType, MethodInfo methodOfCloseType) =>
@@ -44,37 +44,37 @@ static class Program
         return ((MethodCallExpression)lambda.Body).Method;
     }
 
-    static void Palette()
-    {
-        var addString = GetMethod(typeof(MyList<object>), typeof(MyList<>).GetMethod("Add", new[] { typeof(object) }));
-        var addT = GetMethod(typeof(MyList<object>), typeof(MyList<>).GetMethod("Add", new[] { typeof(MyList<>).GetGenericArguments()[0] }));
+    //static void Palette()
+    //{
+    //    var addString = GetMethod(typeof(MyList<object>), typeof(MyList<>).GetMethod("Add", new[] { typeof(object) }));
+    //    var addT = GetMethod(typeof(MyList<object>), typeof(MyList<>).GetMethod("Add", new[] { typeof(MyList<>).GetGenericArguments()[0] }));
 
-        var adds = typeof(MyList<object>).GetMethods().Where(m => m.Name == "Add").ToList();
-        addString != addT &&
-            adds.Count == 2 &&
-            adds.Contains(addString) &&
-            adds.Contains(addT)
+    //    var adds = typeof(MyList<object>).GetMethods().Where(m => m.Name == "Add").ToList();
+    //    addString != addT &&
+    //        adds.Count == 2 &&
+    //        adds.Contains(addString) &&
+    //        adds.Contains(addT)
 
-        adds.Contains(GetAddMethod<object>())
-            adds.Contains(GetGemericAddMethod<object>())
-           // GetMethod (MyList<T> myList) => ((Action<object>)myList.Add(null))
-           var myList = new MyList<object>();
-        var b = GetMethod(myList) == GetGenericMethod(myList);
-        MulticastDelegate.CreateDelegate()
-        var listOfObject = new MyList<object>();
-        listOfObject.Add(null);
+    //    adds.Contains(GetAddMethod<object>())
+    //        adds.Contains(GetGemericAddMethod<object>())
+    //       // GetMethod (MyList<T> myList) => ((Action<object>)myList.Add(null))
+    //       var myList = new MyList<object>();
+    //    var b = GetMethod(myList) == GetGenericMethod(myList);
+    //    MulticastDelegate.CreateDelegate()
+    //    var listOfObject = new MyList<object>();
+    //    listOfObject.Add(null);
 
-        var listOfInt = new MyList<int>();
-        listOfInt.Add(0);
-        typeof(MyList<object>).GetMethod("Add", new[] { typeof(object) });
-        typeof(MyList<object>).GetMethod("Add", new[] { typeof(MyList<>).GetGenericArguments()[0] });
+    //    var listOfInt = new MyList<int>();
+    //    listOfInt.Add(0);
+    //    typeof(MyList<object>).GetMethod("Add", new[] { typeof(object) });
+    //    typeof(MyList<object>).GetMethod("Add", new[] { typeof(MyList<>).GetGenericArguments()[0] });
 
-        //var addObject = typeof(MyList<>).GetMethod("Add", new[] { typeof(object) });
-        //typeof(MyList<object>)
-        //    .GetMethods()
-        //    .Where(m => m.Name == "Add" && m != addObject)
-        //    .Count();
-    }
+    //    //var addObject = typeof(MyList<>).GetMethod("Add", new[] { typeof(object) });
+    //    //typeof(MyList<object>)
+    //    //    .GetMethods()
+    //    //    .Where(m => m.Name == "Add" && m != addObject)
+    //    //    .Count();
+    //}
 }
 
 namespace ConsoleApplication1

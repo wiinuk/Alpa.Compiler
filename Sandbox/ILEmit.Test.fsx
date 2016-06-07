@@ -157,48 +157,6 @@ end
 solveT typeSpecOf<int> ==? typeof<int>
 solveT typeSpecOf<Map<int,Set<string>>> ==? typeof<Map<int,Set<string>>>
 
-IL [
-    type0D "EqualsInt" None [typeRefOf<System.IEquatable<int>>] [
-        override0 "Equals" [paramT intT] typeSpecOf<bool> [ldc_i4 1; ret]
-    ]
-]
-|> emitDll "test3" ===? ".assembly extern mscorlib
-{
-  .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
-  .ver 4:0:0:0
-}
-.assembly test3
-{
-  .hash algorithm 0x00008004
-  .ver 0:0:0:0
-}
-.module test3.dll
-.imagebase 0x00400000
-.file alignment 0x00000200
-.stackreserve 0x00100000
-.subsystem 0x0003
-.corflags 0x00000001
-.class public auto ansi sealed beforefieldinit EqualsInt
-       extends [mscorlib]System.Object
-       implements class [mscorlib]System.IEquatable`1<int32>
-{
-  .method public hidebysig newslot virtual final 
-          instance bool  Equals(int32 A_1) cil managed
-  {
-    .maxstack  1
-    IL_0000:  ldc.i4.1
-    IL_0001:  ret
-  }
-  .method public specialname rtspecialname 
-          instance void  .ctor() cil managed
-  {
-    .maxstack  2
-    IL_0000:  ldarg.0
-    IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
-    IL_0006:  ret
-  }
-}"
-
 //#r @"C:\Users\pc-2\AppData\Local\Temp\test3.dll"
 
 //type abstract `->` (a, b) = abstract `_ _` a : b;;
