@@ -2,6 +2,7 @@
 module Alpa.ParserCombinator.Primitives
 open Alpa
 open Alpa.IO
+open Alpa.IO.Stream
 
 type Parser<'c,'u,'e,'a> = Stream<'c, 'u> -> Reply<'a, 'e>
 type Result<'c,'u,'e,'a> = Failure of error: 'e * index: int * last: option<'c> * state: 'u | Success of 'a
@@ -178,8 +179,10 @@ let chainL1 (Parser p) (Parser op) f =
             Reply((), r.Error)
     p
 
+let pzero = fun _ -> Reply((), (), ReplyError.AnyError)
+
 let choice = function
-    | [] -> fun _ -> Reply((), (), ReplyError.AnyError)
+    | [] -> pzero
     | [p] -> p
     | p::ps ->
         let p xs =
@@ -206,20 +209,20 @@ let choice = function
 
             aux (p xs) xs.Index xs.UserState ps
         p
-    
+
 let (<|>) l r = choice [l; r]
 
 let createParserForwardedToRef() =
     let r = ref <| fun _ -> failwith "not initialized"
     (fun xs -> !r xs), r
-    
+
 let satisfyE p e =
     let e = Reply((), e)
     fun xs ->
-        if xs.Index < xs.Items.size then
-            let t = xs.Items.items.[xs.Index]
+        if canRead xs then
+            let t = peek xs
             if p t then
-                xs.Index <- xs.Index + 1
+                seek xs 1
                 Reply t
             else e
         else e
@@ -227,13 +230,26 @@ let satisfyE p e =
 let satisfyMapE p f e =
     let e = Reply((), e)
     fun xs ->
-        if xs.Index < xs.Items.size then
-            let t = xs.Items.items.[xs.Index]
+        if canRead xs then
+            let t = peek xs
             if p t then
-                xs.Index <- xs.Index + 1
+                seek xs 1
                 Reply(f t)
             else e
         else e
+        
+let choiceHead getKey e = function
+    | [] -> pzero
+    | [t,p] -> satisfyE (getKey >> (=) t) e >>. p
+    | ps ->     
+        fun xs ->
+            if canRead xs then
+                let rec find t = function
+                    | [] -> Reply((), e)
+                    | (t',p)::_ when t = t' -> seek xs 1; p xs
+                    | _::ps -> find t ps
+                find (peek xs |> getKey) ps
+            else Reply((), e)
 
 let specialE r e = satisfyE (Token.isR r) e
 let operatorE e = satisfyE Token.isOp e

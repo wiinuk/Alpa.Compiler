@@ -10,8 +10,10 @@ type Stream<'t,'u> = {
 }
 
 module Stream =
-    let canRead xs = xs.Items.size <= xs.Index
+    let canRead xs = xs.Index < xs.Items.size
     let get xs i = xs.Items.items.[xs.Index + i]
+    let peek xs = get xs 0
+    let seek xs i = xs.Index <- xs.Index + i
 
 type ReplyError = AnyError = 0 | RequireEof = -2 | RequireAnyToken = -3
 type ReplyStatus = Ok = 1 | Error = 0

@@ -167,7 +167,7 @@ open System.Text.RegularExpressions
 open System.Collections.Concurrent
 open System.Text
 
-let start fileName args =
+let startCore enc fileName args =
     let i =
         ProcessStartInfo(
             FileName = fileName,
@@ -176,8 +176,11 @@ let start fileName args =
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = enc,
+            StandardErrorEncoding = enc,
             RedirectStandardInput = false
         )
+    
     use p = new Process(StartInfo = i)
 
     let sources = ConcurrentQueue()
@@ -193,6 +196,8 @@ let start fileName args =
     p.WaitForExit()
     String.concat "\n" sources, String.concat "\n" errors
 
+let start fileName args = startCore Encoding.Default fileName args
+
 let ilasm outPath source =
     let path = Path.GetTempFileName()
     File.WriteAllText(path, source, Encoding.Unicode)
@@ -201,21 +206,20 @@ let ilasm outPath source =
     out
 
 let ildasm path =
-    let outPath = Path.ChangeExtension(path, ".il")
-    start
-        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe" <|
-        sprintf "\"%s\" /out=\"%s\" /utf8 /metadata=VALIDATE" path outPath
-    |> ignore
+    let paths = [
+        @"C:\Program Files\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe"
+        @"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools\ildasm.exe"
+    ]
+    let out, error =
+        sprintf "\"%s\" /text /unicode /nobar /metadata=VALIDATE" path
+        |> start (List.find File.Exists paths)
 
     let trivia = Regex "\s*//.*$"
-    let sourceLines =
-        File.ReadLines outPath
-        |> Seq.map (fun l -> trivia.Replace(l, ""))
-        |> Seq.filter (not << System.String.IsNullOrWhiteSpace)
-
-    let src = String.concat "\n" sourceLines
-    File.Delete outPath
-    src
+    let source = out + "\n" + error
+    source.Split('\n')
+    |> Seq.map (fun l -> trivia.Replace(l, ""))
+    |> Seq.filter (not << System.String.IsNullOrWhiteSpace)
+    |> String.concat "\n"
 
 let emitDll name il =
     let moduleName = Path.ChangeExtension(name, ".dll")

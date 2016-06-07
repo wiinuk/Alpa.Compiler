@@ -39,13 +39,12 @@ type TokenKind =
     | DSemicolon
     /// "<:"
     | LessThanColon
+    /// ":>"
+    | ColonGreaterThan
 
     | Abstract
-    | Fun
     | Override
     | Type
-    | Static
-    | Val
     | Open
     | Interface
     | Sealed
@@ -53,6 +52,8 @@ type TokenKind =
     | Literal
     | Module
     | New
+    | Let
+    | Member
 
     | Int8
     | Int16
@@ -120,6 +121,10 @@ type Errors =
     | RequireTypeKind
     | RequireOperand of OperandType
 
+    | RequireTypeMember
+    | RequireModuleMember
+    | RequireTopMember
+
     | NumericRange
     | OperandTypeMissmatch
 
@@ -143,15 +148,13 @@ let delimiter = [|
     "::", DColon
     ";;", DSemicolon
     "<:", LessThanColon
+    ":>", ColonGreaterThan
 |]
 
 let keyword = [|
     "abstract", Abstract
-    "fun", Fun
     "override", Override
     "type", Type
-    "static", Static
-    "val", Val
     "open", Open
     "interface", Interface
     "sealed", Sealed
@@ -159,6 +162,8 @@ let keyword = [|
     "literal", Literal
     "module", Module
     "new", New
+    "let", Let
+    "member", Member
     
     "int8", Int8
     "int16", Int16
@@ -309,6 +314,8 @@ module SourceParsers =
     let between openP closeP p = pipe3 openP p closeP <| fun _ x _ -> x
     let manyRev p = opt (manyRev1 p) |>> function None -> [] | Some xs -> xs
 
+    let choiceHead e ps = choiceHead value e ps
+
 open SourceParsers
 
 let (!) symbol = satisfyE ((=) symbol) <| RequireToken symbol
@@ -433,29 +440,31 @@ module Unsafe =
 
 let unreachable<'a> : 'a = failwith "unreachable"
 
-let toNumericType = function
-    | "i1" -> I1
-    | "i2" -> I2
-    | "i4" -> I4
-    | "i8" -> I8
-    | "u1" -> U1
-    | "u2" -> U2
-    | "u4" -> U4
-    | "u8" -> U8
-    | "f4" -> F4
-    | "f8" -> F8
-    | _ -> unreachable
-    
-/// ex: true, null, 'a', "", 10, 10:i8, 3.14159:f4
+/// ex: ": int32"
+let typing = !Colon >>. typeSpec
+
+/// ex: true, null, 'a', "", 10, 10 :> int64, 0xFFFFFFFF :> float32
 let literal =
     let numericValue = satisfyE (function LInt32 _ | LInt64 _ | LFloat64 _ -> true | _ -> false) RequireLiteralToken
-    let numericTypeName =
+
+    let numericTypeSpec =
         satisfyMapE
-            (function Id("i1"|"i2"|"i4"|"i8"|"u1"|"u2"|"u4"|"u8"|"f4"|"f8") -> true | _ -> false) 
-            (function Id s -> toNumericType s |> Some | _ -> None)
-            RequireTypeSpecifier
-    
-    let numericTypeSpecifier = optDefault None (!Colon >>. numericTypeName)
+            (function Int8 | Int16 | Int32 | Int64 | UInt8 | UInt16 | UInt32 | UInt64 | Float32 | Float64 -> true | _ -> false)
+            (function 
+                | Int8 -> I1
+                | Int16 -> I2
+                | Int32 -> I4
+                | Int64 -> I8
+                | UInt8 -> U1
+                | UInt16 -> U2
+                | UInt32 -> U4
+                | UInt64 -> U8
+                | Float32 -> F4
+                | Float64 -> F8
+                | _ -> I1
+            ) RequireTypeSpecifier
+
+    let typing = opt numericTypeSpec
 
     let int32BitsToSingle x = Unsafe.reinterpret<int32,float32> x
 
@@ -505,13 +514,13 @@ let literal =
         | _ -> unreachable
 
     let numericLiteral xs =
-        let r1 = numericValue xs
+        let r1 = typing xs
         if r1.Status = Primitives.Ok then
-            let r2 = numericTypeSpecifier xs
+            let r2 = numericValue xs
             if r2.Status = Primitives.Ok then
                 let r1 = r1.Value
                 let r2 = r2.Value
-                try Reply(Source.range r1 (convOrRaise (Source.value r1) (Source.value r2)) r2) 
+                try Reply(Source.range r1 (convOrRaise (Source.value r2) (Source.value r1)) r2) 
                 with :? OverflowException -> Reply((), NumericRange)
 
             else Reply((), r2.Error)
@@ -535,24 +544,15 @@ let literal =
             RequireLiteralToken
 
     simpleLiteral <|> numericLiteral
-
-
-let literalDef = pipe5(!Val, name, typeSpec, !Equals, literal, fun _ n t _ v -> MemberDef.Literal(n, t, v))
-
-let fieldDef = pipe5(!Val, optBool !Static, optBool !Mutable, name, typeSpec, fun _ s m n t -> Field(s, m, n, t))
-
+    
 let parameter =
-    (pipe3 name !Colon typeSpec <| fun n _ t -> Parameter(Some n, t)) <|>
+    (pipe2 name typing <| fun n t -> Parameter(Some n, t)) <|>
     (typeSpec |>> fun t -> Parameter(None, t))
 
 let parameters = tupleLike0 parameter
 
 let methodHead =
-    let ret = !Colon >>. typeSpec
-    pipe4 name (optDefault [] (typeParams true)) parameters ret <| fun name mTypeParams ps ret -> MethodHead(name, mTypeParams, ps, Parameter(None, ret))
-
-/// ex: abstract AddRange (T) (xs: IEmumerable(T)) : System.Void
-let abstractDef = !Abstract >>. methodHead |>> AbstractDef
+    pipe4 name (optDefault [] (typeParams true)) parameters typing <| fun name mTypeParams ps ret -> MethodHead(name, mTypeParams, ps, Parameter(None, ret))
 
 type OT = System.Reflection.Emit.OperandType
 
@@ -663,31 +663,61 @@ let instr =
 let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
 let methodInfo = pipe3 methodHead !Equals methodBody <| fun h _ b -> MethodInfo(h, b)
 
-/// ex: new (x: System.Int32) = ...
-let ctorDef = pipe4 !New parameters !Equals methodBody <| fun _ ps _ b -> CtorDef(ps, b)
+let fieldTail make = pipe3 (optBool !Mutable) name typing make
+let literalTail make = 
+    let defaultType = function
+        | Literal.Null -> objectT
+        | Literal.String _ -> stringT
+        | Literal.Bool _ -> boolT
+        | Literal.Char _ -> charT
+        | Literal.F4 _ -> float32T
+        | Literal.F8 _ -> float64T
+        | Literal.I1 _ -> int8T
+        | Literal.I2 _ -> int16T
+        | Literal.I4 _ -> int32T
+        | Literal.I8 _ -> int64T
+        | Literal.U1 _ -> uint8T
+        | Literal.U2 _ -> uint16T
+        | Literal.U4 _ -> uint32T
+        | Literal.U8 _ -> uint64T
 
-let methodDef =
+    pipe4 name (opt typing) !Equals literal (fun n t _ l ->
+        let t =
+            match t with
+            | Some t -> t
+            | None -> defaultType l
+        make n t l
+    )
+
+let staticMemberTail =
     choice [
-        pipe2 !Override methodInfo <| fun _ m -> MethodDef(Some Override.Override, m)
-        // TODO: BaseMethod
-        pipe3 !Fun (optBool !Static) methodInfo <| fun _ isStatic m ->
-            if isStatic then StaticMethodDef m
-            else MethodDef(None, m)
+        fieldTail <| fun m n t -> Field(true, m, n, t)
+        literalTail <| fun a b c -> MemberDef.Literal(a, b, c)
+        methodInfo |>> StaticMethodDef
     ]
-
-let typeMember =
+let instanceMemberTail =
     choice [
-        literalDef
-        fieldDef
-        abstractDef
-        ctorDef
-        methodDef
+        methodInfo |>> fun m -> MethodDef(None, m)
+        fieldTail <| fun m n t -> Field(false, m, n, t)
+    ]
+let typeMember =
+    choiceHead RequireTypeMember [
+        Let, staticMemberTail
+        Member, instanceMemberTail
+        // ex: new (x: System.Int32) = ...
+        New, pipe3 parameters !Equals methodBody <| fun ps _ b -> CtorDef(ps, b)
+        
+        // ex: abstract AddRange (T) (xs: IEmumerable`1(T)) : void
+        Abstract, methodHead |>> AbstractDef
+
+        // TODO: BaseMethod
+        Override, methodInfo |>> fun m -> MethodDef(Some Override.Override, m)
     ]
 let members = sepBy typeMember !Semicolon
 
 /// ex: type open List`1 (T) <: [mscorlib]System.Object = ...
-let typeDef name ctor =
-    let make _ k n ps (is, ms) =
+let typeDefTail name make =
+    let make k n ps is ms =
         let parent, impls =
             match is with
             | None -> None, []
@@ -700,28 +730,43 @@ let typeDef name ctor =
             impls = impls
             members = ms
         }
-        ctor(n, def)
+        make n def
 
-    pipe5 (!Type, opt typeKind, name, optDefault [] (typeParams false), (opt inherits .>>. (!Equals >>. members)), make)
+    pipe5 (
+        opt typeKind,
+        name,
+        optDefault [] (typeParams false),
+        opt inherits,
+        !Equals >>. members,
+        make
+    )
 
-let moduleModuleDef, moduleDefRef = createParserForwardedToRef()
+let moduleModuleDefTail, moduleModuleDefTailRef = createParserForwardedToRef()
+
+let letTail =
+    fieldTail (fun m n t -> ModuleValDef(m, n, t)) <|>
+    literalTail (fun n t v -> ModuleLiteralDef(n, t, v))
+
 let moduleMember =
-    choice [
-        !Fun >>. methodInfo |>> ModuleMethodDef
-        typeDef name ModuleTypeDef
-        moduleModuleDef
-        pipe5(!Val, optBool !Mutable, name, !Colon, typeSpec, fun _ m n _ t -> ModuleValDef(m, n, t))
-        pipe5(!Val, name, !Colon, typeSpec, (!Equals >>. literal), fun _ n _ t l -> ModuleLiteralDef(n, t, l))
+    choiceHead RequireModuleMember [
+        Let, methodInfo |>> ModuleMethodDef
+        Type, typeDefTail name <| fun n d -> ModuleTypeDef(n, d)
+        Module, moduleModuleDefTail
+        Let, letTail
     ]
     
 let moduleMembers = sepBy moduleMember !Semicolon
 
-moduleDefRef := pipe5(!Module, name, !Equals, moduleMembers, !DSemicolon, fun _ n _ ms _ -> ModuleModuleDef(n, ms))
+moduleModuleDefTailRef := pipe4 name !Equals moduleMembers !DSemicolon <| fun n _ ms _ -> ModuleModuleDef(n, ms)
 
-let topModuleDef = pipe4 !Module pathRev !Equals moduleMembers <| fun _ n _ ms -> TopModuleDef(n, ms)
+let topMember =
+    choiceHead RequireTopMember [
+        Type, typeDefTail pathRev <| fun n d -> TopTypeDef(n, d)
+        Module, pipe3 pathRev !Equals moduleMembers <| fun n _ ms -> TopModuleDef(n, ms)
+    ]
 
 /// ex: type Ns.A =;; module B =;;
-let top = sepBy (typeDef pathRev TopTypeDef <|> topModuleDef) !DSemicolon |>> fun ds -> { topDefs = ds }
+let top = sepBy topMember !DSemicolon |>> fun ds -> { topDefs = ds }
 let initialState = ()
 
 let parseWith p source =

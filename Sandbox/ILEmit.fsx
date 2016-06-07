@@ -189,14 +189,13 @@ type SolvedTypeParam =
 type SolvedType =
     | RuntimeType of Type
     | Builder of ILTypeBuilder
-    | InstantiationType of instantiation: Type * genericTypeDefinition: ILTypeBuilder option * typeArgs: SolvedType list
-
+    | InstantiationType of closeType: Type * openType: ILTypeBuilder option
     | TypeParam of TypeVar * SolvedTypeParam
 
-let rec getType = function
+let getUnderlyingSystemType = function
     | RuntimeType t
     | TypeParam(_, RuntimeTypeParam t)
-    | InstantiationType(instantiation = t) -> t
+    | InstantiationType(closeType = t) -> t
     | TypeParam(_, TypeParamBuilder t) -> upcast t
     | Builder { t = t } -> upcast t
 
@@ -217,22 +216,22 @@ let rec getReplacedType subst = function
     | t -> t
 
 let rec solveTypeCore ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
-    let getGenericTypeDef map pathRev =
+    let getCloseType map pathRev =
         let mutable ti = Unchecked.defaultof<_>
         if tryGet map pathRev &ti then Builder ti
         else RuntimeType <| Type.GetType(toTypeName pathRev, true)
         
     let rec aux = function
-    | TypeSpec(pathRev, []) -> getGenericTypeDef map pathRev
+    | TypeSpec(pathRev, []) -> getCloseType map pathRev
     | TypeSpec(pathRev, ts) ->
         let vs = List.map (solveTypeCore env) ts
-        let ts = Seq.map getType vs |> Seq.toArray
-        match getGenericTypeDef map pathRev with
-        | Builder({ t = t } as ti) -> InstantiationType(t.MakeGenericType ts, Some ti, vs)
+        let ts = Seq.map getUnderlyingSystemType vs |> Seq.toArray
+        match getCloseType map pathRev with
+        | Builder({ t = t } as ti) -> InstantiationType(t.MakeGenericType ts, Some ti)
         | RuntimeType t ->
             let t = t.MakeGenericType ts
             if List.forall (function RuntimeType _ -> true | _ -> false) vs then RuntimeType t
-            else InstantiationType(t, None, vs)
+            else InstantiationType(t, None)
 
         | _ -> failwith "unreach"
 
@@ -243,7 +242,7 @@ let rec solveTypeCore ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArg
 
     aux t
 
-let solveType env t = solveTypeCore env t |> getType
+let solveType env t = solveTypeCore env t |> getUnderlyingSystemType
 let solveTypes env ts = Seq.map (solveType env) ts |> Seq.toArray
 let solveParamTypes env pars = Seq.map (paramType >> solveType env) pars |> Seq.toArray
 
@@ -530,8 +529,8 @@ let getField env parent name =
     | TypeParam _ -> failwith "getField: TypeParam"
     | RuntimeType t -> t.GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
     | Builder { fmap = fmap } -> upcast get fmap name
-    | InstantiationType(tb, Some { fmap = fmap }, _) -> TypeBuilder.GetField(tb, get fmap name)
-    | InstantiationType(tb, None, _) ->
+    | InstantiationType(tb, Some { fmap = fmap }) -> TypeBuilder.GetField(tb, get fmap name)
+    | InstantiationType(tb, None) ->
         let fd = tb.GetGenericTypeDefinition().GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
         TypeBuilder.GetField(tb, fd)
 
@@ -602,8 +601,6 @@ let isTypeOfTb = {
     getTypeParams = fun { varMap = varMap } -> toTypeParams varMap
 }
 
-typedefof<_*_>.Module.ResolveMethod(typeof<int*char>.GetConstructors().[0].MetadataToken, [| typeof<int>; typeof<char> |], null)
-
 /// require: closeType.GetType().Name = "RuntimeType" && closeType.IsGenericType
 let getMemberOfRuntimeOpenType getMembers resolveMember (closeType: Type) (memberOfOpenType: Reflection.MemberInfo) =
     let openTypeParemeters = closeType.GetGenericTypeDefinition().GetGenericArguments()
@@ -637,11 +634,11 @@ let getGenericMethod
     { getSystemMethod = getSystemMethod
       toBase = toBase
       baseClass = { getMTypeParams = getMTypeParams; getParameters = getParameters }}
-    (env, constructedTypeBuilder, genericTypeDef, name, mTypeArgs, argTypes) =
+    (env, closeType, openType, name, mTypeArgs, argTypes) =
 
-    let typeParams = getTypeParams genericTypeDef
-    let m =
-        getMethodsOfName name genericTypeDef
+    let typeParams = getTypeParams openType
+    let openMethodOfOpenType =
+        getMethodsOfName name openType
         |> Seq.toList
         |> List.filter (fun m ->
             let m = toBase m
@@ -650,14 +647,16 @@ let getGenericMethod
             let env = { env with typeArgs = typeParams; mTypeArgs = mTypeParams }
             let pars = getParameters m
             List.length pars = List.length argTypes &&
-            let genericMethodDefParamTypes = solveTypes env argTypes
-            Seq.forall2 (=) genericMethodDefParamTypes (List.map getType pars)
+            let methodParamTypesOfOpenType = solveTypes env argTypes
+            Seq.forall2 (=) methodParamTypesOfOpenType (List.map getUnderlyingSystemType pars)
         )
         |> List.exactlyOne
 
-    let m = TypeBuilder.GetMethod(constructedTypeBuilder, getSystemMethod m)
+    let openMethodOfCloseType = TypeBuilder.GetMethod(closeType, getSystemMethod openMethodOfOpenType)
+
     let mTypeArgs = Seq.map (solveType env) mTypeArgs |> Seq.toArray
-    m.MakeGenericMethod mTypeArgs
+    if openMethodOfCloseType.IsGenericMethodDefinition then openMethodOfCloseType.MakeGenericMethod mTypeArgs
+    else openMethodOfCloseType
 
 let getMethod env parent name mTypeArgs argTypes =
     let a = B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic
@@ -692,29 +691,29 @@ let getMethod env parent name mTypeArgs argTypes =
             |> List.exactlyOne
         upcast mb
 
-    | InstantiationType(instantiation, None, _) -> getGenericMethod isTypeOfRt isMethodInfoOfRt (env, instantiation, instantiation.GetGenericTypeDefinition(), name, mTypeArgs, argTypes)
-    | InstantiationType(instantiation, Some genericTypeDef, _) -> getGenericMethod isTypeOfTb isMethodInfoOfTb (env, instantiation, genericTypeDef, name, mTypeArgs, argTypes)
+    | InstantiationType(closeType, None) -> getGenericMethod isTypeOfRt isMethodInfoOfRt (env, closeType, closeType.GetGenericTypeDefinition(), name, mTypeArgs, argTypes)
+    | InstantiationType(closeType, Some openType) -> getGenericMethod isTypeOfTb isMethodInfoOfTb (env, closeType, openType, name, mTypeArgs, argTypes)
 
 let getGenericCtor
     { getCtors = getCtors; getTypeParams = getTypeParams }
     { baseClass = { getParameters = getParameters }; toBase = toBase; getSystemMethod = getSystemMethod }
-    (env, constructedTypeBuilder, genericTypeDef, argTypes) =
+    (env, closeType, openType, argTypes) =
 
-    let typeParams = getTypeParams genericTypeDef
+    let typeParams = getTypeParams openType
     let m =
-        getCtors genericTypeDef
+        getCtors openType
         |> Seq.toList
         |> List.filter (fun m ->
             let m = toBase m
             let pars = getParameters m
             List.length pars = List.length argTypes &&
             let genericMethodDefParamTypes = solveTypes { env with typeArgs = typeParams } argTypes
-            let paramTypes = Seq.map getType pars
+            let paramTypes = Seq.map getUnderlyingSystemType pars
             Seq.forall2 (=) genericMethodDefParamTypes paramTypes
         )
         |> List.exactlyOne
 
-    TypeBuilder.GetConstructor(constructedTypeBuilder, getSystemMethod m)
+    TypeBuilder.GetConstructor(closeType, getSystemMethod m)
 
 let getCtor env parent argTypes =
     match solveTypeCore env parent with
@@ -743,8 +742,8 @@ let getCtor env parent argTypes =
             |> Seq.exactlyOne
         upcast cb
         
-    | InstantiationType(instantiation, None, _) -> getGenericCtor isTypeOfRt isCtorOfRt (env, instantiation, instantiation.GetGenericTypeDefinition(), argTypes)
-    | InstantiationType(instantiation, Some genericTypeDef, _) -> getGenericCtor isTypeOfTb isCtorOfTb (env, instantiation, genericTypeDef, argTypes)
+    | InstantiationType(closeType, None) -> getGenericCtor isTypeOfRt isCtorOfRt (env, closeType, closeType.GetGenericTypeDefinition(), argTypes)
+    | InstantiationType(closeType, Some openType) -> getGenericCtor isTypeOfTb isCtorOfTb (env, closeType, openType, argTypes)
 
 let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
     match operand with

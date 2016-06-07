@@ -66,8 +66,9 @@ lex "()" = Ok[|LParen; RParen|]
 lex "C`1" = Ok [| Id "C`1" |]
 lex " `1" = Error(1, None, None)
 
+
 parse "type C`0 =" = Ok (il [type0D [] "C`0" None [] []])
-parse "type Make`1(T1) = fun Tuple(T2)(!T1, !!T2) : void = ret" =
+parse "type Make`1(T1) = member Tuple(T2)(!T1, !!T2) : void = ret" =
     Ok (il [
             typeD [] "Make`1" ["T1"] None [] [
                 methodD "Tuple" ["T2"] [paramT !"T1"; paramT !!"T2"] voidT [ret]
@@ -77,7 +78,7 @@ parse "type Make`1(T1) = fun Tuple(T2)(!T1, !!T2) : void = ret" =
 
 parse "
 type Make`1(T1) =
-    fun Tuple(T2)(item1: !T1, item2: !!T2) : void =
+    member Tuple(T2)(item1: !T1, item2: !!T2) : void =
         ldarg.0
         ldarg.1
         newobj [mscorlib]System.Tuple`2(!T1,!!T2)(!0,!1)
@@ -144,11 +145,11 @@ end
 begin
     let source = "
 module Ops =
-    fun Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
-    fun Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
+    let Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
+    let Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
 
 module Main =
-    fun main(): float32 =
+    let main(): float32 =
         ldc.i4.1
         ldc.i4.3
         call Ops::Add(int32, int32)
@@ -219,12 +220,12 @@ begin
     let source = "
 module NestedType =
     type Type1 =
-        fun static Method1() : void = ret;
+        let Method1() : void = ret;
     module Module1 =
-        fun Fun1() : void = ret;;
+        let Fun1() : void = ret;;
     ;
     module Module2 =
-        fun Fun1() : void = ret
+        let Fun1() : void = ret
     ;;
 "
     let expected = ".assembly extern mscorlib
@@ -288,14 +289,14 @@ end
 begin
     let source = """
     type MakeTuple2.Make`1(T1) =
-        fun static Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) =
+        let Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) =
             ldarg.0
             ldarg.1
             newobj [mscorlib]System.Tuple`2(!T1,!!T2)(!0, !1)
             ret;;
 
     module MakeTuple2.Main =
-        fun main(): [mscorlib]System.Tuple`2(int32, string) =
+        let main(): [mscorlib]System.Tuple`2(int32, string) =
             ldc.i4.1
             ldstr "2"
             call MakeTuple2.Make`1(int32)::Tuple(string)(!0, !!0)
@@ -360,7 +361,7 @@ end
 begin
     let source = "
     module RuntimeTypeGenericArg.Program =
-        fun Main (string, string) : [mscorlib]System.Tuple`2(string, string) =
+        let Main (string, string) : [mscorlib]System.Tuple`2(string, string) =
             ldarg.0
             ldarg.1
             newobj [mscorlib]System.Tuple`2(string, string)(!0, !1)
@@ -400,34 +401,185 @@ begin
     ildasm "RuntimeTypeGenericArg" source = expected
 end
 
-let source = """
-type MakeTupleOverload.Make`1(T1) =
-    fun Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = 
-        ldarg.0
-        ldarg.1
-        newobj [mscorlib]System.Tuple`2(!T1,!!T2)(!0, !1)
-        ret;
+begin
+    let source = """
+    type MakeTupleOverload.Make`1(T1) =
+        let Tuple (T2) (!T1, !!T2) : [mscorlib]System.Tuple`2(!T1,!!T2) = 
+            ldarg.0
+            ldarg.1
+            newobj [mscorlib]System.Tuple`2(!T1,!!T2)(!0, !1)
+            ret;
 
-    fun Tuple (string, string) : [mscorlib]System.Tuple`2(string, string) =
-        ldarg.0
-        ldarg.1
-        newobj [mscorlib]System.Tuple`2(string, string)(!0, !1)
-        ret;;
+        let Tuple (string, string) : [mscorlib]System.Tuple`2(string, string) =
+            ldarg.0
+            ldarg.1
+            newobj [mscorlib]System.Tuple`2(string, string)(!0, !1)
+            ret;;
 
-module MakeTupleOverload.Main =
-    fun main(string, string, string, string): [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string)) =
-        ldarg.0
-        ldarg.1
-        call MakeTupleOverload.Make`1(string)::Tuple(string)(!0, !!0)
-        ldarg.2
-        ldarg.3
-        call MakeTupleOverload.Make`1(string)::Tuple()(string, string)
-        newobj [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string))(!0, !1)
-        ret
-"""
+    module MakeTupleOverload.Main =
+        let main(string, string, string, string): [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string)) =
+            ldarg.0
+            ldarg.1
+            call MakeTupleOverload.Make`1(string)::Tuple(string)(!0, !!0)
+            ldarg.2
+            ldarg.3
+            call MakeTupleOverload.Make`1(string)::Tuple()(string, string)
+            newobj [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string))(!0, !1)
+            ret
+    """
+    let expected = ".assembly extern mscorlib
+{
+  .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
+  .ver 4:0:0:0
+}
+.assembly MakeTupleOverload
+{
+  .hash algorithm 0x00008004
+  .ver 0:0:0:0
+}
+.module MakeTupleOverload.dll
+.imagebase 0x00400000
+.file alignment 0x00000200
+.stackreserve 0x00100000
+.subsystem 0x0003
+.corflags 0x00000001
+.class public auto ansi sealed beforefieldinit MakeTupleOverload.Make`1<T1>
+       extends [mscorlib]System.Object
+{
+  .method public static class [mscorlib]System.Tuple`2<!T1,!!T2> 
+          Tuple<T2>(!T1 A_0,
+                    !!T2 A_1) cil managed
+  {
+    .maxstack  3
+    IL_0000:  ldarg.0
+    IL_0001:  ldarg.1
+    IL_0002:  newobj     instance void class [mscorlib]System.Tuple`2<!T1,!!T2>::.ctor(!0,
+                                                                                       !1)
+    IL_0007:  ret
+  }
+  .method public static class [mscorlib]System.Tuple`2<string,string> 
+          Tuple(string A_0,
+                string A_1) cil managed
+  {
+    .maxstack  3
+    IL_0000:  ldarg.0
+    IL_0001:  ldarg.1
+    IL_0002:  newobj     instance void class [mscorlib]System.Tuple`2<string,string>::.ctor(!0,
+                                                                                            !1)
+    IL_0007:  ret
+  }
+  .method public specialname rtspecialname 
+          instance void  .ctor() cil managed
+  {
+    .maxstack  2
+    IL_0000:  ldarg.0
+    IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
+    IL_0006:  ret
+  }
+}
+.class public abstract auto ansi sealed MakeTupleOverload.Main
+       extends [mscorlib]System.Object
+{
+  .method public static class [mscorlib]System.Tuple`2<class [mscorlib]System.Tuple`2<string,string>,class [mscorlib]System.Tuple`2<string,string>> 
+          main(string A_0,
+               string A_1,
+               string A_2,
+               string A_3) cil managed
+  {
+    .maxstack  3
+    IL_0000:  ldarg.0
+    IL_0001:  ldarg.1
+    IL_0002:  call       class [mscorlib]System.Tuple`2<!0,!!0> class MakeTupleOverload.Make`1<string>::Tuple<string>(!0,
+                                                                                                                      !!0)
+    IL_0007:  ldarg.2
+    IL_0008:  ldarg.3
+    IL_0009:  call       class [mscorlib]System.Tuple`2<string,string> class MakeTupleOverload.Make`1<string>::Tuple(string,
+                                                                                                                     string)
+    IL_000e:  newobj     instance void class [mscorlib]System.Tuple`2<class [mscorlib]System.Tuple`2<string,string>,class [mscorlib]System.Tuple`2<string,string>>::.ctor(!0,
+                                                                                                                                                                          !1)
+    IL_0013:  ret
+  }
+}"
+    ildasm "MakeTupleOverload" source = expected
+end
 
-let expected = ""
-ildasm "MakeTupleOverload" source
+begin
+    let source = "
+    type Fields =
+        member I1 : int32;
+        member mutable IM1 : int32;
+        let S1 : int32;
+        let mutable SM1 : int32;
 
+        let C1 = true;
+        let C2 = 'a';
+        let C3 = \"test\";
+        let C4 = null;
+        let C5 : object = null;
 
+        let Int32C1 = 11;
+        let Int32C2 = 0xFFFFFFFF;
+        let Int32C3 = int32 11;
+    
+        let Int64C1 = 0x100000000;
+        let Int64C2 = int64 11;
+
+        let Int8C1 = int8 11;
+
+        let Float64C1 = 11.0;
+        let Float64C2 = float64 11.0;
+
+        let Float32C2 = float32 11.0;
+    
+        let EnumC1 : [mscorlib]System.ConsoleColor = 0
+    "
+    let expected = ".assembly extern mscorlib
+{
+  .publickeytoken = (B7 7A 5C 56 19 34 E0 89 )
+  .ver 4:0:0:0
+}
+.assembly Field
+{
+  .hash algorithm 0x00008004
+  .ver 0:0:0:0
+}
+.module Field.dll
+.imagebase 0x00400000
+.file alignment 0x00000200
+.stackreserve 0x00100000
+.subsystem 0x0003
+.corflags 0x00000001
+.class public auto ansi sealed beforefieldinit Fields
+       extends [mscorlib]System.Object
+{
+  .field public initonly int32 I1
+  .field public int32 IM1
+  .field public static initonly int32 S1
+  .field public static int32 SM1
+  .field public static literal bool C1 = bool(true)
+  .field public static literal char C2 = char(0x0061)
+  .field public static literal string C3 = \"test\"
+  .field public static literal object C4 = nullref
+  .field public static literal object C5 = nullref
+  .field public static literal int32 Int32C1 = int32(0x0000000B)
+  .field public static literal int32 Int32C2 = int32(0xFFFFFFFF)
+  .field public static literal int32 Int32C3 = int32(0x0000000B)
+  .field public static literal int64 Int64C1 = int64(0x100000000)
+  .field public static literal int64 Int64C2 = int64(0xB)
+  .field public static literal int8 Int8C1 = int8(0x0B)
+  .field public static literal float64 Float64C1 = float64(11.)
+  .field public static literal float64 Float64C2 = float64(11.)
+  .field public static literal float32 Float32C2 = float32(11.)
+  .field public static literal valuetype [mscorlib]System.ConsoleColor EnumC1 = int32(0x00000000)
+  .method public specialname rtspecialname 
+          instance void  .ctor() cil managed
+  {
+    .maxstack  2
+    IL_0000:  ldarg.0
+    IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
+    IL_0006:  ret
+  }
+}"
+    ildasm "Field" source = expected
+end
 // #r @"C:\Users\pc-2\AppData\Local\Temp\AddOps.dll"

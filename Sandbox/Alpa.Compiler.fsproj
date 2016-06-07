@@ -85,8 +85,8 @@
     <None Include="ILEmit.Helpers.fsx" />
     <None Include="ILEmit.Test.fsx" />
     <None Include="RegexLexer.fsx" />
-    <None Include="ILEmit.Parser.Test.fsx" />
     <None Include="ILEmit.Parser.fsx" />
+    <None Include="ILEmit.Parser.Test.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">
