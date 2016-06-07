@@ -1,11 +1,9 @@
 ﻿module ILEmit.Parser
-#load "RegexLexer.fsx"
-#load "ILEmit.fsx"
-#r "./bin/debug/Alpa.Compiler.dll"
 open System
 open Alpa.ParserCombinator
 open Alpa.IO
 open ILEmit
+open ILEmit.Emit
 open RegexLexer
 
 type TokenKind =
