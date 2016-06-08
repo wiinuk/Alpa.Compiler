@@ -3,6 +3,7 @@ module Alpa.ParserCombinator.Primitives
 open Alpa
 open Alpa.IO
 open Alpa.IO.Stream
+open System.Collections.Generic
 
 type Parser<'c,'u,'e,'a> = Stream<'c, 'u> -> Reply<'a, 'e>
 type Result<'c,'u,'e,'a> = Failure of error: 'e * index: int * last: option<'c> * state: 'u | Success of 'a
@@ -23,6 +24,8 @@ let runWithState (Parser p) state xs =
     let r = p xs
     if r.Status = Ok then Success r.Value
     else Failure(r.Error, xs.Index, Buffer.get xs.Items xs.Index, xs.UserState)
+
+let preturn v = fun _ -> Reply v
 
 let (|>>) (Parser p) f = fun xs ->
     let r = p xs
@@ -241,15 +244,28 @@ let satisfyMapE p f e =
 let choiceHead getKey e = function
     | [] -> pzero
     | [t,p] -> satisfyE (getKey >> (=) t) e >>. p
-    | ps ->     
-        fun xs ->
-            if canRead xs then
-                let rec find t = function
-                    | [] -> Reply((), e)
-                    | (t',p)::_ when t = t' -> seek xs 1; p xs
-                    | _::ps -> find t ps
-                find (peek xs |> getKey) ps
-            else Reply((), e)
+    | ps ->
+        let rec greaterThan n = function
+            | [] -> n < 0
+            | _::_ when n <= 0 -> true
+            | _::xs -> greaterThan (n - 1) xs
+
+        if greaterThan 10 ps then
+            let map = Dictionary()
+            for t,p in ps do map.Add(t, p)
+            fun xs ->
+                let mutable p = Unchecked.defaultof<_>
+                if canRead xs && map.TryGetValue(peek xs |> getKey, &p) then
+                    seek xs 1
+                    p xs
+                else Reply((), e)
+        else
+            let rec find t xs = function
+                | [] -> Reply((), e)
+                | (t',p)::_ when t = t' -> seek xs 1; p xs
+                | _::ps -> find t xs ps
+
+            fun xs -> if canRead xs then find (peek xs |> getKey) xs ps else Reply((), e)
 
 let specialE r e = satisfyE (Token.isR r) e
 let operatorE e = satisfyE Token.isOp e

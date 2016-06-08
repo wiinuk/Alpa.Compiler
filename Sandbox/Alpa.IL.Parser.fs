@@ -20,8 +20,6 @@ type TokenKind =
     | Colon
     /// "="
     | Equals
-    /// "!"
-    | Bang
     /// ","
     | Comma
     /// "."
@@ -30,14 +28,20 @@ type TokenKind =
     | Semicolon
     /// "+"
     | Plus
-    /// "!!"
-    | DBang
     /// "::"
     | DColon
     /// ";;"
     | DSemicolon
     /// "<:"
     | LessThanColon
+    /// "`"
+    | GraveAccent
+    /// "``"
+    | DGraveAccent
+    /// "->"
+    | HyphenGreaterThan
+    /// "*"
+    | Multiply
 
     | Abstract
     | Override
@@ -51,6 +55,8 @@ type TokenKind =
     | New
     | Let
     | Member
+    | Static
+    | Alias
 
     | Int8
     | Int16
@@ -112,7 +118,7 @@ type Errors =
     | RequireLiteralToken
     | RequireIdToken
     | RequireOpToken
-    | RequireTypeName
+    | RequireType
     | RequireTypeSpecifier
     | RequireName
     | RequireTypeKind
@@ -132,15 +138,17 @@ let delimiter() = [|
     "]", RSBraket
     ":", Colon
     "=", Equals
-    "!", Bang
     ",", Comma
     ".", Dot
     ";", Semicolon
     "+", Plus
-    "!!", DBang
     "::", DColon
     ";;", DSemicolon
     "<:", LessThanColon
+    "`", GraveAccent
+    "``", DGraveAccent
+    "->", HyphenGreaterThan
+    "*", Multiply
 |]
 
 let keyword() = [|
@@ -156,7 +164,9 @@ let keyword() = [|
     "new", New
     "let", Let
     "member", Member
-    
+    "static", Static
+    "alias", Alias
+
     "int8", Int8
     "int16", Int16
     "int32", Int32
@@ -253,6 +263,7 @@ let lex = lexer <| lexData()
 module SourceParsers =
     open Alpa.RegexLexer.Source
 
+    let preturn v = preturn v |>> VirtualSource
     let manyRev1 p = pipe2 p (manyRev (p |>> value)) <| fun x xs -> map (fun x -> x::xs) x
     let many1 p = pipe2 p (many (p |>> value)) <| fun x xs -> map (fun x -> x,xs) x
 
@@ -314,20 +325,20 @@ module Specials =
     let ``.`` = d Dot
     let ``:`` = d Colon
     let ``+`` = d Plus
-    let ``!`` = d Bang
     let ``d=`` = d Equals
     let ``;``= d Semicolon
-    let ``!!`` = d DBang
     let ``::`` = d DColon
     let ``<:`` = d LessThanColon
     let ``;;`` = d DSemicolon
+    let graveAccent = d GraveAccent
+    let dGraveAccent = d DGraveAccent
+    let ``->`` = d HyphenGreaterThan
+    let ``*`` = d Multiply
 
     let Mutable = d Mutable
 module K = Specials
 
 let tInt32 = satisfyMapE (function LInt32 _ -> true | _ -> false) (function LInt32(_,x) -> x | _ -> 0) RequireInt32Token
-
-let tId = satisfyMapE (function Id _ -> true | _ -> false) (function Id x -> x | _ -> "") RequireIdToken
 
 let tOp = satisfyMapE (function Op _ -> true | _ -> false) (function Op x -> x | _ -> O.Nop) RequireOpToken
 
@@ -375,63 +386,71 @@ let fullName = pipe4 (opt assemblyName) namespaceRev nestersRev name <| fun asmN
 let pathRev = pipe2 namespaceRev name <| fun ns n -> n, ns
 
 open PreDefinedTypes
-let preDefinedTypeName =
-    satisfyMapE
-        (function 
-            | Int8
-            | Int16
-            | Int32
-            | Int64
-            | UInt8
-            | UInt16
-            | UInt32
-            | UInt64
-            | Float32
-            | Float64
 
-            | Void
-            | Bool
-            | Char
-            | String
-            | Object -> true
-            | _ -> false
-        )
-        (function
-            | Int8 -> int8T
-            | Int16 -> int16T
-            | Int32 -> int32T
-            | Int64 -> int64T
-            | UInt8 -> uint8T
-            | UInt16 -> uint16T
-            | UInt32 -> uint32T
-            | UInt64 -> uint64T
-            | Float32 -> float32T
-            | Float64 -> float64T
+/// ex: (``T1), (``'t.1', ``'t.2')
+let mTypeParams = tupleLike1(dGraveAccent >>. name) |>> function x,xs -> x::xs
 
-            | Void -> voidT
-            | Bool -> boolT
-            | Char -> charT
-            | String -> stringT
-            | Object -> objectT
-            | _ -> voidT
-        )
-        RequireTypeName
+/// ex: (`T1), (`'t.1', `'t.2')
+let typeParams = tupleLike1(graveAccent >>. name) |>> function x,xs -> x::xs
 
-/// ex: (T1), (T1, T2)
-let typeParams _ = tupleLike1 name |>> function x,xs -> x::xs
-
-/// ex: "[mscorlib]System.Diagnostics.Stopwatch+Internals+LowTimer`1(T)" "!T" "!0" "!!2"
+/// ex: "[mscorlib]System.Diagnostics.Stopwatch+Internals+LowTimer`1(int32)" "`T" "`0" "``2"
 let typeSpec, typeSpecRef = createParserForwardedToRef()
 do
-    typeSpecRef := 
-        choice [
-            preDefinedTypeName
-            pipe2 fullName (opt (tupleOrValueLike1 typeSpec)) <| fun n vs -> TypeSpec(n, match vs with None -> [] | Some(v,vs) -> v::vs)
-            ``!`` >>. tId |>> TypeVar
-            ``!!`` >>. tId |>> MethodTypeVar
-            ``!`` >>. tInt32 |>> TypeArgRef
-            ``!!`` >>. tInt32 |>> MethodTypeArgRef
-        ]
+    let namedType = pipe2 fullName (opt (tupleOrValueLike1 typeSpec)) <| fun n vs -> TypeSpec(n, match vs with None -> [] | Some(v,vs) -> v::vs)
+
+    let primType = 
+        choiceHead RequireType [
+            LParen, typeSpec .>> ``)``
+            Int8, preturn int8T
+            Int16, preturn int16T
+            Int32, preturn int32T
+            Int64, preturn int64T
+            UInt8, preturn uint8T
+            UInt16, preturn uint16T
+            UInt32, preturn uint32T
+            UInt64, preturn uint64T
+            Float32, preturn float32T
+            Float64, preturn float64T
+            
+            Void, preturn voidT
+            Bool, preturn boolT
+            Char, preturn charT
+            String, preturn stringT
+            Object, preturn objectT
+
+            GraveAccent, ((name |>> TypeVar) <|> (tInt32 |>> TypeArgRef))
+            DGraveAccent, ((name |>> MethodTypeVar) <|> (tInt32 |>> MethodTypeArgRef))
+        ] <|> namedType
+
+    let tupleType =
+        let tuple2Name = FullName("*`2", [], [], None)
+        let tuple3Name = FullName("**`3", [], [], None)
+        let tuple4Name = FullName("***`4", [], [], None)
+        sepBy1 primType ``*`` |>> function
+            | x, [] -> x
+            | t, ts ->
+                let ts = t::ts
+                let name =
+                    match List.length ts with
+                    | 2 -> tuple2Name
+                    | 3 -> tuple3Name
+                    | 4 -> tuple4Name
+                    | n -> FullName(sprintf "%s`%d" (String.replicate (n-1) "*") n, [], [], None)
+                TypeSpec(name, ts)
+
+    let arrowType =
+        let arrowName = FullName("->`2", [], [], None)
+        let foldArrow = function
+            | x, [] -> x
+            | x, xs ->
+                let rec aux l = function
+                    | [] -> l
+                    | r::rs -> TypeSpec(arrowName, [l; aux r rs])
+                aux x xs
+
+        sepBy1 tupleType ``->`` |>> foldArrow
+
+    typeSpecRef := arrowType
 
 let inherits = ``<:`` >>. sepBy1 typeSpec ``,``
 
@@ -557,7 +576,7 @@ let parameter =
 let parameters = tupleLike0 parameter
 
 let methodHead =
-    pipe4 name (optDefault [] (typeParams true)) parameters typing <| fun name mTypeParams ps ret -> MethodHead(name, mTypeParams, ps, Parameter(None, ret))
+    pipe4 name (optDefault [] mTypeParams) parameters typing <| fun name mTypeParams ps ret -> MethodHead(name, mTypeParams, ps, Parameter(None, ret))
 
 type OT = System.Reflection.Emit.OperandType
 
@@ -607,7 +626,7 @@ let opType = typeSpec |>> OpType
 /// ex: System.Type::Delimiter
 let opField = pipe3 typeSpec ``::`` name <| fun t _ n -> OpField(t, n)
 
-/// ex: System.Tuple`2(string, char)(!0, !1)
+/// ex: System.Tuple`2(string, char)(`0, `1)
 let opCtor = pipe2 typeSpec (tupleLike0 typeSpec) <| fun t args -> OpCtor(t, args)
 
 let opMethod =
@@ -620,7 +639,7 @@ let opMethod =
 
 let opMethodBase = opMethod <|> opCtor
 let instr =
-    let label = optDefault "" (tId .>> ``:``)
+    let label = optDefault "" (name .>> ``:``)
     let opNone = Reply <| Source.VirtualSource OpNone
     let operand t xs =
         match t with
@@ -709,9 +728,10 @@ let typeMember =
     choiceHead RequireTypeMember [
         Let, staticMemberTail
         Member, instanceMemberTail
+
         // ex: new (x: System.Int32) = ...
         New, pipe3 parameters ``d=`` methodBody <| fun ps _ b -> CtorDef(ps, b)
-        
+
         // ex: abstract AddRange (T) (xs: IEmumerable`1(T)) : void
         Abstract, methodHead |>> AbstractDef
 
@@ -735,7 +755,7 @@ let typeDefTail name make =
     pipe5 (
         opt typeKind,
         name,
-        optDefault [] (typeParams false),
+        optDefault [] typeParams,
         opt inherits,
         ``d=`` >>. members,
         make
@@ -757,12 +777,39 @@ let moduleMember =
     
 let moduleMembers = sepBy moduleMember ``;``
 
-moduleModuleDefTailRef := pipe4 name ``d=`` moduleMembers ``;;`` <| fun n _ ms _ -> ModuleModuleDef(n, ms)
+moduleModuleDefTailRef := pipe4 name ``d=`` moduleMembers ``;;`` <| fun n _ ms _ -> ModuleModuleDef(n, { mMembers = ms })
+
+let typeName =
+    let typeArg = graveAccent >>. name
+    choice [
+        pipe2 name (opt (tupleOrValueLike1 typeArg)) <| fun n vs ->
+            n, match vs with None -> [] | Some(v,vs) -> v::vs
+
+        sepBy1 typeArg ``*`` |>> function
+            | x, [] -> x, []
+            | t, ts ->
+                let ts = t::ts
+                let name =
+                    match List.length ts with
+                    | 2 -> "*`2"
+                    | 3 -> "**`3"
+                    | 4 -> "***`4"
+                    | n -> sprintf "%s`%d" (String.replicate (n-1) "*") n
+                name, ts
+
+        pipe3 typeArg ``->`` typeArg <| fun l _ r -> "->`2", [l;r]
+    ]
+
+/// alias integer = [System.Numerics]System.Numerics.BigInteger;;
+/// alias `a -> `b = Fun(`a, `b);;
+/// alias `a * `b = [mscorlib]System.Tuple`2(`a, `b)
+let aliasTail = pipe3 typeName ``d=`` typeSpec <| fun (n,ts) _ td -> TopAliasDef(n,ts,td)
 
 let topMember =
     choiceHead RequireTopMember [
+        Alias, aliasTail
         Type, typeDefTail pathRev <| fun n d -> TopTypeDef(n, d)
-        Module, pipe3 pathRev ``d=`` moduleMembers <| fun n _ ms -> TopModuleDef(n, ms)
+        Module, pipe3 pathRev ``d=`` moduleMembers <| fun n _ ms -> TopModuleDef(n, { mMembers = ms })
     ]
 
 /// ex: type Ns.A =;; module B =;; type T =

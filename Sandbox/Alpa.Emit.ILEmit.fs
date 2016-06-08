@@ -48,16 +48,17 @@ module DefineTypes =
         path = path
         varMap = emptyVarMap
         map = map
+        cctor = None
         mmap = HashMap()
         cmap = CtorMap()
         fmap = HashMap()
     }
 
-    let rec module'(defineType, toName, a, fullName, map, ms) =
+    let rec module'(defineType, toName, a, fullName, map, ({ mMembers = members } as md)) =
         let a = a ||| T.Abstract ||| T.Sealed
         let t = defineType(toName fullName, a)
-        add map fullName <| newILTypeBuilder (Choice2Of2 ms) t fullName map
-        for m in ms do moduleMember fullName t map m
+        add map fullName <| newILTypeBuilder (Choice2Of2 md) t fullName map
+        for m in members do moduleMember fullName t map m
 
     and type'(defineType, toName, a, fullName, map, ({ kind = kind; members = members } as d)) =
         let isInterfaceMember = function 
@@ -65,7 +66,8 @@ module DefineTypes =
             | Field _
             | MethodDef _
             | StaticMethodDef _
-            | CtorDef _ -> false
+            | CtorDef _ 
+            | CCtorDef _ -> false
             | AbstractDef _ -> true
 
         let kind =
@@ -91,6 +93,7 @@ module DefineTypes =
 
     and moduleMember path (t: TypeBuilder) map = function
         | ModuleMethodDef _
+        | ModuleCCtorDef _
         | ModuleValDef _ 
         | ModuleLiteralDef _ -> ()
         | ModuleModuleDef(name, ms) -> module'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, map, ms)
@@ -232,6 +235,10 @@ let defineLiteral ({ t = t; fmap = fmap } as ti) name ft fv =
     f.SetConstant <| literalValue fv
     add fmap name f
 
+let defineCCtor ({ t = t } as dt) body =
+    let c = t.DefineTypeInitializer()
+    dt.cctor <- Some { cb = c; dt = dt; pars = []; body = body }
+
 let defineCtor ({ t = t; cmap = cmap } as dt) pars body =
     let pts = solveParamTypes (envOfTypeBuilder emptyVarMap dt) pars
     let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
@@ -248,6 +255,7 @@ let defineMember dt = function
     | MethodDef(ov, m) -> defineMethodDef dt ov m
     | StaticMethodDef m -> defineStaticMethod dt m
     | CtorDef(pars, body) -> defineCtor dt pars body
+    | CCtorDef body -> defineCCtor dt body
     | AbstractDef head ->
         let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
         defineMethodHead dt a CC.HasThis head
@@ -271,12 +279,14 @@ let defineModuleMember dt = function
     | ModuleValDef(isMutable, name, ft) -> defineField dt (true, isMutable, name, ft)
     | ModuleLiteralDef(name, ft, v) -> defineLiteral dt name ft v
     | ModuleMethodDef m -> defineStaticMethod dt m
+    | ModuleCCtorDef b -> defineCCtor dt b
 
 let defineMembers map =
-    for ({ d = d } as ti) in values map do
+    for ({ d = d; t = t } as ti) in values map do
         match d with
         | Choice1Of2 td -> defineTypeDef ti td
-        | Choice2Of2 members -> for m in members do defineModuleMember ti m
+        | Choice2Of2 { mMembers = members } ->
+            for m in members do defineModuleMember ti m
 
 let sysTypeValidate (t: Type) =
     if t.IsNested then failwithf "%A is GenericParameter." t
@@ -541,13 +551,18 @@ let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
 let emitMethod g mVarMap dt (MethodBody instrs) =
     for instr in instrs do emitInstr g mVarMap dt instr
 
-let emit map =
-    for { mmap = mmap; cmap = cmap } in values map do
+let emitMethods map =
+    for { mmap = mmap; cmap = cmap; cctor = cctor } in values map do
         for mis in values mmap do
             for { mb = mb; mVarMap = mVarMap; dt = dt; m = MethodInfo(_, b) } in mis do
                 emitMethod (mb.GetILGenerator()) mVarMap dt b
 
         for { cb = cb; dt = dt; body = body } in cmap do
+            emitMethod (cb.GetILGenerator()) emptyVarMap dt body
+
+        match cctor with
+        | None -> ()
+        | Some { cb = cb; dt = dt; body = body } ->
             emitMethod (cb.GetILGenerator()) emptyVarMap dt body
 
 let createTypes map = for { t = t } in values map do t.CreateType() |> ignore
@@ -557,7 +572,7 @@ let emitIL m { topDefs = ds } =
     for d in ds do DefineTypes.topDef m map d
     defineTypeParams map
     defineMembers map
-    emit map
+    emitMethods map
     createTypes map
 
 module PreDefinedTypes =

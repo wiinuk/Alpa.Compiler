@@ -86,10 +86,10 @@
     <None Include="SimpleType.il">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="ComplexType.ail" />
     <None Include="SimpleType.ail">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="ComplexType.ail" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FsCheck">

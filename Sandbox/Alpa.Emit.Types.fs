@@ -80,6 +80,7 @@ type MemberDef =
     | Field of isStatic: bool * isMutable: bool * name: string * TypeSpec
     | AbstractDef of MethodHead
     | CtorDef of pars: Parameter list * MethodBody
+    | CCtorDef of MethodBody
     | MethodDef of Override option * MethodInfo
     | StaticMethodDef of StaticMethodInfo
 
@@ -91,16 +92,21 @@ type TypeDef = {
     inherits: TypeSpec list
     members: MemberDef list
 }
-type ModuleMember =
+type ModuleDef = {
+    mMembers: ModuleMember list
+}
+and ModuleMember =
     | ModuleMethodDef of StaticMethodInfo
     | ModuleTypeDef of name: string * TypeDef
-    | ModuleModuleDef of name: string * ModuleMember list
+    | ModuleCCtorDef of MethodBody
+    | ModuleModuleDef of name: string * ModuleDef
     | ModuleValDef of isMutable: bool * name: string * TypeSpec
     | ModuleLiteralDef of name: string * TypeSpec * Literal
 
 type TopDef =
+    | TopAliasDef of name: string * typeParams: string list * entity: TypeSpec
     | TopTypeDef of pathRev: (string * string list) * TypeDef
-    | TopModuleDef of pathRev: (string * string list) * ModuleMember list
+    | TopModuleDef of pathRev: (string * string list) * ModuleDef
 
 type AssemblyDef = string
 type IL = { topDefs: TopDef list }
@@ -114,7 +120,7 @@ type MethodSign = MethodName
 type FieldSign = string
 
 type ILTypeBuilder = {
-    d: Choice<TypeDef, ModuleMember list>
+    d: Choice<TypeDef, ModuleDef>
     t: TypeBuilder
 
     path: FullName
@@ -122,6 +128,7 @@ type ILTypeBuilder = {
     map: TypeMap
     mutable varMap: TypeVarMap
 
+    mutable cctor: ILCtorBuilder option
     mmap: MethodMap
     cmap: CtorMap
     fmap: FieldMap

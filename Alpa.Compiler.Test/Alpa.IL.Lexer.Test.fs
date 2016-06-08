@@ -91,6 +91,5 @@ let lexTest() =
     assertLexEq [
         "0x10000000000000000", Error(0, Some IntegerOverflow, None)
         "- 3", Error(0, None, None)
-        " `1", Error(1, None, None)
     ]
 
