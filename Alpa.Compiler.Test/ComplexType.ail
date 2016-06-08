@@ -1,0 +1,63 @@
+﻿alias integer = [System.Numerics]System.Numerics.BigInteger
+
+type abstract Fun(a, b) = abstract Apply(!a) : !b;;
+alias (a -> b) = Fun(a, b)
+
+type Num(a) =
+    abstract ofInteger(integer): !a;
+    abstract '_+_'(!a, !a) : !a;;
+
+type 'Num(int32)' <: Num(int32) =
+    override ofInteger(integer): int32 =
+		ldarg.1
+		call integer::op_Explicit(integer): int32
+		ret;
+
+    override '_+_'(int32, int32): int32 =
+		ldarg.1
+		ldarg.2
+		add
+		ret;;
+
+type CloSucc2(a) <: (!a -> !a) =
+    let item1: Num(!a)
+    new (Num(!a)) =
+		ldarg.0
+		call base()
+        ldarg.1
+        stfld CloSucc2(!a)::item1
+		ret;
+
+	override Apply(!a): !a =
+        ldarg.0
+        ldfld CloSucc2(!a)::item1
+        ldsfld bigint::One
+        callvirt Num(!a)::ofInteger(bigint)
+        callvirt Num(!a)::'_+_'(!a, !a)
+        ret;;
+
+type CloSucc(a) <: (Num(!a) -> !a -> !a) =
+    override Apply(Num(!a)) : (!a -> !a) =
+        ldarg.1
+        newobj CloSucc2(!a)(Num a)
+        ret;;
+
+module Program =
+    let succ(a)() : (Num(!a) -> !a -> !a) = newobj (CloSucc a) () ret;
+    let 'Num(int32)' : Num(int32);
+    let ten : int32;
+
+    static new() =
+        newobj 'Num(int32)' ()
+        stsfld Program::'Num(int32)'
+        ldc_i4 10
+        stsfld Program::ten
+        ret;
+
+	let main() : void =
+        ldsfld Program::ten
+        ldsfld Program::'Num(int32)'
+        call Program::succ(int32)()
+        callvirt (Num(int32) -> int32 -> int32)::Apply(Num(int32))
+        callvirt (int32 -> int32)::Apply(int32)
+        ret

@@ -32,10 +32,14 @@ let assertOfFile name =
     let expected = File.ReadAllText(name + ".il")
     toILSource "\r\n" name source ==? expected
 
+let parseFileNames = [
+    "SimpleType"
+    "OverloadOps"
+    "NestedType"
+    "MakeTuple2"
+]
 [<Fact>]
-let ParseFiles() =
-    for ail in Directory.EnumerateFiles(Environment.CurrentDirectory, "*.ail") do
-        assertOfFile <| Path.GetFileNameWithoutExtension ail
+let ParseFiles() = for name in parseFileNames do assertOfFile name
 
 //begin
 //    let source = "

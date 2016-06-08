@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Numerics;
 using System.Reflection;
 using static System.Console;
 
@@ -192,9 +193,10 @@ namespace ConsoleApplication1
     static class Program
     {
         public static bool RetBool() => true;
-        public static int Main(string[] args)
+        public static int OfInteger(BigInteger i) => (int)i;
+        public static void Main(string[] args)
         {
-            return 0;
+            new BigInteger(10);
         }
     }
 }
