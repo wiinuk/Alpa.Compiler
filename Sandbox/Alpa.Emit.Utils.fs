@@ -1,6 +1,22 @@
 ﻿namespace Alpa.Emit
 open System
 
+module List =
+    let tryIter2 action ls rs =
+        let rec aux ls rs =
+            match ls, rs with
+            | l::ls, r::rs -> action l r; aux ls rs
+            | [], [] -> true
+            | _ -> false
+        aux ls rs
+
+    let tryGetDuplicate xs =
+        let rec aux set = function
+            | [] -> None
+            | x::_ when List.contains x set -> Some x
+            | x::xs -> aux (x::set) xs
+        aux [] xs
+
 module HashMap =
     let add (map: HashMap<_,_>) k v = map.Add(k, v)
     let assign (map: HashMap<_,_>) k v = map.[k] <- v
@@ -42,6 +58,10 @@ module SolvedType =
         | InstantiationType(closeType = t) -> t
         | TypeParam(_, TypeParamBuilder t) -> upcast t
         | Builder { t = t } -> upcast t
+        
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module EmitException =
+    let raiseEmitExn e = raise <| EmitException e
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module TypeSpec =
@@ -53,33 +73,48 @@ module TypeSpec =
             | None -> t
 
         | t -> t
-        
-    let solveTypeVarMap vs v = List.find (fst >> (=) v) vs |> snd
-    let rec solveTypeCore ({ tmap = map; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
-        let getCloseType map pathRev =
-            let mutable ti = Unchecked.defaultof<_>
-            if HashMap.tryGet map pathRev &ti then Builder ti
-            else RuntimeType <| Type.GetType(FullName.toTypeName pathRev, true)
-        
-        let rec aux = function
-        | TypeSpec(pathRev, []) -> getCloseType map pathRev
-        | TypeSpec(pathRev, ts) ->
-            let vs = List.map (solveTypeCore env) ts
-            let ts = Seq.map SolvedType.getUnderlyingSystemType vs |> Seq.toArray
-            match getCloseType map pathRev with
-            | Builder({ t = t } as ti) -> InstantiationType(t.MakeGenericType ts, Some ti)
-            | RuntimeType t ->
-                let t = t.MakeGenericType ts
-                if List.forall (function RuntimeType _ -> true | _ -> false) vs then RuntimeType t
-                else InstantiationType(t, None)
 
+    let applyType n ({ aTypeParams = ps; entity = t } as v) ts =
+        if List.length ps <> List.length ts then EmitException.raiseEmitExn <| AliasKindError(n, ts, v)
+        let rec eval = function
+            | TypeSpec(n, ts) -> TypeSpec(n, List.map eval ts)
+            | TypeVar v -> List.item (List.findIndex ((=) v) ps) ts
+            | TypeArgRef i -> List.item i ts
             | _ -> failwith "unreach"
+        eval t
 
-        | TypeVar v -> TypeParam(v, solveTypeVarMap varMap v)
-        | MethodTypeVar v -> TypeParam(v, solveTypeVarMap mVarMap v)
-        | TypeArgRef i -> List.item i typeArgs
-        | MethodTypeArgRef i -> List.item i mTypeArgs
+    let solveTypeVarMap vs v = List.find (fst >> (=) v) vs |> snd
+    let rec solveTypeCore ({ senv = { map = map; amap = amap }; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
+        let getTypeDef map name =
+            let mutable ti = Unchecked.defaultof<_>
+            if HashMap.tryGet map name &ti then Builder ti
+            else RuntimeType <| Type.GetType(FullName.toTypeName name, true)
+        
+        let rec aux t =
+            let mutable ad = Unchecked.defaultof<_>
+            match t with
+            | TypeSpec(FullName(name, [], [], None), ts) when HashMap.tryGet amap name &ad ->
+                solveTypeCore env (applyType name ad ts)
+                
+            | TypeSpec(pathRev, []) -> getTypeDef map pathRev
+            | TypeSpec(pathRev, ts) ->
+                let vs = List.map (solveTypeCore env) ts
+                let ts = Seq.map SolvedType.getUnderlyingSystemType vs |> Seq.toArray
+                match getTypeDef map pathRev with
+                | Builder({ t = t } as ti) -> InstantiationType(t.MakeGenericType ts, Some ti)
+                | RuntimeType t ->
+                    let t = t.MakeGenericType ts
+                    if List.forall (function RuntimeType _ -> true | _ -> false) vs then RuntimeType t
+                    else InstantiationType(t, None)
 
+                | _ -> failwith "unreach"
+
+            | TypeVar v -> TypeParam(v, solveTypeVarMap varMap v)
+            | MethodTypeVar v -> TypeParam(v, solveTypeVarMap mVarMap v)
+            | TypeArgRef i -> List.item i typeArgs
+            | MethodTypeArgRef i -> List.item i mTypeArgs
+            | ThisType -> Option.get thisType
+            | BaseType -> Option.get baseType
         aux t
 
     let solveType env t = solveTypeCore env t |> SolvedType.getUnderlyingSystemType

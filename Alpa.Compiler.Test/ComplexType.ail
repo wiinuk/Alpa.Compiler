@@ -23,17 +23,17 @@ type CloSucc2(`a) <: (`a -> `a) =
     let item1: Num(`a)
     new (Num(`a)) =
 		ldarg.0
-		call base()
+		call base::new()
         ldarg.1
-        stfld CloSucc2(`a)::item1
+        stfld this::item1
 		ret;
 
 	override Apply(`a): `a =
         ldarg.0
-        ldfld CloSucc2(`a)::item1
+        ldfld this::item1
         ldsfld bigint::One
-        callvirt Num(`a)::ofInteger(bigint)
-        callvirt Num(`a)::'_+_'(`a, `a)
+        callvirt Num(`a)::ofInteger
+        callvirt Num(`a)::'_+_'
         ret;;
 
 type CloSucc(`a) <: (Num(`a) -> `a -> `a) =
@@ -43,20 +43,21 @@ type CloSucc(`a) <: (Num(`a) -> `a -> `a) =
         ret;;
 
 module Program =
-    static new() =
-        newobj 'Num(int32)' ()
-        stsfld Program::'Num(int32)'
-        ldc_i4 10
-        stsfld Program::ten
-        ret;
-
     let succ(``a)() : (Num(``a) -> ``a -> ``a) = newobj (CloSucc(``a)) () ret;
     let 'Num(int32)' : Num(int32);
     let ten : int32;
+	
+    static new() =
+        newobj 'Num(int32)' ()
+        stsfld this::'Num(int32)'
+        ldc_i4 10
+        stsfld this::ten
+        ret;
+
 	let main() : void =
-        ldsfld Program::ten
-        ldsfld Program::'Num(int32)'
-        call Program::succ(int32)()
-        callvirt (Num(int32) -> int32 -> int32)::Apply(Num(int32))
-        callvirt (int32 -> int32)::Apply(int32)
+        ldsfld this::ten
+        ldsfld this::'Num(int32)'
+        call this::succ(int32)()
+        callvirt (Num(int32) -> int32 -> int32)::Apply
+        callvirt (int32 -> int32)::Apply
         ret

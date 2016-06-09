@@ -7,6 +7,7 @@ open Alpa.ParserCombinator
 open Alpa.RegexLexer
 open Alpa.IO
 
+type OT = System.Reflection.Emit.OperandType
 type TokenKind =
     /// "("
     | LParen
@@ -57,6 +58,8 @@ type TokenKind =
     | Member
     | Static
     | Alias
+    | This
+    | Base
 
     | Int8
     | Int16
@@ -90,6 +93,12 @@ type TokenKind =
     | SQString of string
 
 type Token = Source<TokenKind>
+type State = {
+    thisType: TypeSpec option
+    baseType: TypeSpec option
+    namespaceRev: string list
+    nestersRev: string list
+}
 
 type PrimNumericTypes =
     | I1
@@ -130,6 +139,9 @@ type Errors =
 
     | NumericRange
     | OperandTypeMissmatch
+
+    | UnsolvedThisType
+    | UnsolvedBaseType
 
 let delimiter() = [|
     "(", LParen
@@ -177,6 +189,8 @@ let keyword() = [|
     "uint64", UInt64
     "float32", Float32
     "float64", Float64
+    "this", This
+    "base", Base
 
     "void", Void
     "bool", Bool
@@ -298,6 +312,7 @@ module SourceParsers =
         )
 
     let opt p = opt p |>> function None -> VirtualSource None | Some x -> map Some x
+    let (>>%) p v = p |>> map (fun _ -> v)
     let (|>>) p f = p |>> map f
 
     let optDefault defaultValue p = optDefault (VirtualSource defaultValue) p
@@ -335,7 +350,9 @@ module Specials =
     let ``->`` = d HyphenGreaterThan
     let ``*`` = d Multiply
 
-    let Mutable = d Mutable
+    let ``mutable`` = d Mutable
+    let ``new`` = d New
+
 module K = Specials
 
 let tInt32 = satisfyMapE (function LInt32 _ -> true | _ -> false) (function LInt32(_,x) -> x | _ -> 0) RequireInt32Token
@@ -417,6 +434,17 @@ do
             Char, preturn charT
             String, preturn stringT
             Object, preturn objectT
+            This, fun xs ->
+                let { thisType = t } = xs.UserState
+                match t with
+                | Some t -> Reply(Source.VirtualSource t)
+                | None -> Reply((), Errors.UnsolvedThisType)
+
+            Base, fun xs ->
+                let { baseType = t } = xs.UserState
+                match t with
+                | Some t -> Reply(Source.VirtualSource t)
+                | None -> Reply((), Errors.UnsolvedBaseType)
 
             GraveAccent, ((name |>> TypeVar) <|> (tInt32 |>> TypeArgRef))
             DGraveAccent, ((name |>> MethodTypeVar) <|> (tInt32 |>> MethodTypeArgRef))
@@ -578,8 +606,6 @@ let parameters = tupleLike0 parameter
 let methodHead =
     pipe4 name (optDefault [] mTypeParams) parameters typing <| fun name mTypeParams ps ret -> MethodHead(name, mTypeParams, ps, Parameter(None, ret))
 
-type OT = System.Reflection.Emit.OperandType
-
 let opInteger t min max ofInt64 =
     satisfyMapE
         (function 
@@ -630,12 +656,13 @@ let opField = pipe3 typeSpec ``::`` name <| fun t _ n -> OpField(t, n)
 let opCtor = pipe2 typeSpec (tupleLike0 typeSpec) <| fun t args -> OpCtor(t, args)
 
 let opMethod =
-    let make parent _ name ts1 ts2 =
+    let methodName = K.``new`` >>% ".ctor" <|> name
+    let signAnnot = pipe3 (tupleLike0 typeSpec) (opt (tupleLike0 typeSpec)) (opt typing) <| fun ts1 ts2 ret ->
         match ts2 with
-        | None -> OpMethod(parent, name, [], ts1)
-        | Some ts2 -> OpMethod(parent, name, ts1, ts2)
-    
-    pipe5(typeSpec, ``::``, name, tupleLike0 typeSpec, opt (tupleLike0 typeSpec), make)
+        | None -> MethodTypeAnnotation([], ts1, ret)
+        | Some ts2 -> MethodTypeAnnotation(ts1, ts2, ret)
+
+    pipe4 typeSpec ``::`` methodName (opt signAnnot) <| fun parent _ name t -> OpMethod(parent, name, t)
 
 let opMethodBase = opMethod <|> opCtor
 let instr =
@@ -687,7 +714,7 @@ let instr =
 let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
 let methodInfo = pipe3 methodHead ``d=`` methodBody <| fun h _ b -> MethodInfo(h, b)
 
-let fieldTail make = pipe3 (optBool K.Mutable) name typing make
+let fieldTail make = pipe3 (optBool K.``mutable``) name typing make
 let literalTail make = 
     let defaultType = function
         | Literal.Null -> objectT
@@ -740,26 +767,46 @@ let typeMember =
     ]
 let members = sepBy typeMember ``;``
 
-/// ex: type open List`1 (T) <: [mscorlib]System.Object = ...
-let typeDefTail name make =
-    let make k n ps is ms =
-        let is = match is with None -> [] | Some(x,xs) -> x::xs
-        let def = {
-            kind = k
-            typeParams = ps
-            inherits = is
-            members = ms
-        }
-        make n def
+/// ex: type open MyLib.List`1 (T) <: [mscorlib]System.Object = ...
+let typeDefTail name setThisType exitType make =
+    let make k (n, ps) is ms =
+        let def =
+            match is with 
+            | None ->
+                {
+                    kind = k
+                    typeParams = ps
+                    parent = None
+                    impls = []
+                    members = ms
+                }
 
-    pipe5 (
-        opt typeKind,
-        name,
-        optDefault [] typeParams,
-        opt inherits,
-        ``d=`` >>. members,
+            | Some(x,xs) ->
+                {
+                    kind = k
+                    typeParams = ps
+                    parent = Some x
+                    impls = xs
+                    members = ms
+                } 
+        make n def
+    
+    let updateThisType nts s =
+        let n, ts = Source.value nts
+        let ts = List.map TypeVar ts
+        setThisType n ts s
+
+    let updateBaseType is s =
+        let is = Source.value is
+        let t = match is with None -> objectT | Some(x,_) -> x
+        { s with baseType = Some t }
+
+    pipe4
+        (opt typeKind)
+        (updateStateWith (name .>>. optDefault [] typeParams) updateThisType)
+        (updateStateWith  (opt inherits) updateBaseType)
+        (``d=`` >>. members .>> updateState exitType)
         make
-    )
 
 let moduleModuleDefTail, moduleModuleDefTailRef = createParserForwardedToRef()
 
@@ -768,9 +815,23 @@ let letTail =
     literalTail (fun n t v -> ModuleLiteralDef(n, t, v))
 
 let moduleMember =
+    let setThisType n ts ({ nestersRev = nestersRev; namespaceRev = namespaceRev } as s) =
+        let name = FullName(n, nestersRev, namespaceRev, None)
+        { s with
+            thisType = Some(TypeSpec(name, ts))
+            baseType = None
+            nestersRev = n::nestersRev
+        }
+
+    let exitType ({ nestersRev = nestersRev } as s) =
+        { s with
+            thisType = None
+            baseType = None
+            nestersRev = match nestersRev with [] -> [] | _::ns -> ns
+        }
     choiceHead RequireModuleMember [
         Let, methodInfo |>> ModuleMethodDef
-        Type, typeDefTail name <| fun n d -> ModuleTypeDef(n, d)
+        Type, typeDefTail name setThisType exitType <| fun n d -> ModuleTypeDef(n, d)
         Module, moduleModuleDefTail
         Let, letTail
     ]
@@ -803,18 +864,39 @@ let typeName =
 /// alias integer = [System.Numerics]System.Numerics.BigInteger;;
 /// alias `a -> `b = Fun(`a, `b);;
 /// alias `a * `b = [mscorlib]System.Tuple`2(`a, `b)
-let aliasTail = pipe3 typeName ``d=`` typeSpec <| fun (n,ts) _ td -> TopAliasDef(n,ts,td)
+let aliasTail = pipe3 typeName ``d=`` typeSpec <| fun (n,ts) _ td -> TopAliasDef(n,{ aTypeParams = ts; entity = td })
 
 let topMember =
+    let setThisType (n, nsRev) ts _ =
+        let name = FullName(n, [], nsRev, None)
+        {
+            thisType = Some(TypeSpec(name, ts))
+            baseType = None
+            nestersRev = [n]
+            namespaceRev = nsRev
+        }
+    let exitType _ =
+        {
+            thisType = None
+            baseType = None
+            nestersRev = []
+            namespaceRev = []
+        }
     choiceHead RequireTopMember [
         Alias, aliasTail
-        Type, typeDefTail pathRev <| fun n d -> TopTypeDef(n, d)
+        Type, typeDefTail pathRev setThisType exitType <| fun n d -> TopTypeDef(n, d)
         Module, pipe3 pathRev ``d=`` moduleMembers <| fun n _ ms -> TopModuleDef(n, { mMembers = ms })
     ]
 
 /// ex: type Ns.A =;; module B =;; type T =
 let top = sepBy topMember ``;;`` |>> fun ds -> { topDefs = ds }
-let initialState = ()
+
+let initialState = {
+    namespaceRev = []
+    nestersRev = []
+    thisType = None
+    baseType = None
+}
 
 let parseWith p source =
     match lex source with

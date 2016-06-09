@@ -4,31 +4,24 @@ open System
 open System.Collections.Generic
 open System.Reflection.Emit
 
-module List =
-    let tryIter2 action ls rs =
-        let rec aux ls rs =
-            match ls, rs with
-            | l::ls, r::rs -> action l r; aux ls rs
-            | [], [] -> true
-            | _ -> false
-        aux ls rs
-
 type FullName = FullName of name: string * nestersRev: string list * namespaceRev: string list * assemblyName: string option
 
 type TypeVar = string
 and TypeSpec =
     /// ex: [mscorlib]System.Tuple(..., ...)
     | TypeSpec of pathRev: FullName * TypeSpec list
-    /// ex: !T1
+    /// ex: `T1
     | TypeVar of TypeVar
-    /// ex: !!T1
+    /// ex: ``T1
     | MethodTypeVar of TypeVar
-    /// ex: !0
+    /// ex: `0
     | TypeArgRef of int
-    /// ex: !!0
+    /// ex: ``0
     | MethodTypeArgRef of int
 
 type MethodName = string
+type MethodTypeAnnotation =
+    | MethodTypeAnnotation of typeArgs: TypeSpec list * argTypes: TypeSpec list * returnType: TypeSpec option
 type Operand =
     | OpNone
     | OpI1 of int8
@@ -41,7 +34,7 @@ type Operand =
     | OpType of TypeSpec
     | OpField of thisType: TypeSpec * name: string
     | OpCtor of thisType: TypeSpec * argTypes: TypeSpec list
-    | OpMethod of thisType: TypeSpec * name: MethodName * typeArgs: TypeSpec list * argTypes: TypeSpec list
+    | OpMethod of thisType: TypeSpec * name: MethodName * MethodTypeAnnotation option
 
 type Macro =
     | BaseInit of TypeSpec list
@@ -86,10 +79,16 @@ type MemberDef =
 
 type TypeKind = Abstract | Interface | Open | Sealed
 
+type AliasSign = string
+type AliasDef = {
+    aTypeParams: TypeVar list
+    entity: TypeSpec
+}
 type TypeDef = {
     kind: TypeKind option
     typeParams: TypeVar list
-    inherits: TypeSpec list
+    parent: TypeSpec option
+    impls: TypeSpec list
     members: MemberDef list
 }
 type ModuleDef = {
@@ -104,7 +103,7 @@ and ModuleMember =
     | ModuleLiteralDef of name: string * TypeSpec * Literal
 
 type TopDef =
-    | TopAliasDef of name: string * typeParams: string list * entity: TypeSpec
+    | TopAliasDef of name: AliasSign * AliasDef
     | TopTypeDef of pathRev: (string * string list) * TypeDef
     | TopModuleDef of pathRev: (string * string list) * ModuleDef
 
@@ -112,23 +111,33 @@ type AssemblyDef = string
 type IL = { topDefs: TopDef list }
 
 [<Sealed; AllowNullLiteral>]
-type HashMap<'k,'v when 'k : equality>() = inherit Dictionary<'k,'v>()
+type HashMap<'k,'v when 'k : equality> =
+    inherit Dictionary<'k,'v>
+    new () = {}
+    new (elements) as x =
+        { inherit Dictionary<_,_>() }
+        then
+            for k, v in elements do x.Add(k, v)
 
 /// typeParams.Length = typeParamBuilders.Length
 type TypeVarMap = TypeVarMap of typeParams: TypeVar list * typeParamBuilders: GenericTypeParameterBuilder list
 type MethodSign = MethodName
 type FieldSign = string
 
-type ILTypeBuilder = {
+type Env = {
+    amap: AliasMap
+    map: TypeMap
+}
+and ILTypeBuilder = {
+    env: Env
+
     d: Choice<TypeDef, ModuleDef>
     t: TypeBuilder
-
     path: FullName
-    
-    map: TypeMap
     mutable varMap: TypeVarMap
 
     mutable cctor: ILCtorBuilder option
+
     mmap: MethodMap
     cmap: CtorMap
     fmap: FieldMap
@@ -148,6 +157,7 @@ and ILCtorBuilder = {
     pars: Parameter list
     body: MethodBody
 }
+and AliasMap = HashMap<AliasSign, AliasDef>
 and MethodMap = HashMap<MethodSign, ILMethodBuilder list>
 and FieldMap = HashMap<FieldSign, FieldBuilder>
 and TypeMap = HashMap<FullName, ILTypeBuilder>
@@ -164,7 +174,7 @@ type SolvedType =
     | TypeParam of TypeVar * SolvedTypeParam
 
 type SolveEnv = {
-    tmap: TypeMap
+    senv: Env
     varMap: (TypeVar * SolvedTypeParam) list
     mVarMap: (TypeVar * SolvedTypeParam) list
     typeArgs: SolvedType list
@@ -184,3 +194,14 @@ type IsType<'t,'m,'c> = {
     getCtors: 't -> 'c seq
     getTypeParams: 't -> SolvedType list
 }
+
+type EmitErrors =
+    | DuplicatedAliasTypeParameter of TypeVar
+    | UnownedAliasTypeParameter of TypeVar
+    | UnownedAliasTypeParameterRef of int
+    | UnsolvedType of TypeSpec
+    | DuplicatedAliasName of AliasSign * AliasDef * Choice<TypeDef,ModuleDef>
+    | RecursiveAlias of AliasSign
+    | AliasKindError of AliasSign * appliedTypes: TypeSpec list * target: AliasDef
+
+exception EmitException of EmitErrors

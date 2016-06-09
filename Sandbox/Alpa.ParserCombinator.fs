@@ -279,8 +279,14 @@ let peekToken xs =
     else
         Reply((), (), ReplyError.RequireAnyToken)
 
-let getUserState xs = Reply xs.UserState
+let getState xs = Reply xs.UserState
 let updateState f xs = xs.UserState <- f xs.UserState; Reply(())
+let updateStateWith (Parser p) f =
+    let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt f
+    fun xs ->
+        let r = p xs
+        if r.Status = Ok then xs.UserState <- f.Invoke(r.Value, xs.UserState)
+        r
 
 let eof xs =
     if xs.Items.size <= xs.Index then Reply(())

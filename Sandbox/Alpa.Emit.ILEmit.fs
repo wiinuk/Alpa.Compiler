@@ -1,5 +1,6 @@
 ﻿module Alpa.Emit.ILEmit
 open Alpa.Emit
+open Alpa.Emit.EmitException
 open Alpa.Emit.FullName
 open Alpa.Emit.HashMap
 open Alpa.Emit.Parameter
@@ -42,25 +43,25 @@ let ofTypeName (typeName, nsRev) = FullName(typeName, [], nsRev, None)
 let getName (FullName(name=name)) = name
 
 module DefineTypes =
-    let newILTypeBuilder d t path map = {
+    let newILTypeBuilder d t path env = {
         d = d
         t = t
         path = path
         varMap = emptyVarMap
-        map = map
+        env = env
         cctor = None
         mmap = HashMap()
         cmap = CtorMap()
         fmap = HashMap()
     }
 
-    let rec module'(defineType, toName, a, fullName, map, ({ mMembers = members } as md)) =
+    let rec module'(defineType, toName, a, fullName, ({ map = map } as env), ({ mMembers = members } as md)) =
         let a = a ||| T.Abstract ||| T.Sealed
         let t = defineType(toName fullName, a)
-        add map fullName <| newILTypeBuilder (Choice2Of2 md) t fullName map
-        for m in members do moduleMember fullName t map m
+        add map fullName <| newILTypeBuilder (Choice2Of2 md) t fullName env
+        for m in members do moduleMember fullName t env m
 
-    and type'(defineType, toName, a, fullName, map, ({ kind = kind; members = members } as d)) =
+    and type'(defineType, toName, a, fullName, ({ map = map } as env), ({ kind = kind; members = members } as d)) =
         let isInterfaceMember = function 
             | Literal _
             | Field _
@@ -89,31 +90,72 @@ module DefineTypes =
             ||| T.BeforeFieldInit
 
         let t = defineType(toName fullName, a)
-        add map fullName <| newILTypeBuilder (Choice1Of2 d) t fullName map
+        add map fullName <| newILTypeBuilder (Choice1Of2 d) t fullName env
 
-    and moduleMember path (t: TypeBuilder) map = function
+    and moduleMember path (t: TypeBuilder) env = function
         | ModuleMethodDef _
         | ModuleCCtorDef _
         | ModuleValDef _ 
         | ModuleLiteralDef _ -> ()
-        | ModuleModuleDef(name, ms) -> module'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, map, ms)
-        | ModuleTypeDef(name, td) -> type'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, map, td)
+        | ModuleModuleDef(name, ms) -> module'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, env, ms)
+        | ModuleTypeDef(name, td) -> type'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, env, td)
 
-    let topDef (m: ModuleBuilder) map = function
-        | TopModuleDef(path, ms) -> module'(m.DefineType, toTypeName, T.Public, ofTypeName path, map, ms)
-        | TopTypeDef(name, td) -> type'(m.DefineType, toTypeName, T.Public, ofTypeName name, map, td)
+    let topDef (m: ModuleBuilder) ({ amap = amap } as env) = function
+        | TopModuleDef(path, ms) -> module'(m.DefineType, toTypeName, T.Public, ofTypeName path, env, ms)
+        | TopTypeDef(name, td) -> type'(m.DefineType, toTypeName, T.Public, ofTypeName name, env, td)
+        | TopAliasDef(name, ad) -> add amap name ad
 
-let defineTypeParams map =
+let rec checkTypeParam aTypeParams = function
+    | TypeSpec(_, ts) -> for t in ts do checkTypeParam aTypeParams t
+    | TypeVar v ->
+        if List.contains v aTypeParams then ()
+        else raiseEmitExn <| UnownedAliasTypeParameter v
+
+    | TypeArgRef i ->
+        if List.length aTypeParams <= i then raiseEmitExn <| UnownedAliasTypeParameterRef i
+
+    | MethodTypeArgRef i -> raiseEmitExn <| UnownedAliasTypeParameterRef i
+    | MethodTypeVar v -> raiseEmitExn <| UnownedAliasTypeParameter v
+    
+let rec occur amap visitedNames = function
+    | TypeSpec(FullName(n, [], [], None), ts) as t ->
+        if List.contains n visitedNames then raiseEmitExn <| RecursiveAlias n
+
+        let mutable v = Unchecked.defaultof<_>
+        if tryGet amap n &v then
+            let ts = List.map (occur amap visitedNames) ts
+            occur amap (n::visitedNames) <| applyType n v ts
+        else
+            t
+
+    | TypeSpec(n, ts) -> TypeSpec(n, List.map (occur amap visitedNames) ts)
+    | t -> t
+
+let checkAlias { amap = amap; map = map } =
+    for kv in amap do
+        let name, ({ aTypeParams = aTypeParams; entity = entity } as ad) = kv.Key, kv.Value
+
+        match List.tryGetDuplicate aTypeParams with
+        | Some x -> raiseEmitExn <| DuplicatedAliasTypeParameter x
+        | _ -> ()
+
+        checkTypeParam aTypeParams entity
+
+        let mutable td = Unchecked.defaultof<_>
+        if tryGet map (FullName(name, [], [], None)) &td then
+            raiseEmitExn <| DuplicatedAliasName(name, ad, let { d = d } = td in d)
+
+        let t = occur amap [name] entity
+        assign amap name { aTypeParams = aTypeParams; entity = t }
+
+let defineTypeParams { map = map } =
     for ({ d = d; t = t } as ti) in values map do
         match d with
         | Choice2Of2 _ -> ()
         | Choice1Of2 { typeParams = typeParams } ->
             ti.varMap <- defineVarMap typeParams <| tDefineGP t
 
-let toSign (MethodHead(name=name)) = name
-
-let addMethod mmap head m =
-    let sign = toSign head
+let addMethod mmap (MethodHead(name=sign)) m =
     let mutable ms = Unchecked.defaultof<_>
     if tryGet mmap sign &ms then assign mmap sign (m::ms)
     else add mmap sign [m]
@@ -126,8 +168,8 @@ let defineParams defineParameter pars = List.iteri (fun i a -> defineParam defin
 let typeVarMapToSolvedType (TypeVarMap(vs,vs')) =
     List.map2 (fun v v' -> v, TypeParamBuilder v') vs vs'
 
-let envOfTypeBuilder mVarMap { map = map; varMap = varMap } = {
-    tmap = map
+let envOfTypeBuilder mVarMap ({ env = env; varMap = varMap } as ti) = {
+    senv = env
     varMap = typeVarMapToSolvedType varMap
     mVarMap = typeVarMapToSolvedType mVarMap
     typeArgs = []
@@ -261,16 +303,14 @@ let defineMember dt = function
         defineMethodHead dt a CC.HasThis head
         |> ignore
 
-let defineTypeDef ({ t = t } as ti) { inherits = inherits; members = members } =
-    let inherits = List.map (solveType (envOfTypeBuilder emptyVarMap ti)) inherits
-    let impls, parent = inherits |> List.partition (fun t -> t.IsInterface)
+let defineTypeDef ({ t = t } as ti) { parent = parent; impls = impls; members = members } =
+    let env = envOfTypeBuilder emptyVarMap ti
 
     match parent with
-    | [] -> ()
-    | [parent] -> t.SetParent <|  parent
-    | _ -> failwithf "duplicated parent %A" parent
+    | None -> ()
+    | Some parent -> t.SetParent <| solveType env parent
 
-    for impl in impls do t.AddInterfaceImplementation impl
+    for impl in impls do t.AddInterfaceImplementation <| solveType env impl
     for m in members do defineMember ti m
 
 let defineModuleMember dt = function
@@ -281,8 +321,8 @@ let defineModuleMember dt = function
     | ModuleMethodDef m -> defineStaticMethod dt m
     | ModuleCCtorDef b -> defineCCtor dt b
 
-let defineMembers map =
-    for ({ d = d; t = t } as ti) in values map do
+let defineMembers { map = map } =
+    for { d = d } as ti in values map do
         match d with
         | Choice1Of2 td -> defineTypeDef ti td
         | Choice2Of2 { mMembers = members } ->
@@ -446,41 +486,130 @@ let getGenericMethod
     if openMethodOfCloseType.IsGenericMethodDefinition then openMethodOfCloseType.MakeGenericMethod mTypeArgs
     else openMethodOfCloseType
 
-let getMethod env parent name mTypeArgs argTypes =
-    let a = B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic
-    let c = CC.Any
+let getM (getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethodsOfName, makeCloseMethod) env parent name annot =
+    let mTypeArgs, getOpenMethodOfOpenType =
+        match annot with
+        | None -> [], fun _ ms -> Seq.exactlyOne ms
+        | Some(MethodTypeAnnotation(mTypeArgs, argTypes, returnType)) ->
+            let select openTypeParams ms =
+                let env = { env with typeArgs = openTypeParams }
+                ms
+                |> Seq.filter (fun m ->
+                    let mTypeParams = getMethodTypeParams m
+                    let env =
+                        match mTypeParams with
+                        | [] -> env
+                        | _ -> { env with mTypeArgs = mTypeParams }
 
+                    let mParamTypes = getParemeterTypes env m
+
+                    match returnType with
+                    | None -> true
+                    | Some returnType ->
+                        typeEq (solveTypeCore env returnType) (getReturnType env m)
+                    &&
+                    List.length mParamTypes = List.length argTypes &&
+                    let argTypes = List.map (solveTypeCore env) argTypes
+                    List.forall2 typeEq mParamTypes argTypes
+                )
+                |> Seq.exactlyOne
+
+            mTypeArgs, select
+
+    let openType = getOpenType parent
+    let openTypeParams = getTypeParams openType
+    let openMethodsOfOpenType = getMethodsOfName name openType
+
+    let openMethod = getOpenMethodOfOpenType openTypeParams openMethodsOfOpenType
+    let mTypeArgs = List.map (solveTypeCore env) mTypeArgs
+    makeCloseMethod openMethod mTypeArgs
+
+let getMethod env parent name annot =
     match solveTypeCore env parent with
-    | TypeParam _ -> failwith "TypeParam"
-    | RuntimeType t ->
-        if t.IsGenericType then
-            let openType = t.GetGenericTypeDefinition()
-            let typeParams = openType.GetGenericArguments()
-            let env = { env with typeArgs = Seq.map RuntimeType typeParams |> Seq.toList }
-            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-            let methodOfOpenType = openType.GetMethod(name, B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance, null, argTypes, null)
-            getMethodOfRuntimeOpenType t methodOfOpenType
-        else
-            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-            t.GetMethod(name, a, null, c, argTypes, null)
+    | TypeParam _ -> failwith ""
+    | RuntimeType parent ->
+        let getMethodTypeParams (m: Reflection.MethodInfo) =
+            if m.IsGenericMethod then
+                let ts = m.GetGenericMethodDefinition().GetGenericArguments()
+                [for t in ts -> RuntimeType t]
+            else []
 
-    | Builder { mmap = mmap } ->
-        let { mb = mb } =
-            get mmap name
-            |> List.filter (fun { mVarMap = TypeVarMap(mTypeParams,_); m = MethodInfo(MethodHead(_,tpars,pars,_),_) } ->
-                List.length tpars = List.length mTypeArgs &&
-                List.length pars = List.length argTypes &&
-                let subst = List.zip mTypeParams mTypeArgs
-                List.forall2
-                    (fun (Parameter(_,parT)) argT -> getReplacedType subst parT = argT)
-                    pars
-                    argTypes
-            )
-            |> List.exactlyOne
-        upcast mb
+        let getParemeterTypes _ (m: Reflection.MethodInfo) = [for p in m.GetParameters() -> RuntimeType p.ParameterType]
+        let getReturnType _ (m: Reflection.MethodInfo) = RuntimeType m.ReturnType
+        let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
+        let getOpenType (t: Type) = if t.IsGenericType then t.GetGenericTypeDefinition() else t
+        let getTypeParams (t: Type) = if t.IsGenericType then [for t in t.GetGenericArguments() -> RuntimeType t] else []
+        let getMethodsOfName name (t: Type) = t.GetMethods(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance) |> Seq.filter (fun m -> m.Name = name)
 
-    | InstantiationType(closeType, None) -> getGenericMethod isTypeOfRt isMethodInfoOfRt (env, closeType, closeType.GetGenericTypeDefinition(), name, mTypeArgs, argTypes)
-    | InstantiationType(closeType, Some openType) -> getGenericMethod isTypeOfTb isMethodInfoOfTb (env, closeType, openType, name, mTypeArgs, argTypes)
+        let makeCloseMethod (openMethod: Reflection.MethodInfo) = function
+            | [] -> openMethod
+            | mTypeArgs ->
+                let ts = Seq.map getUnderlyingSystemType mTypeArgs |> Seq.toArray
+                openMethod.MakeGenericMethod ts
+
+        getM(getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethodsOfName, makeCloseMethod) env parent name annot
+
+    | Builder parent ->
+        let getMethodTypeParams { ILMethodBuilder.mVarMap = TypeVarMap(vs,vs') } =
+            List.map2(fun v v' -> TypeParam(v, TypeParamBuilder v')) vs vs'
+
+        let getParemeterTypes env { m = MethodInfo(MethodHead(_,_,pars,_), _) } = List.map (paramType >> solveTypeCore env) pars
+        let getReturnType env { dt = dt; mb = mb; mVarMap = TypeVarMap(vs,vs'); m = MethodInfo(MethodHead(_,_,pars,ret), _) } = paramType ret |> solveTypeCore env
+        let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
+        let getOpenType t = t
+        let getTypeParams { ILTypeBuilder.varMap = TypeVarMap(vs,vs') } = 
+            List.map2(fun v v' -> TypeParam(v, TypeParamBuilder v')) vs vs'
+        let getMethodsOfName name { mmap = mmap } = get mmap name
+
+        let makeCloseMethod { mb = mb; m = m } = function
+            | [] -> mb :> System.Reflection.MethodInfo
+            | mTypeArgs ->
+                let ts = Seq.map getUnderlyingSystemType mTypeArgs |> Seq.toArray
+                mb.MakeGenericMethod ts
+
+        getM(getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethodsOfName, makeCloseMethod) env parent name annot
+
+//let getMethod env parent name annot =
+//    let a = B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic
+//    let c = CC.Any
+//
+//    let parent = solveTypeCore env parent
+//
+//    match annot with
+//    | None -> None, Seq.exactlyOne
+//    | Some(MethodTypeAnnotation(mTypeArgs, argTypes, None)) ->
+//
+//        match parent with
+//        | TypeParam _ -> failwith "TypeParam"
+//        | RuntimeType t ->
+//            if t.IsGenericType then
+//                let openType = t.GetGenericTypeDefinition()
+//                let typeParams = openType.GetGenericArguments()
+//                let env = { env with typeArgs = Seq.map RuntimeType typeParams |> Seq.toList }
+//                let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+//                let methodOfOpenType = openType.GetMethod(name, B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance, null, argTypes, null)
+//                getMethodOfRuntimeOpenType t methodOfOpenType
+//            else
+//                let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
+//                t.GetMethod(name, a, null, c, argTypes, null)
+//
+//        | Builder { mmap = mmap } ->
+//            let { mb = mb } =
+//                get mmap name
+//                |> List.filter (fun { mVarMap = TypeVarMap(mTypeParams,_); m = MethodInfo(MethodHead(_,tpars,pars,_),_) } ->
+//                    List.length tpars = List.length mTypeArgs &&
+//                    List.length pars = List.length argTypes &&
+//                    let subst = List.zip mTypeParams mTypeArgs
+//                    List.forall2
+//                        (fun (Parameter(_,parT)) argT -> getReplacedType subst parT = argT)
+//                        pars
+//                        argTypes
+//                )
+//                |> List.exactlyOne
+//            upcast mb
+//
+//        | InstantiationType(closeType, None) -> getGenericMethod isTypeOfRt isMethodInfoOfRt (env, closeType, closeType.GetGenericTypeDefinition(), name, mTypeArgs, argTypes)
+//        | InstantiationType(closeType, Some openType) -> getGenericMethod isTypeOfTb isMethodInfoOfTb (env, closeType, openType, name, mTypeArgs, argTypes)
 
 let getGenericCtor
     { IsType.getCtors = getCtors; getTypeParams = getTypeParams }
@@ -545,13 +674,13 @@ let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
     | OpString s -> g.Emit(op, s)
     | OpType t -> g.Emit(op, solveType (envOfTypeBuilder mVarMap dt) t)
     | OpField(parent, name) -> g.Emit(op, getField (envOfTypeBuilder mVarMap dt) parent name)
-    | OpMethod(parent, name, mTypeArgs, argTypes) -> g.Emit(op, getMethod (envOfTypeBuilder mVarMap dt) parent name mTypeArgs argTypes)
+    | OpMethod(parent, name, annot) -> g.Emit(op, getMethod (envOfTypeBuilder mVarMap dt) parent name annot)
     | OpCtor(parent, argTypes) -> g.Emit(op, getCtor (envOfTypeBuilder mVarMap dt) parent argTypes)
 
 let emitMethod g mVarMap dt (MethodBody instrs) =
     for instr in instrs do emitInstr g mVarMap dt instr
 
-let emitMethods map =
+let emitMethods { map = map } =
     for { mmap = mmap; cmap = cmap; cctor = cctor } in values map do
         for mis in values mmap do
             for { mb = mb; mVarMap = mVarMap; dt = dt; m = MethodInfo(_, b) } in mis do
@@ -565,15 +694,16 @@ let emitMethods map =
         | Some { cb = cb; dt = dt; body = body } ->
             emitMethod (cb.GetILGenerator()) emptyVarMap dt body
 
-let createTypes map = for { t = t } in values map do t.CreateType() |> ignore
+let createTypes { map = map } = for { t = t } in values map do t.CreateType() |> ignore
 
 let emitIL m { topDefs = ds } =
-    let map = HashMap()
-    for d in ds do DefineTypes.topDef m map d
-    defineTypeParams map
-    defineMembers map
-    emitMethods map
-    createTypes map
+    let env = { map = HashMap(); amap = AliasMap() }
+    for d in ds do DefineTypes.topDef m env d
+    checkAlias env
+    defineTypeParams env
+    defineMembers env
+    emitMethods env
+    createTypes env
 
 module PreDefinedTypes =
     let int8T = typeOf<int8>
