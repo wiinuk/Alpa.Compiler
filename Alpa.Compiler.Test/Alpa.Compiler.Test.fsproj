@@ -62,9 +62,9 @@
     <Content Include="packages.config" />
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Alpa.Lexer.Test.fs" />
-    <Compile Include="Alpa.IL.Helpers.fs" />
-    <Compile Include="Alpa.IL.Lexer.Test.fs" />
-    <Compile Include="Alpa.IL.Emit.Test.fs" />
+    <Compile Include="Alpa.IL.Helpers.fsx" />
+    <Compile Include="Alpa.IL.Lexer.Test.fsx" />
+    <Compile Include="Alpa.IL.Emit.Test.fsx" />
     <None Include="NestedType.il">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -86,10 +86,12 @@
     <None Include="SimpleType.il">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="ComplexType.ail" />
     <None Include="SimpleType.ail">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="ComplexType.ail" />
+    <None Include="RuntimeTypeGenericArg.il" />
+    <None Include="RuntimeTypeGenericArg.ail" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FsCheck">

@@ -73,10 +73,10 @@ let nonGenericTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
 let closeTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
     override __.GetMethodTypeParams m = ILMethodBuilder.getTypeParams m |> typeVarMapToSolvedType
     override __.GetParemeterTypes(env,m) =
-        let env' = env
-        let ps = getParemeterTypes m |> Seq.toList
-        let ps = List.map (solveTypeCore env') ps
-        ps :> _
+        getParemeterTypes m
+        |> Seq.toList
+        |> List.map (solveTypeCore env)
+        :> _
 
     override __.GetReturnType(env,m) = solveTypeCore env <| getReturnType m
     override __.GetOpenType t = snd t

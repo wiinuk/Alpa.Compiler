@@ -1,0 +1,6 @@
+﻿module RuntimeTypeGenericArg.Program =
+    let Main (string, string) : [mscorlib]System.Tuple`2(string, string) =
+        ldarg.0
+        ldarg.1
+        newobj [mscorlib]System.Tuple`2(string, string)(`0, `1)
+        ret
