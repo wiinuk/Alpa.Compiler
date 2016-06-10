@@ -1,6 +1,16 @@
 ﻿namespace Alpa.Emit
 open System
 
+[<AutoOpen>]
+module internal InternalShortNames =
+    type B = System.Reflection.BindingFlags
+    type CC = System.Reflection.CallingConventions
+    type T = System.Reflection.TypeAttributes
+    type M = System.Reflection.MethodAttributes
+    type P = System.Reflection.ParameterAttributes
+    type F = System.Reflection.FieldAttributes
+    type O = System.Reflection.Emit.OpCodes
+
 module List =
     let tryIter2 action ls rs =
         let rec aux ls rs =
@@ -28,7 +38,7 @@ module HashMap =
 module TypeVarMap =
     let emptyVarMap = TypeVarMap([], [])
     let typeParams (TypeVarMap(p,_)) = p
-    let typeVarMapToSolvedType (TypeVarMap(vs,vs')) = List.map2 (fun v v' -> v, TypeParamBuilder v') vs vs'
+    let typeVarMapToSolvedType (TypeVarMap(vs,vs')) = Seq.map2 (fun v v' -> TypeParam(v, v')) vs vs'
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module FullName =
@@ -59,8 +69,8 @@ module SolveEnv =
     open TypeVarMap
     let envOfTypeBuilder mVarMap ({ env = env; varMap = varMap } as ti) = {
         senv = env
-        varMap = typeVarMapToSolvedType varMap
-        mVarMap = typeVarMapToSolvedType mVarMap
+        sVarMap = varMap
+        sMVarMap = mVarMap
         typeArgs = []
         mTypeArgs = []
     }
@@ -69,10 +79,11 @@ module SolveEnv =
 module SolvedType =
     let getUnderlyingSystemType = function
         | RuntimeType t
-        | TypeParam(_, RuntimeTypeParam t)
         | InstantiationType(closeType = t) -> t
-        | TypeParam(_, TypeParamBuilder t) -> upcast t
+        | TypeParam(_, t) -> upcast t
         | Builder { t = t } -> upcast t
+        
+    let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module EmitException =
@@ -123,8 +134,8 @@ module TypeSpec =
             | _ -> failwith "unreach"
         eval t
 
-    let solveTypeVarMap vs v = List.find (fst >> (=) v) vs |> snd
-    let rec solveTypeCore ({ senv = { map = map; amap = amap }; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
+    let solveTypeVarMap (TypeVarMap(vs,vs')) v = List.item (List.findIndex ((=) v) vs) vs'
+    let rec solveTypeCore ({ senv = { map = map; amap = amap }; sVarMap = varMap; sMVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
         let getTypeDef map name =
             let mutable ti = Unchecked.defaultof<_>
             if tryGet map name &ti then Builder ti
@@ -191,6 +202,67 @@ module MethodHead =
     let cctorHead = MethodHead(".cctor", [], [], Parameter.voidParam)
     let ctorHead pars = MethodHead(".ctor", [], pars, Parameter.voidParam)
 
+module Member =
+    open System.Reflection
+    let metadataToken (m: MemberInfo) = m.MetadataToken
+    let name (m: MemberInfo) = m.Name
+    let getGenericArguments (m: MemberInfo) =
+        match m with 
+        | :? Reflection.MethodBase as m when m.IsGenericMethod -> m.GetGenericArguments()
+        | _ -> Type.EmptyTypes
+
+module Type =
+    let isGeneric (t: Type) = t.IsGenericType
+    let getOpenType t = if isGeneric t then t.GetGenericTypeDefinition() else t
+    let getTypeParams t = if isGeneric t then t.GetGenericTypeDefinition().GetGenericArguments() else Type.EmptyTypes
+
+    let getAllMethods (t: Type) =
+        B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance
+        |> t.GetMethods
+
+    let getMethods name t = getAllMethods t |> Seq.filter (fun m -> m.Name = name)
+    let getConstructors (t: Type) = t.GetConstructors(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance)
+
+module Method =
+    open System.Reflection
+    let getTypeParams (m: MethodInfo) = if m.IsGenericMethod then m.GetGenericMethodDefinition().GetGenericArguments() else [||]
+
+module MethodBase =
+    open System.Reflection
+    let getTypeParams : MethodBase -> _ = function
+        | :? MethodInfo as m -> Method.getTypeParams m
+        | _ -> Type.EmptyTypes
+
+    let getParemeterTypes (m: MethodBase) = m.GetParameters() |> Seq.map (fun p -> p.ParameterType)
+
+    let getReturnType (m: MethodBase) =
+        match m with
+        | :? MethodInfo as m -> m.ReturnType
+        | _ -> typeof<Void>
+        
+    let makeCloseMethod openMethod mTypeArgs =
+        if Seq.isEmpty mTypeArgs then openMethod
+        else
+            let m = (openMethod: MethodBase) :?> Reflection.MethodInfo
+            upcast m.MakeGenericMethod(Seq.toArray mTypeArgs)
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module ILMethodBuilder =
+    open Parameter
+    open SolvedType
+
+    let getUnderlyingSystemMethod { mb = m } =
+        match m with
+        | Choice1Of2 m -> m :> Reflection.MethodBase
+        | Choice2Of2 m -> upcast m
+
+    let getTypeParams { ILMethodBuilder.mVarMap = mVarMap } = mVarMap
+    let getParemeterTypes { m = MethodInfo(MethodHead(pars=pars), _) } = Seq.map paramType pars
+    let getReturnType { m = MethodInfo(MethodHead(ret=ret), _) } = paramType ret
+    let makeCloseMethod m mTypeArgs =
+        Seq.map getUnderlyingSystemType mTypeArgs
+        |> MethodBase.makeCloseMethod (getUnderlyingSystemMethod m)
+
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module ILTypeBuilder =
     open HashMap
@@ -213,19 +285,6 @@ module ILTypeBuilder =
         cmap = CtorMap()
         fmap = HashMap()
     }
-
-module ILMethodBuilder =
-    let getUnderlyingSystemMethod { mb = m } =
-        match m with
-        | Choice1Of2 m -> m :> Reflection.MethodBase
-        | Choice2Of2 m -> upcast m
-
-[<AutoOpen>]
-module internal InternalShortNames =
-    type B = System.Reflection.BindingFlags
-    type CC = System.Reflection.CallingConventions
-    type T = System.Reflection.TypeAttributes
-    type M = System.Reflection.MethodAttributes
-    type P = System.Reflection.ParameterAttributes
-    type F = System.Reflection.FieldAttributes
-    type O = System.Reflection.Emit.OpCodes
+    let getMethods name { mmap = mmap } = HashMap.get mmap name |> List.toSeq
+    let getTypeParams { varMap = varMap } = varMap
+    let getConstructors { cmap = cmap } = cmap :> _ seq

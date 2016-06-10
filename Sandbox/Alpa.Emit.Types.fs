@@ -156,20 +156,16 @@ and FieldMap = HashMap<FieldSign, FieldBuilder>
 and TypeMap = HashMap<FullName, ILTypeBuilder>
 and CtorMap = ResizeArray<ILMethodBuilder>
 
-type SolvedTypeParam =
-    | RuntimeTypeParam of Type
-    | TypeParamBuilder of GenericTypeParameterBuilder
-
 type SolvedType =
     | RuntimeType of Type
     | Builder of ILTypeBuilder
     | InstantiationType of closeType: Type * openType: ILTypeBuilder option
-    | TypeParam of TypeVar * SolvedTypeParam
+    | TypeParam of TypeVar * GenericTypeParameterBuilder
 
 type SolveEnv = {
     senv: Env
-    varMap: (TypeVar * SolvedTypeParam) list
-    mVarMap: (TypeVar * SolvedTypeParam) list
+    sVarMap: TypeVarMap
+    sMVarMap: TypeVarMap
     typeArgs: SolvedType list
     mTypeArgs: SolvedType list
 }
