@@ -32,15 +32,16 @@ let assertOfFile name =
     let expected = File.ReadAllText(name + ".il")
     toILSource "\r\n" name source ==? expected
 
-let parseFileNames = [
-    "SimpleType"
-    "OverloadOps"
-    "NestedType"
-    "MakeTuple2"
-    "RuntimeTypeGenericArg"
-]
 [<Fact>]
-let ParseFiles() = for name in parseFileNames do assertOfFile name
+let SimpleType() = assertOfFile "SimpleType"
+[<Fact>]
+let OverloadOps() = assertOfFile "OverloadOps"
+[<Fact>]
+let NestedType() = assertOfFile "NestedType"
+[<Fact>]
+let MakeTuple2() = assertOfFile "MakeTuple2"
+[<Fact>]
+let RuntimeTypeGenericArg() = assertOfFile "RuntimeTypeGenericArg"
 
 begin
     let source = """
@@ -61,11 +62,11 @@ begin
         let main(string, string, string, string): [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string)) =
             ldarg.0
             ldarg.1
-            call MakeTupleOverload.Make`1(string)::Tuple(string)(!0, !!0)
+            call MakeTupleOverload.Make`1(string)::Tuple(string)(`0, ``0)
             ldarg.2
             ldarg.3
             call MakeTupleOverload.Make`1(string)::Tuple()(string, string)
-            newobj [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string))(!0, !1)
+            newobj [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string))(`0, `1)
             ret
     """
     let expected = ".assembly extern mscorlib

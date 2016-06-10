@@ -24,7 +24,16 @@ let getMemberOfRuntimeOpenType getMembers resolveMember closeType memberOfOpenTy
     )
 
 [<AbstractClass>]
-type Solver<'t,'ot,'m>() =
+type MethodSource() =
+    abstract GetILMethods: ILTypeBuilder -> ILMethodBuilder seq
+    abstract GetRTMethods: Type -> Reflection.MethodBase seq
+    abstract GetRTAllMethods: Type -> Reflection.MethodBase seq
+
+[<AbstractClass>]
+type Solver<'t,'ot,'m> =
+    val MethodSource: MethodSource
+    new (ms) = { MethodSource = ms }
+
     abstract GetMethodTypeParams: 'm -> SolvedType seq
     abstract GetParemeterTypes: SolveEnv * 'm -> SolvedType seq
     abstract GetReturnType: SolveEnv * 'm -> SolvedType
@@ -32,45 +41,56 @@ type Solver<'t,'ot,'m>() =
     abstract GetTypeParams: 'ot -> SolvedType seq
     abstract GetMethods: 'ot -> 'm seq
     abstract SolveMethodOfCloseType: 't * 'm -> Reflection.MethodBase
+    
+let methodInfoSource name = { new MethodSource() with
+    override __.GetILMethods t = getMethods name t
+    override __.GetRTMethods t = Type.getMethods name t |> Seq.map (fun m -> upcast m)
+    override __.GetRTAllMethods t = Type.getAllMethods t |> Seq.map (fun m -> upcast m)
+}
+let constructorInfoSource = { new MethodSource() with
+    override __.GetILMethods t = getConstructors t
+    override x.GetRTMethods t = x.GetRTAllMethods t
+    override __.GetRTAllMethods t = Type.getConstructors t |> Seq.map (fun m -> upcast m)
+}
 
-let runtimeTypeSolver getMethods getAllMethods = { new Solver<_,_,_>() with
+let runtimeTypeSolver m = { new Solver<_,_,_>(m) with
     override __.GetMethodTypeParams m = MethodBase.getTypeParams m |> Seq.map RuntimeType
     override __.GetParemeterTypes(_,m) = MethodBase.getParemeterTypes m |> Seq.map RuntimeType
     override __.GetReturnType(_,m) = MethodBase.getReturnType m |> RuntimeType
     override __.GetOpenType t = Type.getOpenType t
     override __.GetTypeParams t = Type.getTypeParams t |> Seq.map RuntimeType
-    override __.GetMethods t = getMethods t
-    override __.SolveMethodOfCloseType(closeParent, openMethodOfOpenType) =
+    override x.GetMethods t = x.MethodSource.GetRTMethods t
+    override x.SolveMethodOfCloseType(closeParent, openMethodOfOpenType) =
         if Type.isGeneric closeParent then
             getMemberOfRuntimeOpenType
-                getAllMethods
+                x.MethodSource.GetRTAllMethods
                 (fun m md tps mtps -> m.ResolveMethod(md, tps, mtps))
                 closeParent openMethodOfOpenType
         else openMethodOfOpenType
 }
-let runtimeTypeOfTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
+let runtimeTypeOfTypeBuilderSolver m = { new Solver<_,_,_>(m) with
     override __.GetMethodTypeParams m = MethodBase.getTypeParams m |> Seq.map RuntimeType
     override __.GetParemeterTypes(_,m) = MethodBase.getParemeterTypes m |> Seq.map RuntimeType
     override __.GetReturnType(_,m) = MethodBase.getReturnType m |> RuntimeType
     override __.GetOpenType t = Type.getOpenType t
     override __.GetTypeParams t = Type.getTypeParams t |> Seq.map RuntimeType
-    override __.GetMethods t = getMethods t
+    override x.GetMethods t = x.MethodSource.GetRTMethods t
     override __.SolveMethodOfCloseType(closeType, openMethodOfOpenType: Reflection.MethodBase) =
         match openMethodOfOpenType with
         | :? Reflection.MethodInfo as m -> TypeBuilder.GetMethod(closeType, m) :> Reflection.MethodBase
         | :? Reflection.ConstructorInfo as m -> TypeBuilder.GetConstructor(closeType, m) :> _
         | _ -> raise <| NotImplementedException()
 }
-let nonGenericTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
+let nonGenericTypeBuilderSolver m = { new Solver<_,_,_>(m) with
     override __.GetMethodTypeParams m = ILMethodBuilder.getTypeParams m |> typeVarMapToSolvedType
     override __.GetParemeterTypes(env,m) = Seq.map (solveTypeCore env) <| getParemeterTypes m
     override __.GetReturnType(env,m) = solveTypeCore env <| getReturnType m
     override __.GetOpenType t = t
     override __.GetTypeParams t = ILTypeBuilder.getTypeParams t |> typeVarMapToSolvedType
-    override __.GetMethods t = getMethods t
+    override x.GetMethods t = x.MethodSource.GetILMethods t
     override __.SolveMethodOfCloseType(_, m) = getUnderlyingSystemMethod m
 }
-let closeTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
+let closeTypeBuilderSolver m = { new Solver<_,_,_>(m) with
     override __.GetMethodTypeParams m = ILMethodBuilder.getTypeParams m |> typeVarMapToSolvedType
     override __.GetParemeterTypes(env,m) =
         getParemeterTypes m
@@ -81,7 +101,7 @@ let closeTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
     override __.GetReturnType(env,m) = solveTypeCore env <| getReturnType m
     override __.GetOpenType t = snd t
     override __.GetTypeParams t = ILTypeBuilder.getTypeParams t |> typeVarMapToSolvedType
-    override __.GetMethods t = getMethods t
+    override x.GetMethods t = x.MethodSource.GetILMethods t
     override __.SolveMethodOfCloseType(t, { mb = openMethodOfOpenType }) =
         let closeType = fst t
         match openMethodOfOpenType with
@@ -89,8 +109,10 @@ let closeTypeBuilderSolver getMethods = { new Solver<_,_,_>() with
         | Choice2Of2 m -> TypeBuilder.GetConstructor(closeType, m) :> _
 }
 let getMethodGeneric env parent annot (s: Solver<_,_,_>) =
-    let filter env argTypes returnType m =
+    let filter env mTypeArgsLength argTypes returnType m =
         let mTypeParams = s.GetMethodTypeParams m |> Seq.cache
+        Seq.length mTypeParams = mTypeArgsLength &&
+
         let env =
             if Seq.isEmpty mTypeParams then env
             else
@@ -100,28 +122,28 @@ let getMethodGeneric env parent annot (s: Solver<_,_,_>) =
                     sMVarMap = Seq.toList mVarMap
                 }
 
-        let mParamTypes = s.GetParemeterTypes(env, m) |> Seq.cache
+        let paramTypes = s.GetParemeterTypes(env, m) |> Seq.cache
 
         match returnType with
         | None -> true
         | Some returnType ->
             typeEq (solveTypeCore env returnType) (s.GetReturnType(env, m))
         &&
-        Seq.length mParamTypes = List.length argTypes &&
+        Seq.length paramTypes = List.length argTypes &&
         let argTypes = List.map (solveTypeCore env) argTypes
-        Seq.forall2 typeEq mParamTypes argTypes
+        Seq.forall2 typeEq paramTypes argTypes
 
     let mTypeArgs, getOpenMethodOfOpenType =
         match annot with
-        | None -> [], fun _ ms -> Seq.exactlyOne ms
+        | None -> [], fun _ _ ms -> Seq.exactlyOne ms
         | Some(MethodTypeAnnotation(mTypeArgs, argTypes, returnType)) ->
-            let select openTypeParams ms =
+            let select mTypeArgs openTypeParams ms =
+                let mTypeArgsLength = Seq.length mTypeArgs
                 let openTypeParams = Seq.toList openTypeParams
                 let varMap = List.choose (function SolvedType.TypeParam(v, v') -> Some(v,v') | _ -> None) openTypeParams
                 
                 let env = { env with typeArgs = openTypeParams; sVarMap = varMap }
-                let env = env
-                Seq.filter (filter env argTypes returnType) ms |> Seq.exactlyOne
+                Seq.filter (filter env mTypeArgsLength argTypes returnType) ms |> Seq.exactlyOne
 
             mTypeArgs, select
 
@@ -129,36 +151,26 @@ let getMethodGeneric env parent annot (s: Solver<_,_,_>) =
     let openTypeParams = s.GetTypeParams openType
     let openMethodsOfOpenType = s.GetMethods openType
 
-    let openMethodOfOpenType = getOpenMethodOfOpenType openTypeParams openMethodsOfOpenType
+    let openMethodOfOpenType = getOpenMethodOfOpenType mTypeArgs openTypeParams openMethodsOfOpenType
     let mTypeArgs = List.map (solveTypeCore env) mTypeArgs
 
     let openMethodOfCloseType = s.SolveMethodOfCloseType(parent, openMethodOfOpenType)
     Seq.map getUnderlyingSystemType mTypeArgs
     |> MethodBase.makeCloseMethod openMethodOfCloseType 
     
-let getMethodBase (getMethodsIL, getMethodsRT, getAllMethodsRT) env parent annot =
+let getMethodBase m env parent annot =
     match solveTypeCore env parent with
     | TypeParam _ -> failwith ""
-    | RuntimeType parent -> runtimeTypeSolver getMethodsRT getAllMethodsRT |> getMethodGeneric env parent annot
-    | Builder parent -> nonGenericTypeBuilderSolver getMethodsIL |> getMethodGeneric env parent annot
-    | InstantiationType(closeType, Some openType) -> closeTypeBuilderSolver getMethodsIL |> getMethodGeneric env (closeType, openType) annot
-    | InstantiationType(parent, None) -> runtimeTypeOfTypeBuilderSolver getMethodsRT |> getMethodGeneric env parent annot
+    | RuntimeType parent -> runtimeTypeSolver m |> getMethodGeneric env parent annot
+    | Builder parent -> nonGenericTypeBuilderSolver m |> getMethodGeneric env parent annot
+    | InstantiationType(closeType, Some openType) -> closeTypeBuilderSolver m |> getMethodGeneric env (closeType, openType) annot
+    | InstantiationType(parent, None) -> runtimeTypeOfTypeBuilderSolver m |> getMethodGeneric env parent annot
 
 let getMethodInfo env parent name annot =
-    getMethodBase(
-        getMethods name,
-        (Type.getMethods name >> Seq.map (fun m -> upcast m)),
-        (Type.getAllMethods >> Seq.map (fun m -> upcast m))
-    ) env parent annot
-    :?> Reflection.MethodInfo
+    getMethodBase (methodInfoSource name) env parent annot :?> Reflection.MethodInfo
     
 let getConstructorInfo env parent annot =
-    getMethodBase(
-        getConstructors,
-        (Type.getConstructors >> Seq.map (fun m -> upcast m)),
-        (Type.getConstructors >> Seq.map (fun m -> upcast m))
-    ) env parent annot
-    :?> Reflection.ConstructorInfo
+    getMethodBase constructorInfoSource env parent annot :?> Reflection.ConstructorInfo
 
 let getField env parent name =
     match solveTypeCore env parent with
