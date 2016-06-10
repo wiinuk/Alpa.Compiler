@@ -36,9 +36,9 @@ module HashMap =
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module TypeVarMap =
-    let emptyVarMap = TypeVarMap([], [])
-    let typeParams (TypeVarMap(p,_)) = p
-    let typeVarMapToSolvedType (TypeVarMap(vs,vs')) = Seq.map2 (fun v v' -> TypeParam(v, v')) vs vs'
+    let emptyVarMap = []
+    let typeParams xs = Seq.map fst
+    let typeVarMapToSolvedType xs = Seq.map TypeParam xs
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module FullName =
@@ -134,7 +134,7 @@ module TypeSpec =
             | _ -> failwith "unreach"
         eval t
 
-    let solveTypeVarMap (TypeVarMap(vs,vs')) v = List.item (List.findIndex ((=) v) vs) vs'
+    let solveTypeVarMap xs v = List.find (fst >> (=) v) xs |> snd
     let rec solveTypeCore ({ senv = { map = map; amap = amap }; sVarMap = varMap; sMVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
         let getTypeDef map name =
             let mutable ti = Unchecked.defaultof<_>
@@ -262,6 +262,11 @@ module ILMethodBuilder =
     let makeCloseMethod m mTypeArgs =
         Seq.map getUnderlyingSystemType mTypeArgs
         |> MethodBase.makeCloseMethod (getUnderlyingSystemMethod m)
+
+    let getILGenerator { mb = mb } =
+        match mb with
+        | Choice1Of2 m -> m.GetILGenerator()
+        | Choice2Of2 m -> m.GetILGenerator()
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module ILTypeBuilder =

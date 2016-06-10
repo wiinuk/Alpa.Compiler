@@ -47,34 +47,38 @@ let p n = FullName(t n, [], [], None)
 let typeDef = {
     kind = None
     typeParams = []
-    inherits = []
+    parent = None
+    impls = []
     members = []
 }
 
-let typeD ns name typeParams inherits ms =
+let typeD ns name typeParams parent impls ms =
     let def = {
         kind = None
         typeParams = typeParams
-        inherits = inherits
+        parent = parent
+        impls = impls
         members = ms
     }
     TopTypeDef((name, List.rev ns), def)
 
-let type0D ns name inherits members =
+let type0D ns name parent impls members =
     TopTypeDef((name, List.rev ns), {
         kind = None
         typeParams = []
-        inherits = inherits
+        parent = parent
+        impls = impls
         members = members
     })
 
 let type1D ns name v1 f =
     let v1 = newTypeVar v1
-    let make inherits members =
+    let make parent impls members =
         TopTypeDef((name, List.rev ns), {
             kind = None
             typeParams = [v1]
-            inherits = inherits
+            parent = parent
+            impls = impls
             members = members
         })
     f make (TypeVar v1)
@@ -87,11 +91,12 @@ let typeRef2 n v1 v2 = TypeSpec(n, [v1; v2])
 
 let abstract2T name v1 v2 f =
     let v1, v2 = newTypeVar v1, newTypeVar v2
-    let make inherits members =
+    let make parent impls members =
         TopTypeDef(name, {
             kind = Some Abstract
             typeParams = [v1; v2]
-            inherits = inherits
+            parent = parent
+            impls = impls
             members = members
         })
     f make (TypeVar v1) (TypeVar v2)
@@ -161,8 +166,9 @@ module SimpleInstructions =
     let stsfld t n = Instr("", O.Stsfld, OpField(t, n))
     let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
 
-    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpMethod(parent, name, typeArgs, argTypes))
-    let call thisType name typeArgs argTypes = Instr("", O.Call, OpMethod(thisType, name, typeArgs, argTypes))
+    let annot typeArgs argTypes = MethodTypeAnnotation(typeArgs, argTypes, None) |> Some
+    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpMethod(parent, name, annot typeArgs argTypes))
+    let call thisType name typeArgs argTypes = Instr("", O.Call, OpMethod(thisType, name, annot typeArgs argTypes))
     let call_static thisType name typeArgs argTypes = call thisType name typeArgs argTypes
 
 

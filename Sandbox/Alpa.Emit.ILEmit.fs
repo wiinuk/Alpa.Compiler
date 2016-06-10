@@ -4,26 +4,52 @@ open Alpa.Emit.EmitException
 open Alpa.Emit.FullName
 open Alpa.Emit.HashMap
 open Alpa.Emit.Parameter
-open Alpa.Emit.SolvedType
 open Alpa.Emit.TypeSpec
 open Alpa.Emit.TypeVarMap
-open Alpa.Emit.PreDefinedTypes
 open Alpa.Emit.MethodHead
 open Alpa.Emit.SolveEnv
 open Alpa.Emit.ILMethodBuilder
 open Alpa.Emit.ILTypeBuilder
-open System
 open System.Reflection.Emit
+open Solve
 
-let defineVarMap typeParams defineGenericParameters =
-    match typeParams with
-    | [] -> emptyVarMap
-    | _ ->
-        let names = List.toArray typeParams
-        TypeVarMap(typeParams, List.ofArray <| defineGenericParameters names)
-
-let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
-let tDefineGP (t: TypeBuilder) xs = t.DefineGenericParameters xs
+// (1) type name definition
+// type IOrd`1 ... = ...;;
+// type IMap`2 ... = ...;;
+// type IntMap`1 ... = ...;;
+// module Module =
+//     type X = ...;
+//     ...;;
+//
+// (2) type param definition
+// type IOrd`1 a = ...;;
+// type IMap`2(k <: IOrd, v) = ...;;
+// type IntMap`1 v = ...;;
+// module Module =
+//     type X = ...;
+//     ...;;
+//
+// (3) member definition
+// type IOrd`1 a =
+//     abstract CompareTo a : int;;
+// type IMap`2(k <: IOrd, v) =
+//     abstract Add(k, v) : void;;
+// type IntMap`1 v <: object, IMap(int32, v) =
+//     override Add(int32, v) : void = ...;;
+// module Module =
+//     type X = fun Member (a <: IOrd b, b) (a) : void = ...;
+//     fun main () : void = ...;;
+//
+// (4) emit method body
+// type IOrd`1 a =
+//     abstract CompareTo a : int;;
+// type IMap`2(k <: IOrd, v) =
+//     abstract Add(k, v) : void;;
+// type IntMap`1 v <: object, IMap(int32, v) =
+//     override Add(int32, v) : void = ret;;
+// module Module =
+//     type X = fun Member (a <: IOrd b, b) (a) : void = ret;
+//     fun main () : void = ret;;
 
 module DefineTypes =
     let rec module'(defineType, toName, a, fullName, ({ map = map } as env), ({ mMembers = members } as md)) =
@@ -118,6 +144,16 @@ let checkAlias { amap = amap; map = map } =
 
         let t = occur amap [name] entity
         assign amap name { aTypeParams = aTypeParams; entity = t }
+        
+let defineVarMap typeParams defineGenericParameters =
+    match typeParams with
+    | [] -> emptyVarMap
+    | _ ->
+        let names = List.toArray typeParams
+        List.zip typeParams (List.ofArray <| defineGenericParameters names)
+
+let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
+let tDefineGP (t: TypeBuilder) xs = t.DefineGenericParameters xs
 
 let defineTypeParams { map = map } =
     for ({ d = d; t = t } as ti) in values map do
@@ -161,44 +197,6 @@ let defineMethodDef dt ov m =
 //                        let bm = bt.GetMethod(baseMethodName, pts)
 //                        t.DefineMethodOverride(bm, m)
     
-// (1) type name definition
-// type IOrd`1 ... = ...;;
-// type IMap`2 ... = ...;;
-// type IntMap`1 ... = ...;;
-// module Module =
-//     type X = ...;
-//     ...;;
-//
-// (2) type param definition
-// type IOrd`1 a = ...;;
-// type IMap`2(k <: IOrd, v) = ...;;
-// type IntMap`1 v = ...;;
-// module Module =
-//     type X = ...;
-//     ...;;
-//
-// (3) member definition
-// type IOrd`1 a =
-//     abstract CompareTo a : int;;
-// type IMap`2(k <: IOrd, v) =
-//     abstract Add(k, v) : void;;
-// type IntMap`1 v <: object, IMap(int32, v) =
-//     override Add(int32, v) : void = ...;;
-// module Module =
-//     type X = fun Member (a <: IOrd b, b) (a) : void = ...;
-//     fun main () : void = ...;;
-//
-// (4) emit method body
-// type IOrd`1 a =
-//     abstract CompareTo a : int;;
-// type IMap`2(k <: IOrd, v) =
-//     abstract Add(k, v) : void;;
-// type IntMap`1 v <: object, IMap(int32, v) =
-//     override Add(int32, v) : void = ret;;
-// module Module =
-//     type X = fun Member (a <: IOrd b, b) (a) : void = ret;
-//     fun main () : void = ret;;
-
 let defineField ({ t = t; fmap = fmap } as ti) (isStatic, isMutable, name, ft) =
     let a = F.Public
     let a = if isStatic then a ||| F.Static else a
@@ -290,420 +288,8 @@ let defineMembers { map = map } =
         | Choice1Of2 td -> defineTypeDef ti td
         | Choice2Of2 { mMembers = members } ->
             for m in members do defineModuleMember ti m
-//
-//let getField env parent name =
-//    match solveTypeCore env parent with
-//    | TypeParam _ -> failwith "getField: TypeParam"
-//    | RuntimeType t -> t.GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
-//    | Builder { fmap = fmap } -> upcast get fmap name
-//    | InstantiationType(tb, Some { fmap = fmap }) -> TypeBuilder.GetField(tb, get fmap name)
-//    | InstantiationType(tb, None) ->
-//        let fd = tb.GetGenericTypeDefinition().GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
-//        TypeBuilder.GetField(tb, fd)
 
-//type IsMethodBase<'m> = {
-//    getMTypeParams: 'm -> SolvedType list
-//    getParameters: 'm -> SolvedType list
-//}
-//type IsMethodInfo<'m,'i,'b> = {
-//    baseClass: IsMethodBase<'b>
-//    toBase: 'm -> 'b
-//    getSystemMethod: 'm -> 'i
-//}
-//type IsType<'t,'m,'c> = {
-//    getMethodsOfName: string -> 't -> 'm seq
-//    getCtors: 't -> 'c seq
-//    getTypeParams: 't -> SolvedType list
-//}
-//let parameterType (p: Reflection.ParameterInfo) = p.ParameterType
-
-//let isMethodBaseOfRt = {
-//    getMTypeParams = fun (m: Reflection.MethodBase) -> if m.IsGenericMethod then m.GetGenericArguments() |> Seq.map RuntimeType |> Seq.toList else []
-//    getParameters = fun m ->
-//        m.GetParameters()
-//        |> Seq.map (parameterType >> RuntimeType)
-//        |> Seq.toList
-//}
-//let isMethodInfoOfRt = {
-//    baseClass = isMethodBaseOfRt
-//    toBase = fun (m: Reflection.MethodInfo) -> upcast m
-//    getSystemMethod = id
-//}
-//let isCtorOfRt = {
-//    baseClass = isMethodBaseOfRt
-//    toBase = fun (m: Reflection.ConstructorInfo) -> upcast m
-//    getSystemMethod = id
-//}
-//let isTypeOfRt = {
-//    getMethodsOfName = fun name (t: Type) -> t.GetMethods(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance) |> Seq.filter (fun m -> m.Name = name)
-//    getCtors = fun t -> upcast t.GetConstructors(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance)
-//    getTypeParams = fun t -> t.GetGenericArguments() |> Seq.map RuntimeType |> Seq.toList
-//}
-
-//let toTypeParams (TypeVarMap(typeParams, typeParams')) = List.map2 (fun t t' -> TypeParam(t, TypeParamBuilder t')) typeParams typeParams'
-
-//let isMethodInfoOfTb = {
-//    baseClass =
-//        {
-//        getMTypeParams = fun { ILMethodBuilder.mVarMap = mVarMap } -> toTypeParams mVarMap
-//        getParameters = fun { dt = dt; mVarMap = mVarMap; m = MethodInfo(MethodHead(pars=pars),_) } ->
-//            List.map (paramType >> solveTypeCore (envOfTypeBuilder mVarMap dt)) pars
-//        }
-//    toBase = id
-//    getSystemMethod = fun { mb = mb } -> mb
-//}
-//let isCtorOfTb = {
-//    baseClass =
-//        {
-//        getMTypeParams = fun _ -> []
-//        getParameters = fun { dt = dt; pars = pars } ->
-//            List.map (paramType >> solveTypeCore (envOfTypeBuilder emptyVarMap dt)) pars
-//        }
-//    toBase = id
-//    getSystemMethod = fun { cb = cb } -> cb
-//}
-//let isTypeOfTb = {
-//    getMethodsOfName = fun name { mmap = mmap } -> upcast get mmap name
-//    getCtors = fun { cmap = cmap } -> upcast cmap
-//    getTypeParams = fun { varMap = varMap } -> toTypeParams varMap
-//}
-
-/// require: closeType.GetType().Name = "RuntimeType" && closeType.IsGenericType
-//let getMemberOfRuntimeOpenType getMembers resolveMember (closeType: Type) (memberOfOpenType: Reflection.MemberInfo) =
-//    let openTypeParemeters = closeType.GetGenericTypeDefinition().GetGenericArguments()
-//    let methodGerenicArgs =
-//        match memberOfOpenType with 
-//        | :? Reflection.MethodBase as m when m.IsGenericMethod -> m.GetGenericArguments()
-//        | _ -> Type.EmptyTypes
-//
-//    let mOpenTypeMd = memberOfOpenType.MetadataToken
-//    getMembers closeType (B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance ||| B.Static)
-//    |> Seq.find (fun (m: #Reflection.MemberInfo) ->
-//        m.Name = memberOfOpenType.Name &&
-//        let m' : Reflection.MemberInfo = resolveMember m.Module m.MetadataToken openTypeParemeters methodGerenicArgs
-//        m'.MetadataToken = mOpenTypeMd
-//    )
-
-//let getMethodOfRuntimeOpenType closeType (methodOfOpenType: Reflection.MethodInfo) =
-//    getMemberOfRuntimeOpenType
-//        (fun t b -> t.GetMethods b)
-//        (fun m md tps mtps -> upcast m.ResolveMethod(md, tps, mtps))
-//        closeType methodOfOpenType
-//
-//let getCtorOfRuntimeOpenType closeType (ctorOfOpenType: Reflection.ConstructorInfo) =
-//    getMemberOfRuntimeOpenType
-//        (fun t b -> t.GetConstructors b)
-//        (fun m md tps mtps -> upcast m.ResolveMethod(md, tps, mtps))
-//        closeType ctorOfOpenType
-//
-//let getGenericMethod
-//    { IsType.getMethodsOfName = getMethodsOfName; getTypeParams = getTypeParams }
-//    { IsMethodInfo.getSystemMethod = getSystemMethod
-//      toBase = toBase
-//      baseClass = { getMTypeParams = getMTypeParams; getParameters = getParameters }}
-//    (env, closeType, openType, name, mTypeArgs, argTypes) =
-//
-//    let typeParams = getTypeParams openType
-//    let filter m =
-//        let m = toBase m
-//        let mTypeParams = getMTypeParams m
-//        List.length mTypeParams = List.length mTypeArgs &&
-//        let env = { env with typeArgs = typeParams; mTypeArgs = mTypeParams }
-//        let pars = getParameters m
-//        List.length pars = List.length argTypes &&
-//        let methodParamTypesOfOpenType = solveTypes env argTypes
-//        Seq.forall2 (=) methodParamTypesOfOpenType (List.map getUnderlyingSystemType pars)
-//
-//    let openMethodOfOpenType =
-//        getMethodsOfName name openType
-//        |> Seq.toList
-//        |> List.filter filter
-//        |> List.exactlyOne
-//
-//    let openMethodOfCloseType = TypeBuilder.GetMethod(closeType, getSystemMethod openMethodOfOpenType)
-//
-//    let mTypeArgs = Seq.map (solveType env) mTypeArgs |> Seq.toArray
-//    if openMethodOfCloseType.IsGenericMethodDefinition then openMethodOfCloseType.MakeGenericMethod mTypeArgs
-//    else openMethodOfCloseType
-
-//let getMethodGeneric (getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethods, solveMethodOfCloseType, makeCloseMethod) env parent annot =
-//    let mTypeArgs, getOpenMethodOfOpenType =
-//        match annot with
-//        | None -> [], fun _ ms -> Seq.exactlyOne ms
-//        | Some(MethodTypeAnnotation(mTypeArgs, argTypes, returnType)) ->
-//            let filter env m =
-//                let mTypeParams = getMethodTypeParams m
-//                let env =
-//                    match mTypeParams with
-//                    | [] -> env
-//                    | _ -> { env with mTypeArgs = mTypeParams }
-//
-//                let mParamTypes = getParemeterTypes env m
-//
-//                match returnType with
-//                | None -> true
-//                | Some returnType ->
-//                    typeEq (solveTypeCore env returnType) (getReturnType env m)
-//                &&
-//                List.length mParamTypes = List.length argTypes &&
-//                let argTypes = List.map (solveTypeCore env) argTypes
-//                List.forall2 typeEq mParamTypes argTypes
-//
-//            let select openTypeParams ms =
-//                Seq.filter (filter { env with typeArgs = openTypeParams }) ms
-//                |> Seq.exactlyOne
-//
-//            mTypeArgs, select
-//
-//    let openType = getOpenType parent
-//    let openTypeParams = getTypeParams openType
-//    let openMethodsOfOpenType = getMethods openType
-//
-//    let openMethodOfOpenType = getOpenMethodOfOpenType openTypeParams openMethodsOfOpenType
-//    let mTypeArgs = List.map (solveTypeCore env) mTypeArgs
-//
-//    let openMethodOfCloseType = solveMethodOfCloseType parent openMethodOfOpenType
-//    makeCloseMethod openMethodOfCloseType mTypeArgs
-//
-//let getMethodBaseOfRuntimeType env parent getMethods getAllMethods annot =
-//    let getMethodTypeParams (m: Reflection.MethodBase) =
-//        match m.IsGenericMethod, m with
-//        | true, (:? Reflection.MethodInfo as m) ->
-//            let ts = m.GetGenericMethodDefinition().GetGenericArguments()
-//            [for t in ts -> RuntimeType t]
-//        | _ -> []
-//
-//    let getParemeterTypes _ (m: Reflection.MethodBase) = [for p in m.GetParameters() -> RuntimeType p.ParameterType]
-//    let getReturnType _ (m: Reflection.MethodBase) =
-//        match m with
-//        | :? Reflection.MethodInfo as m -> RuntimeType m.ReturnType
-//        | _ -> RuntimeType typeof<Void>
-//
-//    let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
-//    let getOpenType (t: Type) = if t.IsGenericType then t.GetGenericTypeDefinition() else t
-//    let getTypeParams (t: Type) = if t.IsGenericType then [for t in t.GetGenericArguments() -> RuntimeType t] else []
-//    
-//    let solveMethodOfCloseType (closeParent: Type) (openMethodOfOpenType: Reflection.MethodBase) =
-//        if closeParent.IsGenericType then
-//            getMemberOfRuntimeOpenType
-//                getAllMethods
-//                (fun m md tps mtps -> upcast m.ResolveMethod(md, tps, mtps))
-//                closeParent openMethodOfOpenType
-//        else openMethodOfOpenType
-//
-//    let makeCloseMethod (openMethod: Reflection.MethodBase) = function
-//        | [] -> openMethod
-//        | mTypeArgs ->
-//            let ts = Seq.map getUnderlyingSystemType mTypeArgs |> Seq.toArray
-//            upcast (openMethod :?> Reflection.MethodInfo).MakeGenericMethod ts
-//
-//    getMethodGeneric(getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethods, solveMethodOfCloseType, makeCloseMethod) env parent annot
-//
-//let getMethodBaseOfNonGenericTypeBuilder env parent getMethods annot =
-//    let getMethodTypeParams { ILMethodBuilder.mVarMap = TypeVarMap(vs,vs') } =
-//        List.map2(fun v v' -> TypeParam(v, TypeParamBuilder v')) vs vs'
-//
-//    let getParemeterTypes env { m = MethodInfo(MethodHead(pars=pars), _) } = List.map (paramType >> solveTypeCore env) pars
-//    let getReturnType env {  m = MethodInfo(MethodHead(ret=ret), _) } = paramType ret |> solveTypeCore env
-//    let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
-//    let getOpenType t = t
-//    let getTypeParams { ILTypeBuilder.varMap = TypeVarMap(vs,vs') } = 
-//        List.map2(fun v v' -> TypeParam(v, TypeParamBuilder v')) vs vs'
-//    let solveMethodOfCloseType _ m = m
-//    let makeCloseMethod m = function
-//        | [] -> getUnderlyingSystemMethod m
-//        | mTypeArgs ->
-//            let ts = Seq.map getUnderlyingSystemType mTypeArgs |> Seq.toArray
-//            match getUnderlyingSystemMethod m with
-//            | :? Reflection.MethodInfo as m -> upcast m.MakeGenericMethod ts
-//            | _ -> failwith "error"
-//
-//    getMethodGeneric(getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethods, solveMethodOfCloseType, makeCloseMethod) env parent annot
-//
-//let getMethodBaseOfCloseTypeBuilder env parent getMethods annot =
-//    let getMethodTypeParams { ILMethodBuilder.mVarMap = TypeVarMap(vs,vs') } =
-//        List.map2(fun v v' -> TypeParam(v, TypeParamBuilder v')) vs vs'
-//
-//    let getParemeterTypes env { m = MethodInfo(MethodHead(pars=pars), _) } = List.map (paramType >> solveTypeCore env) pars
-//    let getReturnType env { m = MethodInfo(MethodHead(ret=ret), _) } = paramType ret |> solveTypeCore env
-//    let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
-//    let getOpenType = snd
-//    let getTypeParams { ILTypeBuilder.varMap = TypeVarMap(vs,vs') } = 
-//        List.map2(fun v v' -> TypeParam(v, TypeParamBuilder v')) vs vs'
-//    let solveMethodOfCloseType (closeType, _) { mb = openMethodOfOpenType } =
-//        match openMethodOfOpenType with
-//        | Choice1Of2 m -> TypeBuilder.GetMethod(closeType, m) :> Reflection.MethodBase
-//        | Choice2Of2 m -> TypeBuilder.GetConstructor(closeType, m) :> _
-//
-//    let makeCloseMethod (openMethod: Reflection.MethodBase) = function
-//        | [] -> openMethod
-//        | mTypeArgs ->
-//            let ts = Seq.map getUnderlyingSystemType mTypeArgs |> Seq.toArray
-//            upcast (openMethod :?> Reflection.MethodInfo).MakeGenericMethod ts
-//
-//    getMethodGeneric(getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethods, solveMethodOfCloseType, makeCloseMethod) env parent annot
-//
-//let getMethodBaseOfRuntimeTypeOfTypeBuilder env parent getMethods annot =
-//    let getMethodTypeParams (m: Reflection.MethodBase) =
-//        match m.IsGenericMethod, m with
-//        | true, (:? Reflection.MethodInfo as m) ->
-//            let ts = m.GetGenericMethodDefinition().GetGenericArguments()
-//            [for t in ts -> RuntimeType t]
-//        | _ -> []
-//
-//    let getParemeterTypes _ (m: Reflection.MethodBase) = [for p in m.GetParameters() -> RuntimeType p.ParameterType]
-//    let getReturnType _ (m: Reflection.MethodBase) =
-//        match m with
-//        | :? Reflection.MethodInfo as m -> RuntimeType m.ReturnType
-//        | _ -> RuntimeType typeof<Void>
-//
-//    let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
-//    let getOpenType (t: Type) = if t.IsGenericType then t.GetGenericTypeDefinition() else t
-//    let getTypeParams (t: Type) = if t.IsGenericType then [for t in t.GetGenericArguments() -> RuntimeType t] else []
-//    
-//    let solveMethodOfCloseType closeType (openMethodOfOpenType: Reflection.MethodBase) =
-//        match openMethodOfOpenType with
-//        | :? Reflection.MethodInfo as m -> TypeBuilder.GetMethod(closeType, m) :> Reflection.MethodBase
-//        | :? Reflection.ConstructorInfo as m -> TypeBuilder.GetConstructor(closeType, m) :> _
-//        | _ -> raise <| NotImplementedException()
-//
-//    let makeCloseMethod (openMethod: Reflection.MethodBase) = function
-//        | [] -> openMethod
-//        | mTypeArgs ->
-//            let ts = Seq.map getUnderlyingSystemType mTypeArgs |> Seq.toArray
-//            upcast (openMethod :?> Reflection.MethodInfo).MakeGenericMethod ts
-//
-//    getMethodGeneric(getMethodTypeParams, getParemeterTypes, getReturnType, typeEq, getOpenType, getTypeParams, getMethods, solveMethodOfCloseType, makeCloseMethod) env parent annot
-//
-//let getMethodOfRuntimeType env parent name annot =
-//    let getAllMethods (t: Type) b = t.GetMethods b |> Seq.map(fun m -> m :> Reflection.MethodBase)
-//
-//    let getMethods t =
-//        B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance
-//        |> getAllMethods t
-//        |> Seq.filter (fun m -> m.Name = name) 
-//
-//    getMethodBaseOfRuntimeType env parent getMethods getAllMethods annot :?> Reflection.MethodInfo
-//
-//let getMethodOfNonGenericTypeBuilder env parent name annot =
-//    getMethodBaseOfNonGenericTypeBuilder env parent (fun { mmap = mmap } -> get mmap name) annot
-//    :?> Reflection.MethodInfo
-//
-//let getMethodOfCloseTypeBuilder env parent name annot =
-//    getMethodBaseOfCloseTypeBuilder env parent (fun { mmap = mmap } -> get mmap name) annot
-//    :?> Reflection.MethodInfo
-//
-//let getMethodOfRuntimeTypeOfTypeBuilder env parent name annot =
-//    let getMethods (t: Type) =
-//        B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance
-//        |> t.GetMethods
-//        |> Seq.filter (fun m -> m.Name = name)
-//
-//    getMethodBaseOfRuntimeTypeOfTypeBuilder env parent getMethods annot
-//    :?> Reflection.MethodInfo
-//
-//let getMethod env parent name annot =
-//    match solveTypeCore env parent with
-//    | TypeParam _ -> failwith ""
-//    | RuntimeType parent -> getMethodOfRuntimeType env parent name annot
-//    | Builder parent -> getMethodOfNonGenericTypeBuilder env parent name annot
-//    | InstantiationType(closeType, Some openType) -> getMethodOfCloseTypeBuilder env (closeType, openType) name annot
-//    | InstantiationType(closeType, None) -> getMethodOfRuntimeTypeOfTypeBuilder env closeType name annot
-
-//let getMethod env parent name annot =
-//    let a = B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic
-//    let c = CC.Any
-//
-//    let parent = solveTypeCore env parent
-//
-//    match annot with
-//    | None -> None, Seq.exactlyOne
-//    | Some(MethodTypeAnnotation(mTypeArgs, argTypes, None)) ->
-//
-//        match parent with
-//        | TypeParam _ -> failwith "TypeParam"
-//        | RuntimeType t ->
-//            if t.IsGenericType then
-//                let openType = t.GetGenericTypeDefinition()
-//                let typeParams = openType.GetGenericArguments()
-//                let env = { env with typeArgs = Seq.map RuntimeType typeParams |> Seq.toList }
-//                let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-//                let methodOfOpenType = openType.GetMethod(name, B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance, null, argTypes, null)
-//                getMethodOfRuntimeOpenType t methodOfOpenType
-//            else
-//                let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-//                t.GetMethod(name, a, null, c, argTypes, null)
-//
-//        | Builder { mmap = mmap } ->
-//            let { mb = mb } =
-//                get mmap name
-//                |> List.filter (fun { mVarMap = TypeVarMap(mTypeParams,_); m = MethodInfo(MethodHead(_,tpars,pars,_),_) } ->
-//                    List.length tpars = List.length mTypeArgs &&
-//                    List.length pars = List.length argTypes &&
-//                    let subst = List.zip mTypeParams mTypeArgs
-//                    List.forall2
-//                        (fun (Parameter(_,parT)) argT -> getReplacedType subst parT = argT)
-//                        pars
-//                        argTypes
-//                )
-//                |> List.exactlyOne
-//            upcast mb
-//
-//        | InstantiationType(closeType, None) -> getGenericMethod isTypeOfRt isMethodInfoOfRt (env, closeType, closeType.GetGenericTypeDefinition(), name, mTypeArgs, argTypes)
-//        | InstantiationType(closeType, Some openType) -> getGenericMethod isTypeOfTb isMethodInfoOfTb (env, closeType, openType, name, mTypeArgs, argTypes)
-
-//let getGenericCtor
-//    { IsType.getCtors = getCtors; getTypeParams = getTypeParams }
-//    { IsMethodInfo.baseClass = { getParameters = getParameters }; toBase = toBase; getSystemMethod = getSystemMethod }
-//    (env, closeType, openType, argTypes) =
-//
-//    let typeParams = getTypeParams openType
-//    let m =
-//        getCtors openType
-//        |> Seq.toList
-//        |> List.filter (fun m ->
-//            let m = toBase m
-//            let pars = getParameters m
-//            List.length pars = List.length argTypes &&
-//            let genericMethodDefParamTypes = solveTypes { env with typeArgs = typeParams } argTypes
-//            let paramTypes = Seq.map getUnderlyingSystemType pars
-//            Seq.forall2 (=) genericMethodDefParamTypes paramTypes
-//        )
-//        |> List.exactlyOne
-//
-//    TypeBuilder.GetConstructor(closeType, getSystemMethod m)
-
-//let getCtor env parent argTypes =
-//    match solveTypeCore env parent with
-//    | TypeParam _ -> failwith "TypeParam"
-//    | RuntimeType t ->
-//        if t.IsGenericType then
-//            let openType = t.GetGenericTypeDefinition()
-//            let typeParams = openType.GetGenericArguments()
-//            let env = { env with typeArgs = Seq.map RuntimeType typeParams |> Seq.toList }
-//            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-//            let ctorOfOpenType = openType.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance, null, argTypes, null)
-//            getCtorOfRuntimeOpenType t ctorOfOpenType
-//        else
-//            let argTypes = Seq.map (solveType env) argTypes |> Seq.toArray
-//            t.GetConstructor(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance, null, CC.Any, argTypes, null)
-//
-//    | Builder { cmap = cmap } ->
-//        let argTypes = solveTypes env argTypes
-//        let { cb = cb } =
-//            cmap
-//            |> Seq.filter (fun { cb = cb } ->
-//                let pars = cb.GetParameters()
-//                Array.length pars = Array.length argTypes &&
-//                Array.forall2 (fun p t -> parameterType p = t) pars argTypes
-//            )
-//            |> Seq.exactlyOne
-//        upcast cb
-//        
-//    | InstantiationType(closeType, None) -> getGenericCtor isTypeOfRt isCtorOfRt (env, closeType, closeType.GetGenericTypeDefinition(), argTypes)
-//    | InstantiationType(closeType, Some openType) -> getGenericCtor isTypeOfTb isCtorOfTb (env, closeType, openType, argTypes)
-
-let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
+let emitInstr (g: ILGenerator) env (Instr(label, op, operand)) =
     match operand with
     | OpNone -> g.Emit op
     | OpI1 n -> g.Emit(op, n)
@@ -713,27 +299,35 @@ let emitInstr (g: ILGenerator) mVarMap dt (Instr(label, op, operand)) =
     | OpF4 n -> g.Emit(op, n)
     | OpF8 n -> g.Emit(op, n)
     | OpString s -> g.Emit(op, s)
-    | OpType t -> g.Emit(op, solveType (envOfTypeBuilder mVarMap dt) t)
-    | OpField(parent, name) -> g.Emit(op, getField (envOfTypeBuilder mVarMap dt) parent name)
-    | OpMethod(parent, name, annot) -> g.Emit(op, getMethod (envOfTypeBuilder mVarMap dt) parent name annot)
-    | OpCtor(parent, argTypes) -> g.Emit(op, getCtor (envOfTypeBuilder mVarMap dt) parent argTypes)
+    | OpType t -> g.Emit(op, solveType env t)
+    | OpField(parent, name) ->
+        let f = getField env parent name
+        g.Emit(op, f)
 
-let emitMethod g mVarMap dt (MethodBody instrs) =
-    for instr in instrs do emitInstr g mVarMap dt instr
+    | OpMethod(parent, name, annot) ->
+        let m = getMethodInfo env parent name annot
+        g.Emit(op, m)
+
+    | OpCtor(parent, argTypes) ->
+        let annot = Some(MethodTypeAnnotation([], argTypes, None))
+        let ctor = getConstructorInfo env parent annot
+        g.Emit(op, ctor)
+
+let emitMethod ({ mVarMap = mVarMap; dt = dt; m = MethodInfo(_,MethodBody instrs)} as m) =
+    let g = getILGenerator m
+    let env = envOfTypeBuilder mVarMap dt
+    for instr in instrs do emitInstr g env instr
 
 let emitMethods { map = map } =
     for { mmap = mmap; cmap = cmap; cctor = cctor } in values map do
         for mis in values mmap do
-            for { mb = mb; mVarMap = mVarMap; dt = dt; m = MethodInfo(_, b) } in mis do
-                emitMethod (mb.GetILGenerator()) mVarMap dt b
+            for m in mis do emitMethod m
 
-        for { cb = cb; dt = dt; body = body } in cmap do
-            emitMethod (cb.GetILGenerator()) emptyVarMap dt body
+        for m in cmap do emitMethod m
 
         match cctor with
         | None -> ()
-        | Some { cb = cb; dt = dt; body = body } ->
-            emitMethod (cb.GetILGenerator()) emptyVarMap dt body
+        | Some m -> emitMethod m
 
 let createTypes { map = map } = for { t = t } in values map do t.CreateType() |> ignore
 

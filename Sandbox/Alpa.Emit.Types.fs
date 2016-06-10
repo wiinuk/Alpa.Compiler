@@ -120,7 +120,7 @@ type HashMap<'k,'v when 'k : equality> =
             for k, v in elements do x.Add(k, v)
 
 /// typeParams.Length = typeParamBuilders.Length
-type TypeVarMap = TypeVarMap of typeParams: TypeVar list * typeParamBuilders: GenericTypeParameterBuilder list
+type TypeVarMap = (TypeVar * GenericTypeParameterBuilder) list
 type MethodSign = MethodName
 type FieldSign = string
 
