@@ -1,13 +1,13 @@
 ﻿alias integer = [System.Numerics]System.Numerics.BigInteger;;
-alias `a -> `b = Fun(`a, `b);;
+alias `a -> `b = Fun`2(`a, `b);;
 
-type abstract Fun(`a, `b) = abstract Apply(`a): `b;;
+type abstract Fun`2(`a, `b) = abstract Apply(`a): `b;;
 
 type Num(`a) =
     abstract ofInteger(integer): `a;
     abstract '_+_'(`a, `a) : `a;;
 
-type 'Num(int32)' <: Num(int32) =
+type 'Num(int32)' : Num(int32) =
     override ofInteger(integer): int32 =
 		ldarg.1
 		call integer::op_Explicit(integer): int32
@@ -19,7 +19,7 @@ type 'Num(int32)' <: Num(int32) =
 		add
 		ret;;
 
-type CloSucc2(`a) <: (`a -> `a) =
+type CloSucc2(`a) : (`a -> `a) =
     let item1: Num(`a)
     new (Num(`a)) =
 		ldarg.0
@@ -36,7 +36,7 @@ type CloSucc2(`a) <: (`a -> `a) =
         callvirt Num(`a)::'_+_'
         ret;;
 
-type CloSucc(`a) <: (Num(`a) -> `a -> `a) =
+type CloSucc(`a) : (Num(`a) -> `a -> `a) =
     override Apply(Num(`a)) : (`a -> `a) =
         ldarg.1
         newobj CloSucc2(`a)(Num(`a))

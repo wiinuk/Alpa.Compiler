@@ -33,8 +33,6 @@ type TokenKind =
     | DColon
     /// ";;"
     | DSemicolon
-    /// "<:"
-    | LessThanColon
     /// "`"
     | GraveAccent
     /// "``"
@@ -156,7 +154,6 @@ let delimiter() = [|
     "+", Plus
     "::", DColon
     ";;", DSemicolon
-    "<:", LessThanColon
     "`", GraveAccent
     "``", DGraveAccent
     "->", HyphenGreaterThan
@@ -276,7 +273,8 @@ let lex = lexer <| lexData()
 
 module SourceParsers =
     open Alpa.RegexLexer.Source
-
+    
+    let opt p = opt p |>> function None -> VirtualSource None | Some x -> map Some x
     let preturn v = preturn v |>> VirtualSource
     let manyRev1 p = pipe2 p (manyRev (p |>> value)) <| fun x xs -> map (fun x -> x::xs) x
     let many1 p = pipe2 p (many (p |>> value)) <| fun x xs -> map (fun x -> x,xs) x
@@ -311,10 +309,12 @@ module SourceParsers =
             Source l (f.Invoke(value x1, value x2, value x3, value x4, value x5)) r
         )
 
-    let opt p = opt p |>> function None -> VirtualSource None | Some x -> map Some x
+    let tuple3 p1 p2 p3 = pipe3 p1 p2 p3 <| fun x1 x2 x3 -> x1, x2, x3
+    let tuple4 p1 p2 p3 p4 = pipe4 p1 p2 p3 p4 <| fun x1 x2 x3 x4 -> x1, x2, x3, x4
     let (>>%) p v = p |>> map (fun _ -> v)
     let (|>>) p f = p |>> map f
-
+    
+    let many p = opt (many1 p) |>> function None -> [] | Some(x,xs) -> x::xs
     let optDefault defaultValue p = optDefault (VirtualSource defaultValue) p
     let optBool p = optMap (VirtualSource false) (fun x -> map (fun _ -> true) x) p
 
@@ -343,7 +343,6 @@ module Specials =
     let ``d=`` = d Equals
     let ``;``= d Semicolon
     let ``::`` = d DColon
-    let ``<:`` = d LessThanColon
     let ``;;`` = d DSemicolon
     let graveAccent = d GraveAccent
     let dGraveAccent = d DGraveAccent
@@ -480,7 +479,8 @@ do
 
     typeSpecRef := arrowType
 
-let inherits = ``<:`` >>. sepBy1 typeSpec ``,``
+let extends = ``:`` >>. typeSpec
+let implements = ``+`` >>. typeSpec
 
 #nowarn "9"
 module Unsafe =
@@ -768,45 +768,26 @@ let typeMember =
 let members = sepBy typeMember ``;``
 
 /// ex: type open MyLib.List`1 (T) <: [mscorlib]System.Object = ...
-let typeDefTail name setThisType exitType make =
-    let make k (n, ps) is ms =
-        let def =
-            match is with 
-            | None ->
-                {
-                    kind = k
-                    typeParams = ps
-                    parent = None
-                    impls = []
-                    members = ms
-                }
+let typeDefTail name enterType leaveType make =
+    let make k (n, ps, p) is _ ms =
+        make n {
+            kind = k
+            typeParams = ps
+            parent = p
+            impls = is
+            members = ms
+        }
 
-            | Some(x,xs) ->
-                {
-                    kind = k
-                    typeParams = ps
-                    parent = Some x
-                    impls = xs
-                    members = ms
-                } 
-        make n def
-    
-    let updateThisType nts s =
-        let n, ts = Source.value nts
-        let ts = List.map TypeVar ts
-        setThisType n ts s
+    let enterType x s = enterType (Source.value x) s
 
-    let updateBaseType is s =
-        let is = Source.value is
-        let t = match is with None -> objectT | Some(x,_) -> x
-        { s with baseType = Some t }
-
-    pipe4
-        (opt typeKind)
-        (updateStateWith (name .>>. optDefault [] typeParams) updateThisType)
-        (updateStateWith  (opt inherits) updateBaseType)
-        (``d=`` >>. members .>> updateState exitType)
+    pipe5(
+        opt typeKind,
+        updateStateWith (tuple3 name (optDefault [] typeParams) (opt extends)) enterType,
+        many implements,
+        ``d=``,
+        members .>> updateState leaveType,
         make
+    )
 
 let moduleModuleDefTail, moduleModuleDefTailRef = createParserForwardedToRef()
 
@@ -815,15 +796,15 @@ let letTail =
     literalTail (fun n t v -> ModuleLiteralDef(n, t, v))
 
 let moduleMember =
-    let setThisType n ts ({ nestersRev = nestersRev; namespaceRev = namespaceRev } as s) =
-        let name = FullName(n, nestersRev, namespaceRev, None)
+    let enterType (n, ts, p) ({ nestersRev = nestRev; namespaceRev = nsRev } as s) =
+        let name = FullName(n, nestRev, nsRev, None)
         { s with
-            thisType = Some(TypeSpec(name, ts))
-            baseType = None
-            nestersRev = n::nestersRev
+            thisType = Some(TypeSpec(name, List.map TypeVar ts))
+            baseType = p
+            nestersRev = n::nestRev
         }
 
-    let exitType ({ nestersRev = nestersRev } as s) =
+    let leaveType ({ nestersRev = nestersRev } as s) =
         { s with
             thisType = None
             baseType = None
@@ -831,14 +812,27 @@ let moduleMember =
         }
     choiceHead RequireModuleMember [
         Let, methodInfo |>> ModuleMethodDef
-        Type, typeDefTail name setThisType exitType <| fun n d -> ModuleTypeDef(n, d)
+        Type, typeDefTail name enterType leaveType <| fun n d -> ModuleTypeDef(n, d)
         Module, moduleModuleDefTail
         Let, letTail
     ]
     
 let moduleMembers = sepBy moduleMember ``;``
 
-moduleModuleDefTailRef := pipe4 name ``d=`` moduleMembers ``;;`` <| fun n _ ms _ -> ModuleModuleDef(n, { mMembers = ms })
+do
+    let enter n ({ nestersRev = ns } as s) = { s with nestersRev = Source.value n::ns }
+    let leave ({ nestersRev = ns } as s) =
+        match ns with
+        | _::ns -> { s with nestersRev = ns }
+        | [] -> s
+
+    moduleModuleDefTailRef :=
+        pipe4
+            (updateStateWith name enter)
+            ``d=``
+            moduleMembers
+            (``;;`` .>> updateState leave)
+            (fun n _ ms _ -> ModuleModuleDef(n, { mMembers = ms }))
 
 let typeName =
     let typeArg = graveAccent >>. name
@@ -862,20 +856,20 @@ let typeName =
     ]
 
 /// alias integer = [System.Numerics]System.Numerics.BigInteger;;
-/// alias `a -> `b = Fun(`a, `b);;
+/// alias `a -> `b = Fun`2(`a, `b);;
 /// alias `a * `b = [mscorlib]System.Tuple`2(`a, `b)
 let aliasTail = pipe3 typeName ``d=`` typeSpec <| fun (n,ts) _ td -> TopAliasDef(n,{ aTypeParams = ts; entity = td })
 
 let topMember =
-    let setThisType (n, nsRev) ts _ =
-        let name = FullName(n, [], nsRev, None)
+    let enterType ((name, nsRev), typeParams, parent) _ =
+        let path = FullName(name, [], nsRev, None)
         {
-            thisType = Some(TypeSpec(name, ts))
-            baseType = None
-            nestersRev = [n]
+            thisType = Some(TypeSpec(path, List.map TypeVar typeParams))
+            baseType = parent
+            nestersRev = [name]
             namespaceRev = nsRev
         }
-    let exitType _ =
+    let leaveType _ =
         {
             thisType = None
             baseType = None
@@ -884,7 +878,7 @@ let topMember =
         }
     choiceHead RequireTopMember [
         Alias, aliasTail
-        Type, typeDefTail pathRev setThisType exitType <| fun n d -> TopTypeDef(n, d)
+        Type, typeDefTail pathRev enterType leaveType <| fun n d -> TopTypeDef(n, d)
         Module, pipe3 pathRev ``d=`` moduleMembers <| fun n _ ms -> TopModuleDef(n, { mMembers = ms })
     ]
 

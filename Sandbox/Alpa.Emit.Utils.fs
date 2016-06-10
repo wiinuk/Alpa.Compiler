@@ -23,15 +23,13 @@ module HashMap =
     let get (map: HashMap<_,_>) k = map.[k]
     let tryGet (map: HashMap<_,_>) k (v: _ byref) = map.TryGetValue(k, &v)
     let values (map: HashMap<_,_>) = map.Values
-    
-[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
-module Parameter =
-    let paramType (Parameter(_,t)) = t
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module TypeVarMap =
     let emptyVarMap = TypeVarMap([], [])
-    
+    let typeParams (TypeVarMap(p,_)) = p
+    let typeVarMapToSolvedType (TypeVarMap(vs,vs')) = List.map2 (fun v v' -> v, TypeParamBuilder v') vs vs'
+
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module FullName =
     let toTypeName = function
@@ -50,6 +48,23 @@ module FullName =
 
             b.ToString()
 
+    let addTypeName (FullName(name, nestersRev, nsRev, asmName)) typeName =
+        FullName(typeName, name::nestersRev, nsRev, asmName)
+
+    let ofTypeName (typeName, nsRev) = FullName(typeName, [], nsRev, None)
+    let getName (FullName(name=name)) = name
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module SolveEnv =    
+    open TypeVarMap
+    let envOfTypeBuilder mVarMap ({ env = env; varMap = varMap } as ti) = {
+        senv = env
+        varMap = typeVarMapToSolvedType varMap
+        mVarMap = typeVarMapToSolvedType mVarMap
+        typeArgs = []
+        mTypeArgs = []
+    }
+
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module SolvedType =
     let getUnderlyingSystemType = function
@@ -58,13 +73,38 @@ module SolvedType =
         | InstantiationType(closeType = t) -> t
         | TypeParam(_, TypeParamBuilder t) -> upcast t
         | Builder { t = t } -> upcast t
-        
+
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module EmitException =
     let raiseEmitExn e = raise <| EmitException e
-
+    
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module TypeSpec =
+    open HashMap
+
+    let sysTypeValidate (t: Type) =
+        if t.IsNested then failwithf "%A is GenericParameter." t
+        if t.IsGenericParameter then failwithf "%A is GenericParameter." t
+
+    let getPath t =
+        sysTypeValidate t
+        let nsRev =
+            t.Namespace.Split Type.Delimiter
+            |> Seq.rev
+            |> Seq.toList
+
+        FullName(t.Name, [], nsRev, Some(t.Assembly.GetName().Name))
+
+    let rec typeOfT t =
+        let rec typeOfTypeArgs (t: Type) = 
+            if not t.IsGenericType then []
+            else t.GetGenericArguments() |> Seq.map typeOfT |> Seq.toList
+
+        TypeSpec(getPath t, typeOfTypeArgs t)
+
+    [<RequiresExplicitTypeArguments>]
+    let typeOf<'a> = typeOfT typeof<'a>
+
     let rec getReplacedType subst = function
         | TypeSpec(n, ts) -> TypeSpec(n, List.map (getReplacedType subst) ts)
         | TypeVar v as t ->
@@ -87,13 +127,13 @@ module TypeSpec =
     let rec solveTypeCore ({ senv = { map = map; amap = amap }; varMap = varMap; mVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
         let getTypeDef map name =
             let mutable ti = Unchecked.defaultof<_>
-            if HashMap.tryGet map name &ti then Builder ti
+            if tryGet map name &ti then Builder ti
             else RuntimeType <| Type.GetType(FullName.toTypeName name, true)
         
         let rec aux t =
             let mutable ad = Unchecked.defaultof<_>
             match t with
-            | TypeSpec(FullName(name, [], [], None), ts) when HashMap.tryGet amap name &ad ->
+            | TypeSpec(FullName(name, [], [], None), ts) when tryGet amap name &ad ->
                 solveTypeCore env (applyType name ad ts)
                 
             | TypeSpec(pathRev, []) -> getTypeDef map pathRev
@@ -113,10 +153,79 @@ module TypeSpec =
             | MethodTypeVar v -> TypeParam(v, solveTypeVarMap mVarMap v)
             | TypeArgRef i -> List.item i typeArgs
             | MethodTypeArgRef i -> List.item i mTypeArgs
-            | ThisType -> Option.get thisType
-            | BaseType -> Option.get baseType
         aux t
 
     let solveType env t = solveTypeCore env t |> SolvedType.getUnderlyingSystemType
     let solveTypes env ts = Seq.map (solveType env) ts |> Seq.toArray
-    let solveParamTypes env pars = Seq.map (Parameter.paramType >> solveType env) pars |> Seq.toArray
+    let solveParamTypes env pars = Seq.map (fun (Parameter(_,t)) -> solveType env t) pars |> Seq.toArray
+
+module PreDefinedTypes =
+    open TypeSpec
+
+    let int8T = typeOf<int8>
+    let int16T = typeOf<int16>
+    let int32T = typeOf<int32>
+    let int64T = typeOf<int64>
+    
+    let uint8T = typeOf<uint8>
+    let uint16T = typeOf<uint16>
+    let uint32T = typeOf<uint32>
+    let uint64T = typeOf<uint64>
+    
+    let float32T = typeOf<single>
+    let float64T = typeOf<double>
+
+    let voidT = typeOfT typeof<System.Void>
+    let boolT = typeOf<bool>
+    let charT = typeOf<Char>
+    let stringT = typeOf<string>
+    let objectT = typeOf<obj>
+    
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module Parameter =
+    let paramType (Parameter(_,t)) = t
+    let voidParam = Parameter(None, PreDefinedTypes.voidT)
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module MethodHead =
+    let cctorHead = MethodHead(".cctor", [], [], Parameter.voidParam)
+    let ctorHead pars = MethodHead(".ctor", [], pars, Parameter.voidParam)
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module ILTypeBuilder =
+    open HashMap
+
+    let addMethod { mmap = mmap } (MethodHead(name=sign)) m =
+        let mutable ms = Unchecked.defaultof<_>
+        if tryGet mmap sign &ms then assign mmap sign (m::ms)
+        else add mmap sign [m]
+
+    let addCtor { cmap = cmap } c = cmap.Add c
+    
+    let newILTypeBuilder d t path env = {
+        d = d
+        t = t
+        path = path
+        varMap = TypeVarMap.emptyVarMap
+        env = env
+        cctor = None
+        mmap = HashMap()
+        cmap = CtorMap()
+        fmap = HashMap()
+    }
+
+module ILMethodBuilder =
+    let getUnderlyingSystemMethod { mb = m } =
+        match m with
+        | Choice1Of2 m -> m :> Reflection.MethodBase
+        | Choice2Of2 m -> upcast m
+
+[<AutoOpen>]
+module internal InternalShortNames =
+    type B = System.Reflection.BindingFlags
+    type CC = System.Reflection.CallingConventions
+    type T = System.Reflection.TypeAttributes
+    type M = System.Reflection.MethodAttributes
+    type P = System.Reflection.ParameterAttributes
+    type F = System.Reflection.FieldAttributes
+    type O = System.Reflection.Emit.OpCodes

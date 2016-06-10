@@ -136,7 +136,7 @@ and ILTypeBuilder = {
     path: FullName
     mutable varMap: TypeVarMap
 
-    mutable cctor: ILCtorBuilder option
+    mutable cctor: ILMethodBuilder option
 
     mmap: MethodMap
     cmap: CtorMap
@@ -146,22 +146,15 @@ and ILTypeBuilder = {
 and ILMethodBuilder = {
     /// DeclaringType
     dt: ILTypeBuilder
-    mb: MethodBuilder
+    mb: Choice<MethodBuilder,ConstructorBuilder>
     mVarMap: TypeVarMap
     m: MethodInfo
-}
-and ILCtorBuilder = {
-    /// DeclaringType
-    dt: ILTypeBuilder
-    cb: ConstructorBuilder
-    pars: Parameter list
-    body: MethodBody
 }
 and AliasMap = HashMap<AliasSign, AliasDef>
 and MethodMap = HashMap<MethodSign, ILMethodBuilder list>
 and FieldMap = HashMap<FieldSign, FieldBuilder>
 and TypeMap = HashMap<FullName, ILTypeBuilder>
-and CtorMap = ResizeArray<ILCtorBuilder>
+and CtorMap = ResizeArray<ILMethodBuilder>
 
 type SolvedTypeParam =
     | RuntimeTypeParam of Type
