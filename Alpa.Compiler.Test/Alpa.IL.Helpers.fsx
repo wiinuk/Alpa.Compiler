@@ -142,7 +142,7 @@ let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
 module SimpleInstructions =
     let ret = Instr("", O.Ret, OpNone)
 
-    let newobj thisType argTypes = Instr("", O.Newobj, OpCtor(thisType, argTypes))
+    let newobj thisType argTypes = Instr("", O.Newobj, OpMethod(thisType, ".ctor", argTypes))
 
     let ldc_i4 n = inlinedI4 (O.Ldc_I4_S, O.Ldc_I4, -1, 8) n <| function
         | 0 -> O.Ldc_I4_0
@@ -327,10 +327,10 @@ let toILSource nl name source =
                     | '\r' -> "\\r"
                     | '\n' -> "\\n"
                     | c -> string c
-                    
-                let viewL = String.collect escape source.[viewStartIndex..clamp(startIndex-1)]
-                let escaped = String.collect escape source.[startIndex..endIndex]
-                let viewR = String.collect escape source.[clamp(endIndex+1)..viewEndIndex]
+
+                let viewL = String.collect escape <| source.Substring(viewStartIndex, startIndex - viewStartIndex)
+                let escaped = String.collect escape <| source.Substring(startIndex, endIndex-startIndex)
+                let viewR = String.collect escape <| source.Substring(clamp(endIndex+ 1), viewEndIndex - clamp(endIndex+ 1))
                 let indent = String.replicate (startEps.Length + viewL.Length) " "
                 let underline = String.replicate escaped.Length "~"
                 startEps + viewL + escaped + viewR + endEps + "\n" + indent + underline

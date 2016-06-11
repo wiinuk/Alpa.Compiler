@@ -1,63 +1,63 @@
-﻿alias integer = [System.Numerics]System.Numerics.BigInteger;;
-alias `a -> `b = Fun`2(`a, `b);;
+﻿alias integer = [System.Numerics]System.Numerics.BigInteger
+alias `a -> `b = Fun`2(`a, `b)
 
-type abstract Fun`2(`a, `b) = abstract Apply(`a): `b;;
+type abstract Fun`2(`a, `b) = abstract Apply(`a): `b;
 
 type Num(`a) =
-    abstract ofInteger(integer): `a;
-    abstract '_+_'(`a, `a) : `a;;
+    abstract ofInteger(integer): `a
+    abstract '_+_'(`a, `a) : `a;
 
 type 'Num(int32)' : Num(int32) =
     override ofInteger(integer): int32 =
-		ldarg.1
-		call integer::op_Explicit(integer): int32
-		ret;
+        ldarg.1
+        call integer::op_Explicit(integer): int32
+        ret
 
     override '_+_'(int32, int32): int32 =
-		ldarg.1
-		ldarg.2
-		add
-		ret;;
+        ldarg.1
+        ldarg.2
+        add
+        ret;
 
 type CloSucc2(`a) : (`a -> `a) =
     let item1: Num(`a)
     new (Num(`a)) =
-		ldarg.0
-		call base::new()
+        ldarg.0
+        call base::new()
         ldarg.1
         stfld this::item1
-		ret;
+        ret
 
-	override Apply(`a): `a =
+    override Apply(`a): `a =
         ldarg.0
         ldfld this::item1
         ldsfld bigint::One
         callvirt Num(`a)::ofInteger
         callvirt Num(`a)::'_+_'
-        ret;;
+        ret;
 
 type CloSucc(`a) : (Num(`a) -> `a -> `a) =
     override Apply(Num(`a)) : (`a -> `a) =
         ldarg.1
-        newobj CloSucc2(`a)(Num(`a))
-        ret;;
+        newobj CloSucc2(`a)::new(Num(`a))
+        ret;
 
 module Program =
-    let succ(``a)() : (Num(``a) -> ``a -> ``a) = newobj (CloSucc(``a)) () ret;
-    let 'Num(int32)' : Num(int32);
-    let ten : int32;
-	
+    let succ(``a)() : (Num(``a) -> ``a -> ``a) = newobj (CloSucc(``a)) () ret
+    let 'Num(int32)' : Num(int32)
+    let ten : int32
+
     static new() =
         newobj 'Num(int32)' ()
         stsfld this::'Num(int32)'
         ldc_i4 10
         stsfld this::ten
-        ret;
+        ret
 
-	let main() : void =
+    let main() : void =
         ldsfld this::ten
         ldsfld this::'Num(int32)'
         call this::succ(int32)()
         callvirt (Num(int32) -> int32 -> int32)::Apply
         callvirt (int32 -> int32)::Apply
-        ret
+        ret;

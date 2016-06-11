@@ -1,8 +1,9 @@
-﻿alias vector(`a) = [mscorlib]System.Collections.Generic.List`1(`a);;
-alias tuple(`a,`b) = MyTuple`2(`a,`b);;
-alias assoc(`k,`v) = vector(tuple(`k,`v));;
-alias hash_map(`k,`v) = assoc(int32,assoc(`k,`v));;
+﻿alias vector(`a) = [mscorlib]System.Collections.Generic.List`1(`a)
+alias tuple(`a,`b) = MyTuple`2(`a,`b)
+alias assoc(`k,`v) = vector(tuple(`k,`v))
+alias hash_map(`k,`v) = assoc(int32,assoc(`k,`v))
 
-type MyTuple`2(`t1,`t2) =;;
+type MyTuple`2(`t1,`t2) =;
 
-module Program = let main(hash_map(int32, string)): void = ret
+module Program =
+    let main(hash_map(int32, string)): void = ret;

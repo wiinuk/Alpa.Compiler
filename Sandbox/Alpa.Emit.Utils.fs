@@ -212,16 +212,32 @@ module Member =
         | _ -> Type.EmptyTypes
 
 module Type =
+    type MT = Reflection.MemberTypes
     let isGeneric (t: Type) = t.IsGenericType
     let getOpenType t = if isGeneric t then t.GetGenericTypeDefinition() else t
     let getTypeParams t = if isGeneric t then t.GetGenericTypeDefinition().GetGenericArguments() else Type.EmptyTypes
 
-    let getAllMethods (t: Type) =
-        B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance
-        |> t.GetMethods
+    let getAllMethodBases (t: Type) =
+        t.GetMember(
+            "*",
+            MT.Constructor ||| MT.Method,
+            B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance
+        )
+        |> box
+        |> unbox<Reflection.MethodBase array>
 
-    let getMethods name t = getAllMethods t |> Seq.filter (fun m -> m.Name = name)
+    let getMethodBases name (t: Type) =
+        t.FindMembers(
+            MT.Constructor ||| MT.Method,
+            B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Static ||| B.Instance,
+            Reflection.MemberFilter(fun m _ -> m.Name = name),
+            null
+        )
+        |> Seq.map (fun m -> m :?> Reflection.MethodBase)
+
     let getConstructors (t: Type) = t.GetConstructors(B.DeclaredOnly ||| B.Public ||| B.NonPublic ||| B.Instance)
+    
+    let ctorsToMethodBasesArray (xs: Reflection.ConstructorInfo array) = box xs |> unbox<Reflection.MethodBase array>
 
 module Method =
     open System.Reflection
@@ -272,12 +288,14 @@ module ILMethodBuilder =
 module ILTypeBuilder =
     open HashMap
 
-    let addMethod { mmap = mmap } (MethodHead(name=sign)) m =
+    let addMethodOfSign { mmap = mmap } sign m =
         let mutable ms = Unchecked.defaultof<_>
         if tryGet mmap sign &ms then assign mmap sign (m::ms)
         else add mmap sign [m]
 
-    let addCtor { cmap = cmap } c = cmap.Add c
+    let addMethod dt (MethodHead(name=sign)) m = addMethodOfSign dt sign m
+
+    let addCtor dt c = addMethodOfSign dt ".ctor" c
     
     let newILTypeBuilder d t path env = {
         d = d
@@ -285,11 +303,9 @@ module ILTypeBuilder =
         path = path
         varMap = TypeVarMap.emptyVarMap
         env = env
-        cctor = None
         mmap = HashMap()
-        cmap = CtorMap()
         fmap = HashMap()
     }
-    let getMethods name { mmap = mmap } = HashMap.get mmap name |> List.toSeq
+    let getMethods name { mmap = mmap } = get mmap name |> List.toSeq
+    let getConstructors dt = getMethods ".ctor" dt
     let getTypeParams { varMap = varMap } = varMap
-    let getConstructors { cmap = cmap } = cmap :> _ seq

@@ -188,11 +188,17 @@ let defineMethodDef dt ov m =
     match ov with
     | None -> defineMethodInfo dt (M.Public ||| M.Final ||| M.HideBySig) CC.Standard m
     | Some Override ->
-        let a = M.Public ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual
+        let a =
+            M.Public ||| M.Final ||| M.HideBySig ||| M.Virtual
+            // TODO: ???
+            // ||| M.NewSlot 
         defineMethodInfo dt a CC.HasThis m
 
     | Some(BaseMethod _) ->
-        let a = M.Private ||| M.Final ||| M.HideBySig ||| M.NewSlot ||| M.Virtual
+        let a =
+            M.Private ||| M.Final ||| M.HideBySig ||| M.Virtual
+            // TODO: ???
+            // ||| M.NewSlot 
         defineMethodInfo dt a CC.HasThis m
                 // TODO: last path
 //                        let bt = solveType map varMap <| typeRefToType baseType
@@ -233,7 +239,7 @@ let defineLiteral ({ t = t; fmap = fmap } as ti) name ft fv =
 
 let defineCCtor ({ t = t } as dt) body =
     let c = t.DefineTypeInitializer()
-    dt.cctor <- Some {
+    addMethodOfSign dt ".cctor" {
         mb = Choice2Of2 c
         mVarMap = emptyVarMap
         dt = dt
@@ -308,13 +314,10 @@ let emitInstr (g: ILGenerator) env (Instr(label, op, operand)) =
         g.Emit(op, f)
 
     | OpMethod(parent, name, annot) ->
-        let m = getMethodInfo env parent name annot
-        g.Emit(op, m)
-
-    | OpCtor(parent, argTypes) ->
-        let annot = Some(MethodTypeAnnotation([], argTypes, None))
-        let ctor = getConstructorInfo env parent annot
-        g.Emit(op, ctor)
+        match getMethodBase env parent name annot with
+        | :? System.Reflection.MethodInfo as m -> g.Emit(op, m)
+        | :? System.Reflection.ConstructorInfo as m -> g.Emit(op, m)
+        | _ -> failwith "unreach"
 
 let emitMethod ({ mVarMap = mVarMap; dt = dt; m = MethodInfo(_,MethodBody instrs)} as m) =
     let g = getILGenerator m
@@ -322,15 +325,9 @@ let emitMethod ({ mVarMap = mVarMap; dt = dt; m = MethodInfo(_,MethodBody instrs
     for instr in instrs do emitInstr g env instr
 
 let emitMethods { map = map } =
-    for { mmap = mmap; cmap = cmap; cctor = cctor } in values map do
+    for { mmap = mmap } in values map do
         for mis in values mmap do
             for m in mis do emitMethod m
-
-        for m in cmap do emitMethod m
-
-        match cctor with
-        | None -> ()
-        | Some m -> emitMethod m
 
 let createTypes { map = map } = for { t = t } in values map do t.CreateType() |> ignore
 

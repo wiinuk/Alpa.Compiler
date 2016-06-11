@@ -44,13 +44,13 @@ type Solver<'t,'ot,'m> =
     
 let methodInfoSource name = { new MethodSource() with
     override __.GetILMethods t = getMethods name t
-    override __.GetRTMethods t = Type.getMethods name t |> Seq.map (fun m -> upcast m)
-    override __.GetRTAllMethods t = Type.getAllMethods t |> Seq.map (fun m -> upcast m)
+    override __.GetRTMethods t = Type.getMethodBases name t
+    override __.GetRTAllMethods t = Type.getAllMethodBases t :> _
 }
 let constructorInfoSource = { new MethodSource() with
     override __.GetILMethods t = getConstructors t
     override x.GetRTMethods t = x.GetRTAllMethods t
-    override __.GetRTAllMethods t = Type.getConstructors t |> Seq.map (fun m -> upcast m)
+    override __.GetRTAllMethods t = Type.getConstructors t |> Type.ctorsToMethodBasesArray :> _
 }
 
 let runtimeTypeSolver m = { new Solver<_,_,_>(m) with
@@ -158,7 +158,7 @@ let getMethodGeneric env parent annot (s: Solver<_,_,_>) =
     Seq.map getUnderlyingSystemType mTypeArgs
     |> MethodBase.makeCloseMethod openMethodOfCloseType 
     
-let getMethodBase m env parent annot =
+let getAnyMethodBase m env parent annot =
     match solveTypeCore env parent with
     | TypeParam _ -> failwith ""
     | RuntimeType parent -> runtimeTypeSolver m |> getMethodGeneric env parent annot
@@ -166,11 +166,8 @@ let getMethodBase m env parent annot =
     | InstantiationType(closeType, Some openType) -> closeTypeBuilderSolver m |> getMethodGeneric env (closeType, openType) annot
     | InstantiationType(parent, None) -> runtimeTypeOfTypeBuilderSolver m |> getMethodGeneric env parent annot
 
-let getMethodInfo env parent name annot =
-    getMethodBase (methodInfoSource name) env parent annot :?> Reflection.MethodInfo
-    
-let getConstructorInfo env parent annot =
-    getMethodBase constructorInfoSource env parent annot :?> Reflection.ConstructorInfo
+let getMethodBase env parent name annot =
+    getAnyMethodBase (methodInfoSource name) env parent annot
 
 let getField env parent name =
     match solveTypeCore env parent with

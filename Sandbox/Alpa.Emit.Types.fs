@@ -33,7 +33,6 @@ type Operand =
     | OpString of string
     | OpType of TypeSpec
     | OpField of thisType: TypeSpec * name: string
-    | OpCtor of thisType: TypeSpec * argTypes: TypeSpec list
     | OpMethod of thisType: TypeSpec * name: MethodName * MethodTypeAnnotation option
 
 type Macro =
@@ -136,10 +135,7 @@ and ILTypeBuilder = {
     path: FullName
     mutable varMap: TypeVarMap
 
-    mutable cctor: ILMethodBuilder option
-
     mmap: MethodMap
-    cmap: CtorMap
     fmap: FieldMap
 }
 
@@ -154,7 +150,6 @@ and AliasMap = HashMap<AliasSign, AliasDef>
 and MethodMap = HashMap<MethodSign, ILMethodBuilder list>
 and FieldMap = HashMap<FieldSign, FieldBuilder>
 and TypeMap = HashMap<FullName, ILTypeBuilder>
-and CtorMap = ResizeArray<ILMethodBuilder>
 
 type SolvedType =
     | RuntimeType of Type

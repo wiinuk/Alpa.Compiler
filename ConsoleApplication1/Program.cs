@@ -6,6 +6,21 @@ using System.Numerics;
 using System.Reflection;
 using static System.Console;
 
+public interface IFun<a, b>
+{
+    b Apply(a arg0);
+}
+public abstract class Fun<a, b>
+{
+    public Fun() { }
+    public abstract b Apply(a arg0);
+}
+public sealed class Id<a> : Fun<a, a>, IFun<a, a>
+{
+    public Id(): base() { }
+    public sealed override a Apply(a arg0) => arg0;
+}
+
 class MyList<T>
 {
     public void Add(object x) => WriteLine("Add(object)");

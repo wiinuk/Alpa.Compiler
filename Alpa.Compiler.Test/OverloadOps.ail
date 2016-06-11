@@ -1,6 +1,6 @@
 ﻿module Ops =
-    let Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret;
-    let Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;;
+    let Add (int32, int32) : int32 = ldarg.0 ldarg.1 add ret
+    let Add (float32, float32) : float32 = ldarg.0 ldarg.1 add ret;
 
 module Main =
     let main(): float32 =
@@ -10,4 +10,4 @@ module Main =
         conv.r4
         ldc.r4 7.11
         call Ops::Add(float32, float32)
-        ret
+        ret;

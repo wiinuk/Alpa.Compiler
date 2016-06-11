@@ -1,23 +1,26 @@
-﻿type MakeTupleOverload.Make`1(`T1) =
-    let Tuple (``T2) (`T1, ``T2) : [mscorlib]System.Tuple`2(`T1,``T2) = 
+﻿alias `t1 * `t2 = [mscorlib]System.Tuple`2(`t1,`t2)
+alias string4 = ((string * string) * (string * string))
+
+type MakeTupleOverload.Make`1(`T1) =
+    let Tuple (``T2) (`T1, ``T2) : (`T1 * ``T2) = 
         ldarg.0
         ldarg.1
-        newobj [mscorlib]System.Tuple`2(`T1,``T2)(`0,`1)
+        newobj (`T1 * ``T2)::new(`0,`1)
+        ret
+
+    let Tuple (string, string) : (string * string) =
+        ldarg.0
+        ldarg.1
+        newobj (string * string)::new(`0,`1)
         ret;
 
-    let Tuple (string, string) : [mscorlib]System.Tuple`2(string, string) =
-        ldarg.0
-        ldarg.1
-        newobj [mscorlib]System.Tuple`2(string, string)(`0,`1)
-        ret;;
-
 module MakeTupleOverload.Main =
-    let main(string, string, string, string): [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string)) =
+    let main(string, string, string, string): string4 =
         ldarg.0
         ldarg.1
         call MakeTupleOverload.Make`1(string)::Tuple(string)(`0, ``0)
         ldarg.2
         ldarg.3
         call MakeTupleOverload.Make`1(string)::Tuple()(string, string)
-        newobj [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string))(`0, `1)
-        ret
+        newobj string4::new(`0, `1)
+        ret;

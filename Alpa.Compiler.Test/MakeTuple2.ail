@@ -2,12 +2,12 @@
     let Tuple (``T2) (`T1, ``T2) : [mscorlib]System.Tuple`2(`T1,``T2) =
         ldarg.0
         ldarg.1
-        newobj [mscorlib]System.Tuple`2(`T1,``T2)(`0, `1)
-        ret;;
+        newobj [mscorlib]System.Tuple`2(`T1,``T2)::new(`0, `1)
+        ret;
 
 module MakeTuple2.Main =
     let main(): [mscorlib]System.Tuple`2(int32, string) =
         ldc.i4.1
         ldstr "2"
         call MakeTuple2.Make`1(int32)::Tuple(string)(`0, ``0)
-        ret
+        ret;

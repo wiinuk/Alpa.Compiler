@@ -27,11 +27,11 @@ let lexTest() =
         "ldc.i4.0", [| findOp "ldc.i4.0" |]
         "''", [| SQString "" |]
         "'\\t\\'\\u0061'", [| SQString "\t'a" |]
-        ";", [| Semicolon |]
-        ";;", [| DSemicolon |]
+        ":", [| Colon |]
+        "::", [| DColon |]
 
         // TODO: ???
-        ";;;", [| DSemicolon; Semicolon |]
+        ":::", [| DColon; Colon |]
 
         ",", [|Comma|]
         "()", [|LParen; RParen|]

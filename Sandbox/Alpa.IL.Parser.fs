@@ -31,8 +31,6 @@ type TokenKind =
     | Plus
     /// "::"
     | DColon
-    /// ";;"
-    | DSemicolon
     /// "`"
     | GraveAccent
     /// "``"
@@ -153,7 +151,6 @@ let delimiter() = [|
     ";", Semicolon
     "+", Plus
     "::", DColon
-    ";;", DSemicolon
     "`", GraveAccent
     "``", DGraveAccent
     "->", HyphenGreaterThan
@@ -347,7 +344,6 @@ module Specials =
     let ``d=`` = d Equals
     let ``;``= d Semicolon
     let ``::`` = d DColon
-    let ``;;`` = d DSemicolon
     let graveAccent = d GraveAccent
     let dGraveAccent = d DGraveAccent
     let ``->`` = d HyphenGreaterThan
@@ -355,6 +351,7 @@ module Specials =
 
     let ``mutable`` = d Mutable
     let ``new`` = d New
+    let ``static`` = d Static
 
 module K = Specials
 
@@ -396,14 +393,13 @@ let tupleOrValueLike0 p = tupleLike0 p <|> (p |>> List.singleton)
 /// ($p, ...) | $p
 let tupleOrValueLike1 p = tupleLike1 p <|> (p |>> fun x -> x, [])
 
-let assemblyName = between ``[`` ``]`` name
 let namespaceRev = manyRev (name .>> ``.``)
+let pathRev = pipe2 namespaceRev name <| fun ns n -> n, ns
 let nestersRev = manyRev (name .>> ``+``)
+let assemblyName = between ``[`` ``]`` pathRev |>> fun (x,xs) ->  List.rev (x::xs) |> String.concat "."
 
 /// ex: [mscorlib]System.Diagnostics.Stopwatch+InternalTimers+LowTimer
 let fullName = pipe4 (opt assemblyName) namespaceRev nestersRev name <| fun asmName nsRev nestRev name -> FullName(name, nestRev, nsRev, asmName)
-
-let pathRev = pipe2 namespaceRev name <| fun ns n -> n, ns
 
 open PreDefinedTypes
 
@@ -413,7 +409,7 @@ let mTypeParams = tupleLike1(dGraveAccent >>. name) |>> function x,xs -> x::xs
 /// ex: (`T1), (`'t.1', `'t.2')
 let typeParams = tupleLike1(graveAccent >>. name) |>> function x,xs -> x::xs
 
-/// ex: "[mscorlib]System.Diagnostics.Stopwatch+Internals+LowTimer`1(int32)" "`T" "`0" "``2"
+/// ex: "[mscorlib]System.Diagnostics.Stopwatch+Internals+LowTimer`1(int32)" "`T" "`0" "``2" "base" "this"
 let typeSpec, typeSpecRef = createParserForwardedToRef()
 do
     let namedType = pipe2 fullName (opt (tupleOrValueLike1 typeSpec)) <| fun n vs -> TypeSpec(n, match vs with None -> [] | Some(v,vs) -> v::vs)
@@ -457,6 +453,9 @@ do
         let tuple2Name = FullName("*`2", [], [], None)
         let tuple3Name = FullName("**`3", [], [], None)
         let tuple4Name = FullName("***`4", [], [], None)
+        let tuple5Name = FullName("****`5", [], [], None)
+        let tuple6Name = FullName("*****`6", [], [], None)
+        let tuple7Name = FullName("******`7", [], [], None)
         sepBy1 primType ``*`` |>> function
             | x, [] -> x
             | t, ts ->
@@ -466,6 +465,9 @@ do
                     | 2 -> tuple2Name
                     | 3 -> tuple3Name
                     | 4 -> tuple4Name
+                    | 5 -> tuple5Name
+                    | 6 -> tuple6Name
+                    | 7 -> tuple7Name
                     | n -> FullName(sprintf "%s`%d" (String.replicate (n-1) "*") n, [], [], None)
                 TypeSpec(name, ts)
 
@@ -656,11 +658,13 @@ let opType = typeSpec |>> OpType
 /// ex: System.Type::Delimiter
 let opField = pipe3 typeSpec ``::`` name <| fun t _ n -> OpField(t, n)
 
-/// ex: System.Tuple`2(string, char)(`0, `1)
-let opCtor = pipe2 typeSpec (tupleLike0 typeSpec) <| fun t args -> OpCtor(t, args)
-
 let opMethod =
-    let methodName = K.``new`` >>% ".ctor" <|> name
+    let methodName = 
+        choice [
+            K.``new`` >>% ".ctor"
+            K.``static`` >>. K.``new`` >>% ".cctor"
+            name
+        ]
     let signAnnot = pipe3 (tupleLike0 typeSpec) (opt (tupleLike0 typeSpec)) (opt typing) <| fun ts1 ts2 ret ->
         match ts2 with
         | None -> MethodTypeAnnotation([], ts1, ret)
@@ -668,7 +672,6 @@ let opMethod =
 
     pipe4 typeSpec ``::`` methodName (opt signAnnot) <| fun parent _ name t -> OpMethod(parent, name, t)
 
-let opMethodBase = opMethod <|> opCtor
 let instr =
     let label = optDefault "" (name .>> ``:``)
     let opNone = Reply <| Source.VirtualSource OpNone
@@ -685,7 +688,7 @@ let instr =
         | OT.InlineString -> opString xs
         | OT.InlineType -> opType xs
         | OT.InlineField -> opField xs
-        | OT.InlineMethod -> opMethodBase xs
+        | OT.InlineMethod -> opMethod xs
 
         | OT.InlineBrTarget
         | OT.ShortInlineBrTarget
@@ -769,7 +772,7 @@ let typeMember =
         // TODO: BaseMethod
         Override, methodInfo |>> fun m -> MethodDef(Some Override.Override, m)
     ]
-let members = sepBy typeMember ``;``
+let members = many typeMember
 
 /// ex: type open MyLib.List`1 (T) <: [mscorlib]System.Object = ...
 let typeDefTail name enterType leaveType make =
@@ -789,7 +792,7 @@ let typeDefTail name enterType leaveType make =
         updateStateWith (tuple3 name (optDefault [] typeParams) (opt extends)) enterType,
         many implements,
         ``d=``,
-        members .>> updateState leaveType,
+        members .>> updateState leaveType .>> ``;``,
         make
     )
 
@@ -804,7 +807,7 @@ let moduleMember =
         let name = FullName(n, nestRev, nsRev, None)
         { s with
             thisType = Some(TypeSpec(name, List.map TypeVar ts))
-            baseType = p
+            baseType = match p with None -> Some objectT | p -> p
             nestersRev = n::nestRev
         }
 
@@ -821,7 +824,7 @@ let moduleMember =
         Let, letTail
     ]
     
-let moduleMembers = sepBy moduleMember ``;``
+let moduleMembers = many moduleMember
 
 do
     let enter n ({ nestersRev = ns } as s) = { s with nestersRev = Source.value n::ns }
@@ -835,7 +838,7 @@ do
             (updateStateWith name enter)
             ``d=``
             moduleMembers
-            (``;;`` .>> updateState leave)
+            (``;`` .>> updateState leave)
             (fun n _ ms _ -> ModuleModuleDef(n, { mMembers = ms }))
 
 let typeName =
@@ -853,15 +856,18 @@ let typeName =
                     | 2 -> "*`2"
                     | 3 -> "**`3"
                     | 4 -> "***`4"
+                    | 5 -> "****`5"
+                    | 6 -> "*****`6"
+                    | 7 -> "******`7"
                     | n -> sprintf "%s`%d" (String.replicate (n-1) "*") n
                 name, ts
 
         pipe3 typeArg ``->`` typeArg <| fun l _ r -> "->`2", [l;r]
     ]
 
-/// alias integer = [System.Numerics]System.Numerics.BigInteger;;
-/// alias `a -> `b = Fun`2(`a, `b);;
-/// alias `a * `b = [mscorlib]System.Tuple`2(`a, `b)
+/// integer = [System.Numerics]System.Numerics.BigInteger;;
+/// `a -> `b = Fun`2(`a, `b);;
+/// `a * `b = [mscorlib]System.Tuple`2(`a, `b)
 let aliasTail = pipe3 typeName ``d=`` typeSpec <| fun (n,ts) _ td -> TopAliasDef(n,{ aTypeParams = ts; entity = td })
 
 let topMember =
@@ -869,7 +875,7 @@ let topMember =
         let path = FullName(name, [], nsRev, None)
         {
             thisType = Some(TypeSpec(path, List.map TypeVar typeParams))
-            baseType = parent
+            baseType = match parent with None -> Some objectT | p -> p
             nestersRev = [name]
             namespaceRev = nsRev
         }
@@ -883,11 +889,11 @@ let topMember =
     choiceHead RequireTopMember [
         Alias, aliasTail
         Type, typeDefTail pathRev enterType leaveType <| fun n d -> TopTypeDef(n, d)
-        Module, pipe3 pathRev ``d=`` moduleMembers <| fun n _ ms -> TopModuleDef(n, { mMembers = ms })
+        Module, pipe4 pathRev ``d=`` moduleMembers ``;`` <| fun n _ ms _ -> TopModuleDef(n, { mMembers = ms })
     ]
 
-/// ex: type Ns.A =;; module B =;; type T =
-let top = sepBy topMember ``;;`` |>> fun ds -> { topDefs = ds }
+/// ex: type Ns.A =; module B =; type T =;
+let top = many topMember |>> fun ds -> { topDefs = ds }
 
 let initialState = {
     namespaceRev = []
