@@ -7,11 +7,12 @@ open Alpa.Emit.Parameter
 open Alpa.Emit.TypeSpec
 open Alpa.Emit.TypeVarMap
 open Alpa.Emit.MethodHead
+open Alpa.Emit.Solve
 open Alpa.Emit.SolveEnv
 open Alpa.Emit.ILMethodBuilder
 open Alpa.Emit.ILTypeBuilder
 open System.Reflection.Emit
-open Solve
+open System.Collections.Generic
 
 // (1) type name definition
 // type IOrd`1 ... = ...;;
@@ -129,6 +130,7 @@ let rec occur amap visitedNames = function
     | t -> t
 
 let checkAlias { amap = amap; map = map } =
+    let amap' = AliasMap()
     for kv in amap do
         let name, ({ aTypeParams = aTypeParams; entity = entity } as ad) = kv.Key, kv.Value
 
@@ -143,8 +145,9 @@ let checkAlias { amap = amap; map = map } =
             raiseEmitExn <| DuplicatedAliasName(name, ad, let { d = d } = td in d)
 
         let t = occur amap [name] entity
-        assign amap name { aTypeParams = aTypeParams; entity = t }
-        
+        add amap' name { aTypeParams = aTypeParams; entity = t }
+    amap'
+
 let defineVarMap typeParams defineGenericParameters =
     match typeParams with
     | [] -> emptyVarMap
@@ -334,7 +337,7 @@ let createTypes { map = map } = for { t = t } in values map do t.CreateType() |>
 let emitIL m { topDefs = ds } =
     let env = { map = HashMap(); amap = AliasMap() }
     for d in ds do DefineTypes.topDef m env d
-    checkAlias env
+    let env = { env with amap = checkAlias env }
     defineTypeParams env
     defineMembers env
     emitMethods env

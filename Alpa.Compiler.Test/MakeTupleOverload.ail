@@ -1,0 +1,23 @@
+﻿type MakeTupleOverload.Make`1(`T1) =
+    let Tuple (``T2) (`T1, ``T2) : [mscorlib]System.Tuple`2(`T1,``T2) = 
+        ldarg.0
+        ldarg.1
+        newobj [mscorlib]System.Tuple`2(`T1,``T2)(`0,`1)
+        ret;
+
+    let Tuple (string, string) : [mscorlib]System.Tuple`2(string, string) =
+        ldarg.0
+        ldarg.1
+        newobj [mscorlib]System.Tuple`2(string, string)(`0,`1)
+        ret;;
+
+module MakeTupleOverload.Main =
+    let main(string, string, string, string): [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string)) =
+        ldarg.0
+        ldarg.1
+        call MakeTupleOverload.Make`1(string)::Tuple(string)(`0, ``0)
+        ldarg.2
+        ldarg.3
+        call MakeTupleOverload.Make`1(string)::Tuple()(string, string)
+        newobj [mscorlib]System.Tuple`2([mscorlib]System.Tuple`2(string, string), [mscorlib]System.Tuple`2(string, string))(`0, `1)
+        ret

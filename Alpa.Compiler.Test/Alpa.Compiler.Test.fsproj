@@ -86,20 +86,48 @@
     <None Include="SimpleType.il">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="ComplexType.ail" />
     <None Include="SimpleType.ail">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="RuntimeTypeGenericArg.il" />
-    <None Include="RuntimeTypeGenericArg.ail" />
+    <None Include="ComplexType.ail" />
+    <None Include="RuntimeTypeGenericArg.il">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="RuntimeTypeGenericArg.ail">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="MakeTupleOverload.il">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="MakeTupleOverload.ail">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fields.il">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Fields.ail">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Inherits.il">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Inherits.ail">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="AliasSuccess.il">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="AliasSuccess.ail">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FsCheck">
-      <HintPath>..\packages\FsCheck.2.4.0\lib\net45\FsCheck.dll</HintPath>
+      <HintPath>..\packages\FsCheck.2.5.0\lib\net45\FsCheck.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="FsCheck.Xunit">
-      <HintPath>..\packages\FsCheck.Xunit.2.4.0\lib\net45\FsCheck.Xunit.dll</HintPath>
+      <HintPath>..\packages\FsCheck.Xunit.2.5.0\lib\net45\FsCheck.Xunit.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="FSharp.Core">

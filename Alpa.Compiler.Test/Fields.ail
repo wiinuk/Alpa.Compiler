@@ -1,0 +1,27 @@
+﻿type Fields =
+    member I1 : int32;
+    member mutable IM1 : int32;
+    let S1 : int32;
+    let mutable SM1 : int32;
+
+    let C1 = true;
+    let C2 = 'a';
+    let C3 = "test";
+    let C4 = null;
+    let C5 : string = null;
+
+    let Int32C1 = 11;
+    let Int32C2 = 0xFFFFFFFF;
+    let Int32C3 = int32 11;
+    
+    let Int64C1 = 0x100000000;
+    let Int64C2 = int64 11;
+
+    let Int8C1 = int8 11;
+
+    let Float64C1 = 11.0;
+    let Float64C2 = float64 11.0;
+
+    let Float32C2 = float32 11.0;
+    
+    let EnumC1 : [mscorlib]System.ConsoleColor = 0

@@ -1,0 +1,5 @@
+﻿type Inherits.Int32EqComp
+    + [mscorlib]System.IEquatable`1(int32)
+    + [mscorlib]System.IComparable`1(int32) =
+    override Equals(int32): bool = ldc.i4.1 ret;
+    override CompareTo(int32): int32 = ldc.i4.1 ret

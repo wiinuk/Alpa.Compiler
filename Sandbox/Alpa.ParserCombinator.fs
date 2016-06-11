@@ -135,7 +135,28 @@ let pipe5(Parser p1, Parser p2, Parser p3, Parser p4, Parser p5, f) =
                         else
                             Reply(f.Invoke(r1.Value, r2.Value, r3.Value, r4.Value, r5.Value))
     p
-         
+
+let many1Fold (Parser p1) (Parser p2) f =
+    let f = OptimizedClosures.FSharpFunc<_,_,_>.Adapt f
+    let p xs =
+        let r1 = p1 xs
+        if r1.Status <> Ok then Reply((), r1)
+        else
+            let rec aux s =
+                let i = xs.Index
+                let u = xs.UserState
+
+                let r = p2 xs
+                if r.Status = Ok && i < xs.Index then
+                    aux(f.Invoke(s, r.Value))
+                else
+                    xs.Index <- i
+                    xs.UserState <- u
+                    s
+
+            Reply(aux r1.Value)
+    p
+
 let manyRev (Parser p) =
     let p xs =
         let rec aux rs =

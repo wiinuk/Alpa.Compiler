@@ -1,8 +1,9 @@
 ﻿module internal Alpa.IL.Helpers
 
 #if INTERACTIVE
-#r "./../packages/FsCheck.2.4.0/lib/net45/FsCheck.dll"
-#r "./../packages/FsCheck.Xunit.2.4.0/lib/net45/FsCheck.Xunit.dll"
+#r "./../packages/System.Threading.Tasks.4.0.0/ref/dotnet/System.Threading.Tasks.dll"
+#r "./../packages/FsCheck.2.5.0/lib/net45/FsCheck.dll"
+#r "./../packages/FsCheck.Xunit.2.5.0/lib/net45/FsCheck.Xunit.dll"
 #r "./../packages/xunit.runner.visualstudio.2.1.0/build/net20/../_common/xunit.abstractions.dll"
 #r "./../packages/xunit.assert.2.1.0/lib/dotnet/xunit.assert.dll"
 #r "./../packages/xunit.extensibility.core.2.1.0/lib/dotnet/xunit.core.dll"
@@ -248,3 +249,109 @@ let emitDll nl name il =
     let source = ildasm nl path
     File.Delete path
     source
+    
+open Parser
+open Alpa
+open Alpa.RegexLexer
+open Xunit
+
+module Result =
+    let map mapping = function
+        | Ok x -> Ok <| mapping x
+        | Error x -> Error x
+
+let lex = Alpa.IL.Parser.lex >> Result.map (Array.map Source.value)
+
+let ops = opKeyword()
+let findOp name = Array.find (fst >> (=) name) ops |> snd
+
+let rec tryPick (|Pick|_|) e =
+    match e with
+    | Pick x -> Some x
+    | Quotations.ExprShape.ShapeCombination(_, es) -> List.tryPick (tryPick (|Pick|_|)) es
+    | Quotations.ExprShape.ShapeLambda(_, e) -> tryPick (|Pick|_|) e
+    | Quotations.ExprShape.ShapeVar _ -> None
+
+let findMethod e =
+    tryPick (function Quotations.Patterns.Call(_,m,_) -> Some m | _ -> None) e
+    |> Option.get
+
+let assertEq (act: 'a) (exp: 'a) =
+    if typeof<'a> = typeof<string> then
+        Assert.Equal(unbox<string> exp, unbox<string> act)
+    else
+        let implSeq =
+            typeof<'a>.GetInterfaces()
+            |> Seq.tryFind (fun i ->
+                i.IsGenericType &&
+                i.GetGenericTypeDefinition() = typedefof<_ seq>
+            )
+        match implSeq with
+        | Some i ->
+            let t1 = i.GetGenericArguments().[0]
+            let equals = findMethod <@@ Assert.Equal<int>([], [], LanguagePrimitives.FastGenericEqualityComparer) @@>
+            let equals = equals.GetGenericMethodDefinition().MakeGenericMethod(t1)
+
+            let getFastGEC = findMethod <@@ LanguagePrimitives.FastGenericEqualityComparer @@>
+            let getFastGEC = getFastGEC.GetGenericMethodDefinition().MakeGenericMethod(t1)
+            let c = getFastGEC.Invoke(null, null)
+
+            try
+                equals.Invoke(null, [|exp; act; c|]) |> ignore
+            with
+            | :? System.Reflection.TargetInvocationException as e -> raise e.InnerException
+
+        | None -> Assert.StrictEqual(exp, act)
+
+let assertTokenEq xs = for t, ts in xs do assertEq (lex t) (Ok ts)
+let assertLexEq xs = for t, e in xs do assertEq (lex t) e
+
+let toILSource nl name source =
+    match parse source with
+    | Error(e, token) ->
+        let clamp x = min (source.Length-1) (max 0 x)
+        let eps = "..."
+        let src =
+            match token with
+            | None -> eps
+            | Some { startPos = sp; endPos = ep } ->
+                let startIndex = clamp sp
+                let endIndex = clamp(ep-1)
+
+                let viewStartIndex = clamp (startIndex - 10)
+                let viewEndIndex = clamp (endIndex + 10)
+                let startEps = if viewStartIndex <> 0 then eps else "" 
+                let endEps = if viewEndIndex <> source.Length-1 then eps else ""
+
+                let escape = function
+                    | '\r' -> "\\r"
+                    | '\n' -> "\\n"
+                    | c -> string c
+                    
+                let viewL = String.collect escape source.[viewStartIndex..clamp(startIndex-1)]
+                let escaped = String.collect escape source.[startIndex..endIndex]
+                let viewR = String.collect escape source.[clamp(endIndex+1)..viewEndIndex]
+                let indent = String.replicate (startEps.Length + viewL.Length) " "
+                let underline = String.replicate escaped.Length "~"
+                startEps + viewL + escaped + viewR + endEps + "\n" + indent + underline
+
+        failwithf "%A, %A\n%s" e token src
+
+    | Ok il ->
+        let name =
+            match name with 
+            | null
+            | "" -> sprintf "anon%s" <| System.DateTime.Now.ToString "yyyyMMdd_hhmmss_FFFFFFF"
+            | n -> n
+        emitDll nl name il
+
+let (==?) act exp = assertEq act exp
+
+let assertOfFile name =
+    let source = File.ReadAllText(name + ".ail")
+    let expected = File.ReadAllText(name + ".il")
+    toILSource "\r\n" name source ==? expected
+
+let assertThrowEmitException exp source =
+    let e = Assert.Throws<EmitException>(fun _ -> toILSource "\n" "error" source |> ignore)
+    assertEq e.Data0 exp

@@ -276,7 +276,11 @@ module SourceParsers =
     
     let opt p = opt p |>> function None -> VirtualSource None | Some x -> map Some x
     let preturn v = preturn v |>> VirtualSource
-    let manyRev1 p = pipe2 p (manyRev (p |>> value)) <| fun x xs -> map (fun x -> x::xs) x
+    let manyRev1 p =
+        let p1 = p |>> map (fun x -> [x])
+        many1Fold p1 p <| fun xs x ->
+            Source (startPos xs) (value x::value xs) (endPos x)
+
     let many1 p = pipe2 p (many (p |>> value)) <| fun x xs -> map (fun x -> x,xs) x
 
     let satisfyE p e = satisfyE (value >> p) e
