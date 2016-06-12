@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Numerics;
@@ -17,8 +18,93 @@ public abstract class Fun<a, b>
 }
 public sealed class Id<a> : Fun<a, a>, IFun<a, a>
 {
-    public Id(): base() { }
+    public Id() : base() { }
     public sealed override a Apply(a arg0) => arg0;
+}
+
+public interface IHasM
+{
+    string M();
+}
+public interface IHasO
+{
+    string O();
+}
+public interface IHasP
+{
+    string P();
+}
+public abstract class GrandParent
+{
+    public abstract string M();
+    public abstract string N();
+}
+public class Parent : GrandParent, IHasM, IHasO, IHasP
+{
+    // overridable override GrandParent.M(), explicit implement IHasM.M
+    public override string M() => "Parent.M()";
+    // notOverridable override GrandParent.N()
+    public override sealed string N() => "Parent.N()";
+    // overridable, explicit implement IHasO.O
+    public virtual string O() => "Parent.O()";
+    // notOverridable, explicit implement IHasP.P
+    public virtual string P() => "Parent.P()";
+}
+
+public class Child : Parent, IHasM
+{
+    // notOverridable override GrandParent.M()
+    public override sealed string M() => "Child.M()";
+    // shadows GrandParent.N()
+    public virtual new string N() => "Child.N()";
+    // shadows Parent.P()
+    public new string P() => "Child.P()";
+
+    string IHasM.M() => "Child.(IHasM.M)()";
+}
+
+public static class S
+{
+    public static void AssertEquals<T>(T left, T right)
+    {
+        if (Comparer<T>.Default.Compare(left, right) != 0)
+        {
+            throw new Exception($"AssertEquals actual: {left}, expected: {right}");
+        }
+    }
+
+    public static void SMain()
+    {
+        Parent parent = new Parent();
+        Child child = new Child();
+
+        GrandParent parentAsGrandParent = parent;
+        GrandParent childAsGrandParent = child;
+        Parent childAsParent = child;
+        IHasM parentAsIHasM = parent;
+        IHasO parentAsIHasO = parent;
+        IHasP parentAsIHasP = parent;
+        IHasM childAsIHasM = child;
+        IHasO childAsIHasO = child;
+        IHasP childAsIHasP = child;
+        
+        AssertEquals(child.M(), "Child.M()");
+        AssertEquals(child.N(), "Child.N()");
+        AssertEquals(child.O(), "Parent.O()");
+        AssertEquals(child.P(), "Child.P()");
+        
+        AssertEquals(childAsGrandParent.M(), "Child.M()");
+        AssertEquals(childAsGrandParent.N(), "Parent.N()");
+
+        AssertEquals(childAsParent.M(), "Child.M()");
+        AssertEquals(childAsParent.N(), "Parent.N()");
+        AssertEquals(childAsParent.O(), "Parent.O()");
+        AssertEquals(childAsParent.P(), "Parent.P()");
+        
+        AssertEquals(childAsIHasM.M(), "Child.(IHasM.M)()");
+        AssertEquals(childAsIHasO.O(), "Parent.O()");
+        AssertEquals(childAsIHasP.P(), "Parent.P()");
+    }
 }
 
 class MyList<T>

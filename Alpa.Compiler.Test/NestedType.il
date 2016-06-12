@@ -14,7 +14,7 @@
 .stackreserve 0x00100000
 .subsystem 0x0003
 .corflags 0x00000001
-.class public abstract auto ansi sealed NestedType
+.class public abstract auto ansi sealed beforefieldinit NestedType
        extends [mscorlib]System.Object
 {
   .class auto ansi sealed nested public beforefieldinit Type1
@@ -34,7 +34,7 @@
       IL_0006:  ret
     }
   }
-  .class abstract auto ansi sealed nested public Module1
+  .class abstract auto ansi sealed nested public beforefieldinit Module1
          extends [mscorlib]System.Object
   {
     .method public static void  Fun1() cil managed
@@ -43,7 +43,7 @@
       IL_0000:  ret
     }
   }
-  .class abstract auto ansi sealed nested public Module2
+  .class abstract auto ansi sealed nested public beforefieldinit Module2
          extends [mscorlib]System.Object
   {
     .method public static void  Fun1() cil managed

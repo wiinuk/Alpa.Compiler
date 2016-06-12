@@ -1,5 +1,6 @@
 ﻿module Alpa.Emit.ILEmit
 open Alpa.Emit
+open Alpa.Emit.Access
 open Alpa.Emit.EmitException
 open Alpa.Emit.FullName
 open Alpa.Emit.HashMap
@@ -12,7 +13,6 @@ open Alpa.Emit.SolveEnv
 open Alpa.Emit.ILMethodBuilder
 open Alpa.Emit.ILTypeBuilder
 open System.Reflection.Emit
-open System.Collections.Generic
 
 // (1) type name definition
 // type IOrd`1 ... = ...;;
@@ -53,24 +53,18 @@ open System.Collections.Generic
 //     fun main () : void = ret;;
 
 module DefineTypes =
-    let rec module'(defineType, toName, a, fullName, ({ map = map } as env), ({ mMembers = members } as md)) =
-        let a = a ||| T.Abstract ||| T.Sealed
-        let t = defineType(toName fullName, a)
-        add map fullName <| newILTypeBuilder (Choice2Of2 md) t fullName env
-        for m in members do moduleMember fullName t env m
-
-    and type'(defineType, toName, a, fullName, ({ map = map } as env), ({ kind = kind; members = members } as d)) =
+    let rec type'(defineType, toName, accessAttr, fullName, ({ map = map } as env), ({ kind = kind; members = members } as d)) =
         let isInterfaceMember = function 
             | Literal _
             | Field _
             | MethodDef _
             | StaticMethodDef _
             | CtorDef _ 
-            | CCtorDef _ -> false
-            | AbstractDef _ -> true
+            | CCtorDef _ 
+            | NestedType _ -> false
+            | AbstractDef _  -> true
 
-        let kind =
-            match kind with
+        let getKind members = function
             | Some k -> k
             | None ->
                 match members with
@@ -78,29 +72,32 @@ module DefineTypes =
                 | _ when List.forall isInterfaceMember members -> Interface
                 | _ -> Sealed
 
-        let a = 
-            match kind with
+        let kindAttr = function
             | Interface -> T.Abstract ||| T.Interface
             | Abstract -> T.Abstract
+            | TypeKind.Open -> T.Class
             | Sealed -> T.Sealed
-            | Open -> T.Class
-            ||| a
-            ||| T.BeforeFieldInit
+            | Static -> T.Abstract ||| T.Sealed
 
+        let k = getKind members kind
+        let a = accessAttr ||| kindAttr k ||| T.BeforeFieldInit
         let t = defineType(toName fullName, a)
-        add map fullName <| newILTypeBuilder (Choice1Of2 d) t fullName env
+        add map fullName <| newILTypeBuilder d t fullName env
 
-    and moduleMember path (t: TypeBuilder) env = function
-        | ModuleMethodDef _
-        | ModuleCCtorDef _
-        | ModuleValDef _ 
-        | ModuleLiteralDef _ -> ()
-        | ModuleModuleDef(name, ms) -> module'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, env, ms)
-        | ModuleTypeDef(name, td) -> type'(t.DefineNestedType, getName, T.NestedPublic, addTypeName path name, env, td)
+        for m in members do
+            match m with
+            | Literal _
+            | Field _
+            | AbstractDef _
+            | CtorDef _
+            | CCtorDef _
+            | MethodDef _
+            | StaticMethodDef _ -> ()
+            | NestedType(access, name, td) ->
+                type'(t.DefineNestedType, getName, nestedAccess access, addTypeName fullName name, env, td)
 
     let topDef (m: ModuleBuilder) ({ amap = amap } as env) = function
-        | TopModuleDef(path, ms) -> module'(m.DefineType, toTypeName, T.Public, ofTypeName path, env, ms)
-        | TopTypeDef(name, td) -> type'(m.DefineType, toTypeName, T.Public, ofTypeName name, env, td)
+        | TopTypeDef(access, name, td) -> type'(m.DefineType, toTypeName, typeAccess access, ofTypeName name, env, td)
         | TopAliasDef(name, ad) -> add amap name ad
 
 let rec checkTypeParam aTypeParams = function
@@ -159,11 +156,8 @@ let mDefineGP (m: MethodBuilder) xs = m.DefineGenericParameters xs
 let tDefineGP (t: TypeBuilder) xs = t.DefineGenericParameters xs
 
 let defineTypeParams { map = map } =
-    for ({ d = d; t = t } as ti) in values map do
-        match d with
-        | Choice2Of2 _ -> ()
-        | Choice1Of2 { typeParams = typeParams } ->
-            ti.varMap <- defineVarMap typeParams <| tDefineGP t
+    for ({ d = { typeParams = typeParams }; t = t } as ti) in values map do
+        ti.varMap <- defineVarMap typeParams <| tDefineGP t
 
 let defineParam defineParameter i (Parameter(n, _)) = defineParameter(i, P.None, Option.toObj n) |> ignore
 let defineParams defineParameter pars = List.iteri (fun i a -> defineParam defineParameter (i + 1) a) pars
@@ -180,42 +174,46 @@ let defineMethodHead ({ t = t } as ti) attr callconv (MethodHead(name,typeParams
 
     m, mVarMap
 
-let defineMethodInfo dt a c (MethodInfo(head, _) as m) =
+let defineMethodInfo dt a c ov (MethodInfo(head, body)) =
     let mb, mVarMap = defineMethodHead dt a c head
-    addMethod dt head { m = m; mb = Choice1Of2 mb; mVarMap = mVarMap; dt = dt }
+    addMethod dt head { h = head; b = Some body; mb = Choice1Of2 mb; mVarMap = mVarMap; ov = ov; dt = dt }
 
-let defineMethodDef dt ov m =
+let defineMethodDef dt a ov k m =
+    let kindAttr = function
+        | None -> M.Final
+        | Some Open -> M.Virtual
+
+    let overrideAttr = function
+        | Override[] -> M.Virtual
+        | Override(_::_) -> M.Virtual ||| M.NewSlot
+
+    let methodAttr ov k =
+        match ov with
+        | Some ov -> kindAttr k ||| overrideAttr ov
+        | None ->
+            let a =
+                match k with
+                | Some Open -> M.NewSlot
+                | None -> enum 0
+
+            a ||| kindAttr k
+
+    let a = methodAccess a ||| methodAttr ov k ||| M.HideBySig
+
     match ov with
-    | None -> defineMethodInfo dt (M.Public ||| M.Final ||| M.HideBySig) CC.Standard m
-    | Some Override ->
-        let a =
-            M.Public ||| M.Final ||| M.HideBySig ||| M.Virtual
-            // TODO: ???
-            // ||| M.NewSlot 
-        defineMethodInfo dt a CC.HasThis m
+    | None -> defineMethodInfo dt a CC.Standard ov m
+    | Some _ -> defineMethodInfo dt a CC.HasThis ov m
 
-    | Some(BaseMethod _) ->
-        let a =
-            M.Private ||| M.Final ||| M.HideBySig ||| M.Virtual
-            // TODO: ???
-            // ||| M.NewSlot 
-        defineMethodInfo dt a CC.HasThis m
-                // TODO: last path
-//                        let bt = solveType map varMap <| typeRefToType baseType
-//                        let pts = solveParamTypes map varMap pars
-//                        let bm = bt.GetMethod(baseMethodName, pts)
-//                        t.DefineMethodOverride(bm, m)
-    
-let defineField ({ t = t; fmap = fmap } as ti) (isStatic, isMutable, name, ft) =
-    let a = F.Public
+let defineField ({ t = t; fmap = fmap } as ti) (access, isStatic, isMutable, name, ft) =
+    let a = fieldAccess access
     let a = if isStatic then a ||| F.Static else a
     let a = if isMutable then a else a ||| F.InitOnly
     let ft = solveType (envOfTypeBuilder emptyVarMap ti) ft
     let f = t.DefineField(name, ft, a)
     add fmap name f
 
-let defineLiteral ({ t = t; fmap = fmap } as ti) name ft fv =
-    let a = F.Public ||| F.Static ||| F.Literal
+let defineLiteral ({ t = t; fmap = fmap } as ti) access name ft fv =
+    let a = fieldAccess access ||| F.Static ||| F.Literal
     let ft = solveType (envOfTypeBuilder emptyVarMap ti) ft
     let f = t.DefineField(name, ft, a)
     let literalValue = function
@@ -243,37 +241,57 @@ let defineCCtor ({ t = t } as dt) body =
         mb = Choice2Of2 c
         mVarMap = emptyVarMap
         dt = dt
-        m = MethodInfo(cctorHead, body)
+        ov = None
+        h = cctorHead
+        b = Some body
     }
 
-let defineCtor ({ t = t } as dt) pars body =
+let defineCtor ({ t = t } as dt) a pars body =
     let pts = solveParamTypes (envOfTypeBuilder emptyVarMap dt) pars
-    let c = t.DefineConstructor(M.SpecialName ||| M.RTSpecialName ||| M.Public, CC.HasThis, pts)
+    let a = methodAccess a ||| M.SpecialName ||| M.RTSpecialName
+    let c = t.DefineConstructor(a, CC.HasThis, pts)
     defineParams c.DefineParameter pars
     addCtor dt {
         mb = Choice2Of2 c
         dt = dt
         mVarMap = emptyVarMap
-        m = MethodInfo(ctorHead pars, body)
+        ov = None
+        h = ctorHead pars
+        b = Some body
     }
     
-let defineStaticMethod dt (MethodInfo(head, _) as m) =
-    let mb, mVarMap = defineMethodHead dt (M.Public ||| M.Static) CC.Standard head
-    addMethod dt head { mb = Choice1Of2 mb; mVarMap = mVarMap; m = m; dt = dt }
+let defineStaticMethod dt a (MethodInfo(head, body)) =
+    let mb, mVarMap = defineMethodHead dt (methodAccess a ||| M.Static) CC.Standard head
+    addMethod dt head {
+        mb = Choice1Of2 mb
+        mVarMap = mVarMap
+        h = head
+        b = Some body
+        ov = None
+        dt = dt
+    }
 
 let defineMember dt = function
-    | Field(isStatic, isMutable, n, ft) -> defineField dt (isStatic, isMutable, n, ft)
-    | Literal(n, t, l) -> defineLiteral dt n t l
-    | MethodDef(ov, m) -> defineMethodDef dt ov m
-    | StaticMethodDef m -> defineStaticMethod dt m
-    | CtorDef(pars, body) -> defineCtor dt pars body
+    | NestedType _ -> ()
+    | Field(access, isStatic, isMutable, n, ft) -> defineField dt (access, isStatic, isMutable, n, ft)
+    | Literal(a, n, t, l) -> defineLiteral dt a n t l
+    | MethodDef(a, ov, k, m) -> defineMethodDef dt a ov k m
+    | StaticMethodDef(a, m) -> defineStaticMethod dt a m
+    | CtorDef(a, pars, body) -> defineCtor dt a pars body
     | CCtorDef body -> defineCCtor dt body
-    | AbstractDef head ->
-        let a = M.Public ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
-        defineMethodHead dt a CC.HasThis head
-        |> ignore
+    | AbstractDef(a, head) ->
+        let a = methodAccess a ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
+        let mb, mVarMap = defineMethodHead dt a CC.HasThis head
+        addMethod dt head {
+            mb = Choice1Of2 mb
+            mVarMap = mVarMap
+            h = head
+            b = None
+            ov = None
+            dt = dt
+        }
 
-let defineTypeDef ({ t = t } as ti) { parent = parent; impls = impls; members = members } =
+let defineTypeDef ({ t = t; mmap = mmap; d = { parent = d; kind = k } } as ti) { parent = parent; impls = impls; members = members } =
     let env = envOfTypeBuilder emptyVarMap ti
 
     match parent with
@@ -283,20 +301,18 @@ let defineTypeDef ({ t = t } as ti) { parent = parent; impls = impls; members = 
     for impl in impls do t.AddInterfaceImplementation <| solveType env impl
     for m in members do defineMember ti m
 
-let defineModuleMember dt = function
-    | ModuleTypeDef _
-    | ModuleModuleDef _ -> ()
-    | ModuleValDef(isMutable, name, ft) -> defineField dt (true, isMutable, name, ft)
-    | ModuleLiteralDef(name, ft, v) -> defineLiteral dt name ft v
-    | ModuleMethodDef m -> defineStaticMethod dt m
-    | ModuleCCtorDef b -> defineCCtor dt b
+    if not t.IsInterface && not <| contines mmap ".ctor" then
+        let c = t.DefineDefaultConstructor(M.RTSpecialName ||| M.Public ||| M.HideBySig)
+        addCtor ti {
+            mb = Choice2Of2 c
+            dt = ti
+            mVarMap = emptyVarMap
+            ov = None
+            h = ctorHead []
+            b = None
+        }
 
-let defineMembers { map = map } =
-    for { d = d } as ti in values map do
-        match d with
-        | Choice1Of2 td -> defineTypeDef ti td
-        | Choice2Of2 { mMembers = members } ->
-            for m in members do defineModuleMember ti m
+let defineMembers { map = map } = for { d = d } as ti in values map do defineTypeDef ti d
 
 let emitInstr (g: ILGenerator) env (Instr(label, op, operand)) =
     match operand with
@@ -313,16 +329,35 @@ let emitInstr (g: ILGenerator) env (Instr(label, op, operand)) =
         let f = getField env parent name
         g.Emit(op, f)
 
-    | OpMethod(parent, name, annot) ->
-        match getMethodBase env parent name annot with
+    | OpMethod m ->
+        match getMethodBase env m with
         | :? System.Reflection.MethodInfo as m -> g.Emit(op, m)
         | :? System.Reflection.ConstructorInfo as m -> g.Emit(op, m)
         | _ -> failwith "unreach"
 
-let emitMethod ({ mVarMap = mVarMap; dt = dt; m = MethodInfo(_,MethodBody instrs)} as m) =
-    let g = getILGenerator m
-    let env = envOfTypeBuilder mVarMap dt
-    for instr in instrs do emitInstr g env instr
+let defineOverride env { dt = { t = t }; ov = ov; mb = mb } =
+    match ov with
+    | None
+    | Some(Override[]) -> ()
+    | Some(Override baseMethods) ->
+        for bm in baseMethods do
+            match getMethodBase env bm with
+            | :? System.Reflection.ConstructorInfo -> raiseEmitExn <| ConstructorIsNotOverride bm
+            | :? System.Reflection.MethodInfo as bm ->
+                match mb with
+                | Choice1Of2 m -> t.DefineMethodOverride(m, bm)
+                | Choice2Of2 _ -> failwith "unreach"
+
+            | _ -> raise <| System.NotImplementedException()
+
+let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body } as m) =
+    match body with
+    | None -> ()
+    | Some(MethodBody instrs) ->
+        let env = envOfTypeBuilder mVarMap dt
+        defineOverride env m
+        let g = getILGenerator m
+        for instr in instrs do emitInstr g env instr
 
 let emitMethods { map = map } =
     for { mmap = mmap } in values map do

@@ -14,7 +14,7 @@
 .stackreserve 0x00100000
 .subsystem 0x0003
 .corflags 0x00000001
-.class public abstract auto ansi sealed RuntimeTypeGenericArg.Program
+.class public abstract auto ansi sealed beforefieldinit RuntimeTypeGenericArg.Program
        extends [mscorlib]System.Object
 {
   .method public static class [mscorlib]System.Tuple`2<string,string> 

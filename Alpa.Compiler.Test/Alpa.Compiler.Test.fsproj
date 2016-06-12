@@ -65,6 +65,7 @@
     <Compile Include="Alpa.IL.Helpers.fsx" />
     <Compile Include="Alpa.IL.Lexer.Test.fsx" />
     <Compile Include="Alpa.IL.Emit.Test.fsx" />
+    <None Include="Palette.fsx" />
     <None Include="NestedType.il">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

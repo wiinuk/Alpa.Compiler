@@ -26,7 +26,7 @@
     IL_0006:  ret
   }
 }
-.class public abstract auto ansi sealed Program
+.class public abstract auto ansi sealed beforefieldinit Program
        extends [mscorlib]System.Object
 {
   .method public static void  main(class [mscorlib]System.Collections.Generic.List`1<class MyTuple`2<int32,class [mscorlib]System.Collections.Generic.List`1<class MyTuple`2<int32,string>>>> A_0) cil managed

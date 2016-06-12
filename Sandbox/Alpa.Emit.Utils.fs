@@ -28,16 +28,24 @@ module List =
         aux [] xs
 
 module HashMap =
+    open System.Collections.Generic
+
+    let contines (map: HashMap<_,_>) k = map.ContainsKey k
     let add (map: HashMap<_,_>) k v = map.Add(k, v)
     let assign (map: HashMap<_,_>) k v = map.[k] <- v
-    let get (map: HashMap<_,_>) k = map.[k]
+    let get (map: HashMap<_,_>) k = 
+        try map.[k]
+        with
+        | :? KeyNotFoundException as e ->
+            raise <| KeyNotFoundException(sprintf "%s: %A" e.Message k)
+
     let tryGet (map: HashMap<_,_>) k (v: _ byref) = map.TryGetValue(k, &v)
     let values (map: HashMap<_,_>) = map.Values
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module TypeVarMap =
     let emptyVarMap = []
-    let typeParams xs = Seq.map fst
+    let typeParams xs = Seq.map fst xs
     let typeVarMapToSolvedType xs = Seq.map TypeParam xs
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
@@ -65,9 +73,8 @@ module FullName =
     let getName (FullName(name=name)) = name
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
-module SolveEnv =    
-    open TypeVarMap
-    let envOfTypeBuilder mVarMap ({ env = env; varMap = varMap } as ti) = {
+module SolveEnv =   
+    let envOfTypeBuilder mVarMap { env = env; varMap = varMap } = {
         senv = env
         sVarMap = varMap
         sMVarMap = mVarMap
@@ -273,8 +280,8 @@ module ILMethodBuilder =
         | Choice2Of2 m -> upcast m
 
     let getTypeParams { ILMethodBuilder.mVarMap = mVarMap } = mVarMap
-    let getParemeterTypes { m = MethodInfo(MethodHead(pars=pars), _) } = Seq.map paramType pars
-    let getReturnType { m = MethodInfo(MethodHead(ret=ret), _) } = paramType ret
+    let getParemeterTypes { h = MethodHead(pars=pars) } = Seq.map paramType pars
+    let getReturnType { h = MethodHead(ret=ret) } = paramType ret
     let makeCloseMethod m mTypeArgs =
         Seq.map getUnderlyingSystemType mTypeArgs
         |> MethodBase.makeCloseMethod (getUnderlyingSystemMethod m)
@@ -309,3 +316,36 @@ module ILTypeBuilder =
     let getMethods name { mmap = mmap } = get mmap name |> List.toSeq
     let getConstructors dt = getMethods ".ctor" dt
     let getTypeParams { varMap = varMap } = varMap
+
+module Access =
+    let nestedAccess = function
+        | None -> T.NestedPublic
+        | Some a ->
+            match a with
+            | NestedAccess.Public -> T.NestedPublic
+            | NestedAccess.Assembly -> T.NestedAssembly
+            | NestedAccess.Private ->T.NestedPrivate
+            | NestedAccess.Family -> T.NestedFamily
+            | NestedAccess.FamilyAndAssembly -> T.NestedFamANDAssem
+            | NestedAccess.FamilyOrAssembly -> T.NestedFamORAssem
+
+    let typeAccess = function
+        | None -> T.Public
+        | Some a ->
+            match a with
+            | TypeAccess.Public -> T.Public
+            | TypeAccess.Private -> T.NotPublic
+        
+    let fieldAccess = function
+        | None -> F.Public
+        | Some x ->
+            match x with
+            | MemberAccess.Assembly -> F.Assembly
+            | MemberAccess.Public -> F.Public
+            | MemberAccess.Private -> F.Private
+            | MemberAccess.Family -> F.Family
+            | MemberAccess.FamilyAndAssembly -> F.FamANDAssem
+            | MemberAccess.FamilyOrAssembly -> F.FamORAssem
+            | MemberAccess.PrivateScope -> F.PrivateScope
+
+    let methodAccess a = fieldAccess a |> int |> enum<M>

@@ -48,7 +48,7 @@
     IL_0006:  ret
   }
 }
-.class public abstract auto ansi sealed MakeTupleOverload.Main
+.class public abstract auto ansi sealed beforefieldinit MakeTupleOverload.Main
        extends [mscorlib]System.Object
 {
   .method public static class [mscorlib]System.Tuple`2<class [mscorlib]System.Tuple`2<string,string>,class [mscorlib]System.Tuple`2<string,string>> 

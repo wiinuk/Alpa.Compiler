@@ -47,11 +47,6 @@ let methodInfoSource name = { new MethodSource() with
     override __.GetRTMethods t = Type.getMethodBases name t
     override __.GetRTAllMethods t = Type.getAllMethodBases t :> _
 }
-let constructorInfoSource = { new MethodSource() with
-    override __.GetILMethods t = getConstructors t
-    override x.GetRTMethods t = x.GetRTAllMethods t
-    override __.GetRTAllMethods t = Type.getConstructors t |> Type.ctorsToMethodBasesArray :> _
-}
 
 let runtimeTypeSolver m = { new Solver<_,_,_>(m) with
     override __.GetMethodTypeParams m = MethodBase.getTypeParams m |> Seq.map RuntimeType
@@ -166,7 +161,7 @@ let getAnyMethodBase m env parent annot =
     | InstantiationType(closeType, Some openType) -> closeTypeBuilderSolver m |> getMethodGeneric env (closeType, openType) annot
     | InstantiationType(parent, None) -> runtimeTypeOfTypeBuilderSolver m |> getMethodGeneric env parent annot
 
-let getMethodBase env parent name annot =
+let getMethodBase env (MethodRef(parent, name, annot)) =
     getAnyMethodBase (methodInfoSource name) env parent annot
 
 let getField env parent name =

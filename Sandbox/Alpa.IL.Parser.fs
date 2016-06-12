@@ -39,6 +39,8 @@ type TokenKind =
     | HyphenGreaterThan
     /// "*"
     | Multiply
+    /// "/"
+    | Slash
 
     | Abstract
     | Override
@@ -48,7 +50,6 @@ type TokenKind =
     | Sealed
     | Mutable
     | Literal
-    | Module
     | New
     | Let
     | Member
@@ -56,6 +57,14 @@ type TokenKind =
     | Alias
     | This
     | Base
+    | Public
+    | Internal
+    | Protected
+    | Private
+    | PrivateScope
+    | InternalAndProtected
+    | InternalOrProtected
+    | Module
 
     | Int8
     | Int16
@@ -132,6 +141,7 @@ type Errors =
     | RequireTypeMember
     | RequireModuleMember
     | RequireTopMember
+    | RequireAccess
 
     | NumericRange
     | OperandTypeMissmatch
@@ -155,6 +165,7 @@ let delimiter() = [|
     "``", DGraveAccent
     "->", HyphenGreaterThan
     "*", Multiply
+    "/", Slash
 |]
 
 let keyword() = [|
@@ -166,7 +177,6 @@ let keyword() = [|
     "sealed", Sealed
     "mutable", Mutable
     "literal", Literal
-    "module", Module
     "new", New
     "let", Let
     "member", Member
@@ -185,6 +195,16 @@ let keyword() = [|
     "float64", Float64
     "this", This
     "base", Base
+    "public", Public
+    "internal", Internal
+    "protected", Protected
+    "private", Private
+    "private_scope", PrivateScope
+    "internal_and_pretected", InternalAndProtected
+    "internal_or_protected", InternalOrProtected
+    "protected_and_internal", InternalAndProtected
+    "protected_or_internal", InternalOrProtected
+    "module", Module
 
     "void", Void
     "bool", Bool
@@ -348,10 +368,12 @@ module Specials =
     let dGraveAccent = d DGraveAccent
     let ``->`` = d HyphenGreaterThan
     let ``*`` = d Multiply
+    let ``/`` = d Slash
 
     let ``mutable`` = d Mutable
     let ``new`` = d New
     let ``static`` = d Static
+    let ``open`` = d Open
 
 module K = Specials
 
@@ -383,6 +405,7 @@ let typeKind =
             | _ -> TypeKind.Sealed
         )
         RequireTypeKind
+let typeKindOpt = opt typeKind
 
 /// ($p, ...) | ()
 let tupleLike0 p = between ``(`` ``)`` (sepBy p ``,``)
@@ -486,7 +509,7 @@ do
     typeSpecRef := arrowType
 
 let extends = ``:`` >>. typeSpec
-let implements = ``+`` >>. typeSpec
+let implements = ``/`` >>. typeSpec
 
 #nowarn "9"
 module Unsafe =
@@ -658,7 +681,7 @@ let opType = typeSpec |>> OpType
 /// ex: System.Type::Delimiter
 let opField = pipe3 typeSpec ``::`` name <| fun t _ n -> OpField(t, n)
 
-let opMethod =
+let methodRef =
     let methodName = 
         choice [
             K.``new`` >>% ".ctor"
@@ -670,7 +693,9 @@ let opMethod =
         | None -> MethodTypeAnnotation([], ts1, ret)
         | Some ts2 -> MethodTypeAnnotation(ts1, ts2, ret)
 
-    pipe4 typeSpec ``::`` methodName (opt signAnnot) <| fun parent _ name t -> OpMethod(parent, name, t)
+    pipe4 typeSpec ``::`` methodName (opt signAnnot) <| fun parent _ name t -> MethodRef(parent, name, t)
+
+let opMethod = methodRef |>> OpMethod
 
 let instr =
     let label = optDefault "" (name .>> ``:``)
@@ -717,11 +742,92 @@ let instr =
                     let instr = Instr(Source.value r1, Source.value op, Source.value  r3)
                     Reply(Source.Source l instr r)
     p
+let typeAccess =
+    satisfyMapE
+        (function
+            | Public
+            | Private -> true
+            | _ -> false
+        )
+        (function
+            | Public -> TypeAccess.Public
+            | Private -> TypeAccess.Private
+            | _ -> TypeAccess.Public
+        )
+        RequireAccess
+
+let typeAccessOpt = opt typeAccess
+
+let nestedAccess =
+    satisfyMapE
+        (function
+            | Public
+            | Private
+            
+            | Internal
+            | Protected
+            | InternalAndProtected
+            | InternalOrProtected -> true
+            | _ -> false
+        )
+        (function
+            | Public -> NestedAccess.Public
+            | Private -> NestedAccess.Private
+            
+            | Internal -> NestedAccess.Assembly
+            | Protected -> NestedAccess.Family
+            | InternalAndProtected -> NestedAccess.FamilyAndAssembly
+            | InternalOrProtected -> NestedAccess.FamilyOrAssembly
+            | _ -> NestedAccess.Public
+        )
+        RequireAccess
+
+let nestedAccessOpt = opt nestedAccess
+
+let memberAccess =
+    satisfyMapE
+        (function
+            | Public
+            | Private
+            
+            | Internal
+            | Protected
+            | InternalAndProtected
+            | InternalOrProtected 
+            | PrivateScope -> true
+            | _ -> false
+        )
+        (function
+            | Public -> MemberAccess.Public
+            | Private -> MemberAccess.Private
+            
+            | Internal -> MemberAccess.Assembly
+            | Protected -> MemberAccess.Family
+            | InternalAndProtected -> MemberAccess.FamilyAndAssembly
+            | InternalOrProtected -> MemberAccess.FamilyOrAssembly
+            | PrivateScope -> MemberAccess.PrivateScope
+            | _ -> MemberAccess.Public
+        )
+        RequireAccess
+
+let memberAccessOpt = opt memberAccess
+
+let methodKind = K.``open`` >>% MethodKind.Open
+let methodKindOpt = opt methodKind
 
 let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
+let methodAttrs =
+    optDefault (None, None) (
+        pipe2 memberAccess methodKindOpt (fun m k -> Some m, k) <|>
+        pipe2 methodKind memberAccessOpt (fun k m -> m, Some k)
+    )
+
 let methodInfo = pipe3 methodHead ``d=`` methodBody <| fun h _ b -> MethodInfo(h, b)
 
-let fieldTail make = pipe3 (optBool K.``mutable``) name typing make
+let baseMethods = tupleLike0 methodRef
+let baseMethodsOpt = optDefault [] baseMethods
+
+let fieldTail make = pipe4 (optBool K.``mutable``) memberAccessOpt name typing make
 let literalTail make = 
     let defaultType = function
         | Literal.Null -> objectT
@@ -739,45 +845,32 @@ let literalTail make =
         | Literal.U4 _ -> uint32T
         | Literal.U8 _ -> uint64T
 
-    pipe4 name (opt typing) ``d=`` literal (fun n t _ l ->
+    pipe5(memberAccessOpt, name, opt typing, ``d=``, literal, (fun a n t _ l ->
         let t =
             match t with
             | Some t -> t
             | None -> defaultType l
-        make n t l
-    )
+        make a n t l
+    ))
 
 let staticMemberTail =
     choice [
-        fieldTail <| fun m n t -> Field(true, m, n, t)
-        literalTail <| fun a b c -> MemberDef.Literal(a, b, c)
-        methodInfo |>> StaticMethodDef
+        fieldTail <| fun m a n t -> Field(a, true, m, n, t)
+        literalTail <| fun a n b c -> MemberDef.Literal(a, n, b, c)
+        pipe2 memberAccessOpt methodInfo <| fun a m -> StaticMethodDef(a, m)
     ]
 let instanceMemberTail =
     choice [
-        methodInfo |>> fun m -> MethodDef(None, m)
-        fieldTail <| fun m n t -> Field(false, m, n, t)
+        pipe2 methodAttrs methodInfo <| fun (a, k) m -> MethodDef(a, None, k, m)
+        fieldTail <| fun m a n t -> Field(a, false, m, n, t)
     ]
-let typeMember =
-    choiceHead RequireTypeMember [
-        Let, staticMemberTail
-        Member, instanceMemberTail
-
-        // ex: new (x: System.Int32) = ...
-        New, pipe3 parameters ``d=`` methodBody <| fun ps _ b -> CtorDef(ps, b)
-
-        // ex: abstract AddRange (T) (xs: IEmumerable`1(T)) : void
-        Abstract, methodHead |>> AbstractDef
-
-        // TODO: BaseMethod
-        Override, methodInfo |>> fun m -> MethodDef(Some Override.Override, m)
-    ]
+let typeMember, typeMemberRef = createParserForwardedToRef()
 let members = many typeMember
 
 /// ex: type open MyLib.List`1 (T) <: [mscorlib]System.Object = ...
-let typeDefTail name enterType leaveType make =
-    let make k (n, ps, p) is _ ms =
-        make n {
+let typeDefTail(access, kind, name, enterType, leaveType, make) =
+    let make a k (n, ps, p) is ms =
+        make a n {
             kind = k
             typeParams = ps
             parent = p
@@ -788,59 +881,48 @@ let typeDefTail name enterType leaveType make =
     let enterType x s = enterType (Source.value x) s
 
     pipe5(
-        opt typeKind,
+        access,
+        kind,
         updateStateWith (tuple3 name (optDefault [] typeParams) (opt extends)) enterType,
         many implements,
-        ``d=``,
-        members .>> updateState leaveType .>> ``;``,
+        ``d=`` >>. members .>> updateState leaveType .>> ``;``,
         make
     )
 
-let moduleModuleDefTail, moduleModuleDefTailRef = createParserForwardedToRef()
-
-let letTail =
-    fieldTail (fun m n t -> ModuleValDef(m, n, t)) <|>
-    literalTail (fun n t v -> ModuleLiteralDef(n, t, v))
-
-let moduleMember =
-    let enterType (n, ts, p) ({ nestersRev = nestRev; namespaceRev = nsRev } as s) =
+let nestedTypeTail kind =
+    let enter (n, ts, p) ({ nestersRev = nestRev; namespaceRev = nsRev } as s) =
         let name = FullName(n, nestRev, nsRev, None)
         { s with
             thisType = Some(TypeSpec(name, List.map TypeVar ts))
             baseType = match p with None -> Some objectT | p -> p
             nestersRev = n::nestRev
         }
-
-    let leaveType ({ nestersRev = nestersRev } as s) =
+    let leave ({ nestersRev = nestersRev } as s) =
         { s with
             thisType = None
             baseType = None
             nestersRev = match nestersRev with [] -> [] | _::ns -> ns
         }
-    choiceHead RequireModuleMember [
-        Let, methodInfo |>> ModuleMethodDef
-        Type, typeDefTail name enterType leaveType <| fun n d -> ModuleTypeDef(n, d)
-        Module, moduleModuleDefTail
-        Let, letTail
-    ]
+    typeDefTail(nestedAccessOpt, kind, name, enter, leave, (fun a n t -> NestedType(a, n, t)))
     
-let moduleMembers = many moduleMember
-
 do
-    let enter n ({ nestersRev = ns } as s) = { s with nestersRev = Source.value n::ns }
-    let leave ({ nestersRev = ns } as s) =
-        match ns with
-        | _::ns -> { s with nestersRev = ns }
-        | [] -> s
+    typeMemberRef :=
+        choiceHead RequireTypeMember [
+            Let, staticMemberTail
+            Member, instanceMemberTail
 
-    moduleModuleDefTailRef :=
-        pipe4
-            (updateStateWith name enter)
-            ``d=``
-            moduleMembers
-            (``;`` .>> updateState leave)
-            (fun n _ ms _ -> ModuleModuleDef(n, { mMembers = ms }))
+            // ex: new (x: System.Int32) = ...
+            New, pipe4 memberAccessOpt parameters ``d=`` methodBody <| fun a ps _ b -> CtorDef(a, ps, b)
 
+            // ex: abstract AddRange (T) (xs: IEmumerable`1(T)) : void
+            Abstract, pipe2 memberAccessOpt methodHead <| fun a m -> AbstractDef(a, m)
+
+            Override, pipe3 baseMethodsOpt methodAttrs methodInfo <| fun ms (a, k) m ->
+                MethodDef(a, Some(Override.Override ms), k, m)
+
+            Type, nestedTypeTail typeKindOpt
+            Module, nestedTypeTail (preturn (Some TypeKind.Static))
+        ]
 let typeName =
     let typeArg = graveAccent >>. name
     choice [
@@ -888,8 +970,8 @@ let topMember =
         }
     choiceHead RequireTopMember [
         Alias, aliasTail
-        Type, typeDefTail pathRev enterType leaveType <| fun n d -> TopTypeDef(n, d)
-        Module, pipe4 pathRev ``d=`` moduleMembers ``;`` <| fun n _ ms _ -> TopModuleDef(n, { mMembers = ms })
+        Type, typeDefTail(typeAccessOpt, typeKindOpt, pathRev, enterType, leaveType, (fun a n d -> TopTypeDef(a, n, d)))
+        Module, typeDefTail(typeAccessOpt, preturn <| Some TypeKind.Static, pathRev, enterType, leaveType, (fun a n d -> TopTypeDef(a, n, d)))
     ]
 
 /// ex: type Ns.A =; module B =; type T =;
@@ -901,7 +983,6 @@ let initialState = {
     thisType = None
     baseType = None
 }
-
 let parseWith p source =
     match lex source with
     | Error(i, e, lastT) -> Error(ScanError(i, e), lastT)

@@ -61,10 +61,10 @@ let typeD ns name typeParams parent impls ms =
         impls = impls
         members = ms
     }
-    TopTypeDef((name, List.rev ns), def)
+    TopTypeDef(None, (name, List.rev ns), def)
 
 let type0D ns name parent impls members =
-    TopTypeDef((name, List.rev ns), {
+    TopTypeDef(None, (name, List.rev ns), {
         kind = None
         typeParams = []
         parent = parent
@@ -75,7 +75,7 @@ let type0D ns name parent impls members =
 let type1D ns name v1 f =
     let v1 = newTypeVar v1
     let make parent impls members =
-        TopTypeDef((name, List.rev ns), {
+        TopTypeDef(None, (name, List.rev ns), {
             kind = None
             typeParams = [v1]
             parent = parent
@@ -93,7 +93,7 @@ let typeRef2 n v1 v2 = TypeSpec(n, [v1; v2])
 let abstract2T name v1 v2 f =
     let v1, v2 = newTypeVar v1, newTypeVar v2
     let make parent impls members =
-        TopTypeDef(name, {
+        TopTypeDef(None, name, {
             kind = Some Abstract
             typeParams = [v1; v2]
             parent = parent
@@ -102,36 +102,7 @@ let abstract2T name v1 v2 f =
         })
     f make (TypeVar v1) (TypeVar v2)
 
-let param n t = Parameter(Some n, t)
-let paramT t = Parameter(None, t)
 
-let methodD name mTypeParams parameters returnType instrs =
-    MethodDef(None, MethodInfo(MethodHead(name, mTypeParams, parameters, paramT returnType), MethodBody instrs))
-let methodHead0 name pars retT = MethodHead(name, [], pars, Parameter(None, retT))
-let methodInfo0 name pars retT body = MethodInfo(methodHead0 name pars retT, body)
-
-let abstract0 name pars retT = AbstractDef <| methodHead0 name pars retT
-let override0 name pars retT instrs = MethodDef(Some Override, methodInfo0 name pars retT <| MethodBody instrs)
-let method1 name v1 f =
-    let v1 = newTypeVar v1
-    let make pars ret instrs = MethodDef(None, MethodInfo(MethodHead(name, [v1], pars, paramT ret), MethodBody instrs))
-    f make <| TypeVar v1
-
-let ctor pars is = CtorDef(pars, MethodBody is)
-
-let field n t = Field(false, false, n, t)
-let moduleD name ms = TopModuleDef(name, ms)
-let mutD name t = ModuleValDef(true, name, t)
-let fun1 name v1 f =
-    let v1 = newTypeVar v1
-    let make pars ret instrs =
-        ModuleMethodDef(MethodInfo(MethodHead(name, [v1], pars, paramT ret), MethodBody instrs))
-
-    f make (TypeVar v1)
-
-let fun0 name pars ret instrs =
-    ModuleMethodDef(MethodInfo(MethodHead(name, [], pars, paramT ret), MethodBody instrs))
-    
 let inRange lo hi x = lo <= x && x <= hi
 let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
     match n with
@@ -142,7 +113,7 @@ let inlinedI4 (i1Op, i4Op, lo, hi) n inlined =
 module SimpleInstructions =
     let ret = Instr("", O.Ret, OpNone)
 
-    let newobj thisType argTypes = Instr("", O.Newobj, OpMethod(thisType, ".ctor", argTypes))
+    let newobj thisType argTypes = Instr("", O.Newobj, OpMethod(MethodRef(thisType, ".ctor", argTypes)))
 
     let ldc_i4 n = inlinedI4 (O.Ldc_I4_S, O.Ldc_I4, -1, 8) n <| function
         | 0 -> O.Ldc_I4_0
@@ -168,8 +139,8 @@ module SimpleInstructions =
     let ldsfld t n = Instr("", O.Ldsfld, OpField(t, n))
 
     let annot typeArgs argTypes = MethodTypeAnnotation(typeArgs, argTypes, None) |> Some
-    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpMethod(parent, name, annot typeArgs argTypes))
-    let call thisType name typeArgs argTypes = Instr("", O.Call, OpMethod(thisType, name, annot typeArgs argTypes))
+    let callvirt parent name typeArgs argTypes = Instr("", O.Callvirt, OpMethod(MethodRef(parent, name, annot typeArgs argTypes)))
+    let call thisType name typeArgs argTypes = Instr("", O.Call, OpMethod(MethodRef(thisType, name, annot typeArgs argTypes)))
     let call_static thisType name typeArgs argTypes = call thisType name typeArgs argTypes
 
 

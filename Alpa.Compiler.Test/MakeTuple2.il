@@ -37,7 +37,7 @@
     IL_0006:  ret
   }
 }
-.class public abstract auto ansi sealed MakeTuple2.Main
+.class public abstract auto ansi sealed beforefieldinit MakeTuple2.Main
        extends [mscorlib]System.Object
 {
   .method public static class [mscorlib]System.Tuple`2<int32,string> 

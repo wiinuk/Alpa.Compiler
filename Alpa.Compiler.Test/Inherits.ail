@@ -1,5 +1,28 @@
-﻿type Inherits.Int32EqComp
-    + [mscorlib]System.IEquatable`1(int32)
-    + [mscorlib]System.IComparable`1(int32) =
-    override Equals(int32): bool = ldc.i4.1 ret
-    override CompareTo(int32): int32 = ldc.i4.1 ret;
+﻿type Inherits.IHasM = abstract M(): string;
+type Inherits.IHasO = abstract O(): string;
+type Inherits.IHasP = abstract P(): string;
+
+type abstract Inherits.GrandParent =
+    abstract M(): string
+    abstract N(): string
+;
+type open Inherits.Parent
+    : Inherits.GrandParent
+    / Inherits.IHasM
+    / Inherits.IHasO
+    / Inherits.IHasP
+    =
+    override open M(): string = ldstr "Parent.M()" ret
+    override N(): string = ldstr "Parent.N()" ret
+    member open O(): string = ldstr "Parent.O()" ret
+    member open P(): string = ldstr "Parent.P()" ret
+;
+type open Inherits.Child
+    : Inherits.Parent
+    / Inherits.IHasM
+    =
+    override M(): string = ldstr "Child.M()" ret
+    member open N(): string = ldstr "Child.N()" ret
+    member P(): string = ldstr "Child.P()" ret
+    override(Inherits.IHasM::M) private 'IHasM.M'(): string = ldstr "Child.(IHasM.M)()" ret
+;

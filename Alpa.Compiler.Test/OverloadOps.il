@@ -14,7 +14,7 @@
 .stackreserve 0x00100000
 .subsystem 0x0003
 .corflags 0x00000001
-.class public abstract auto ansi sealed Ops
+.class public abstract auto ansi sealed beforefieldinit Ops
        extends [mscorlib]System.Object
 {
   .method public static int32  Add(int32 A_0,
@@ -36,7 +36,7 @@
     IL_0003:  ret
   }
 }
-.class public abstract auto ansi sealed Main
+.class public abstract auto ansi sealed beforefieldinit Main
        extends [mscorlib]System.Object
 {
   .method public static float32  main() cil managed

@@ -22,6 +22,13 @@ and TypeSpec =
 type MethodName = string
 type MethodTypeAnnotation =
     | MethodTypeAnnotation of typeArgs: TypeSpec list * argTypes: TypeSpec list * returnType: TypeSpec option
+
+type MethodRef = 
+    | MethodRef of 
+        thisType: TypeSpec *
+        name: MethodName *
+        anntation: MethodTypeAnnotation option
+
 type Operand =
     | OpNone
     | OpI1 of int8
@@ -33,7 +40,7 @@ type Operand =
     | OpString of string
     | OpType of TypeSpec
     | OpField of thisType: TypeSpec * name: string
-    | OpMethod of thisType: TypeSpec * name: MethodName * MethodTypeAnnotation option
+    | OpMethod of MethodRef
 
 type Macro =
     | BaseInit of TypeSpec list
@@ -41,9 +48,7 @@ type Macro =
 type Instr = 
     | Instr of string * OpCode * Operand
 
-type Override =
-    | Override
-    | BaseMethod of baseMethod: (TypeSpec * MethodName)
+type Override = Override of baseMethods: MethodRef list
 
 type Parameter = Parameter of name: string option * TypeSpec
 type MethodBody = MethodBody of Instr list
@@ -67,16 +72,38 @@ type Literal =
     | String of string
     | Null
 
-type MemberDef =
-    | Literal of name: string * TypeSpec * Literal
-    | Field of isStatic: bool * isMutable: bool * name: string * TypeSpec
-    | AbstractDef of MethodHead
-    | CtorDef of pars: Parameter list * MethodBody
-    | CCtorDef of MethodBody
-    | MethodDef of Override option * MethodInfo
-    | StaticMethodDef of StaticMethodInfo
+type TypeAccess =
+    | Public
 
-type TypeKind = Abstract | Interface | Open | Sealed
+    /// C# internal
+    | Private
+
+type NestedAccess =
+    | Public
+
+    /// C# internal
+    | Private
+    | Family
+    | Assembly
+    | FamilyAndAssembly
+    | FamilyOrAssembly
+
+type MemberAccess =
+    | Public
+    /// C# private
+    | Private
+    /// C# protected
+    | Family
+    
+    /// C# internal
+    | Assembly
+    | FamilyAndAssembly
+    | FamilyOrAssembly
+
+    | PrivateScope
+
+type TypeKind = | Interface | Abstract | Open | Sealed | Static
+type MethodKind = | Open
 
 type AliasSign = string
 type AliasDef = {
@@ -90,21 +117,19 @@ type TypeDef = {
     impls: TypeSpec list
     members: MemberDef list
 }
-type ModuleDef = {
-    mMembers: ModuleMember list
-}
-and ModuleMember =
-    | ModuleMethodDef of StaticMethodInfo
-    | ModuleTypeDef of name: string * TypeDef
-    | ModuleCCtorDef of MethodBody
-    | ModuleModuleDef of name: string * ModuleDef
-    | ModuleValDef of isMutable: bool * name: string * TypeSpec
-    | ModuleLiteralDef of name: string * TypeSpec * Literal
+and MemberDef =
+    | Literal of MemberAccess option * name: string * TypeSpec * Literal
+    | Field of MemberAccess option * isStatic: bool * isMutable: bool * name: string * TypeSpec
+    | AbstractDef of MemberAccess option * MethodHead
+    | CtorDef of MemberAccess option * pars: Parameter list * MethodBody
+    | CCtorDef of MethodBody
+    | MethodDef of MemberAccess option * Override option * MethodKind option * MethodInfo
+    | StaticMethodDef of MemberAccess option * MethodInfo
+    | NestedType of NestedAccess option * name: string * TypeDef
 
 type TopDef =
     | TopAliasDef of name: AliasSign * AliasDef
-    | TopTypeDef of pathRev: (string * string list) * TypeDef
-    | TopModuleDef of pathRev: (string * string list) * ModuleDef
+    | TopTypeDef of TypeAccess option * pathRev: (string * string list) * TypeDef
 
 type AssemblyDef = string
 type IL = { topDefs: TopDef list }
@@ -130,7 +155,7 @@ type Env = {
 and ILTypeBuilder = {
     env: Env
 
-    d: Choice<TypeDef, ModuleDef>
+    d: TypeDef
     t: TypeBuilder
     path: FullName
     mutable varMap: TypeVarMap
@@ -142,9 +167,11 @@ and ILTypeBuilder = {
 and ILMethodBuilder = {
     /// DeclaringType
     dt: ILTypeBuilder
+    ov: Override option
     mb: Choice<MethodBuilder,ConstructorBuilder>
     mVarMap: TypeVarMap
-    m: MethodInfo
+    h: MethodHead
+    b: MethodBody option
 }
 and AliasMap = HashMap<AliasSign, AliasDef>
 and MethodMap = HashMap<MethodSign, ILMethodBuilder list>
@@ -184,8 +211,10 @@ type EmitErrors =
     | UnownedAliasTypeParameter of TypeVar
     | UnownedAliasTypeParameterRef of int
     | UnsolvedType of TypeSpec
-    | DuplicatedAliasName of AliasSign * AliasDef * Choice<TypeDef,ModuleDef>
+    | DuplicatedAliasName of AliasSign * AliasDef * TypeDef
     | RecursiveAlias of AliasSign
     | AliasKindError of AliasSign * appliedTypes: TypeSpec list * target: AliasDef
+
+    | ConstructorIsNotOverride of MethodRef
 
 exception EmitException of EmitErrors
