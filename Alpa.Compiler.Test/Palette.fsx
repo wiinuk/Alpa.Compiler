@@ -42,7 +42,7 @@ type CloSucc2(`a) : (`a -> `a) =
         stfld this::item1
         ret
 
-    // override Apply(`a): `a = this.item1.`_+_`($1, this.item1.ofInteger(integer.get_One()))
+    // override Apply(`a): `a = $0.item1.'_+_'($1, $0.item1.ofInteger(integer::get_One()))
     override Apply(`a): `a =
         ldarg.0                     // .., this
         ldfld this::item1           // .., this::item1
