@@ -158,8 +158,8 @@ let getAnyMethodBase m env parent annot =
     | TypeParam _ -> failwith ""
     | RuntimeType parent -> runtimeTypeSolver m |> getMethodGeneric env parent annot
     | Builder parent -> nonGenericTypeBuilderSolver m |> getMethodGeneric env parent annot
-    | InstantiationType(closeType, Some openType) -> closeTypeBuilderSolver m |> getMethodGeneric env (closeType, openType) annot
-    | InstantiationType(parent, None) -> runtimeTypeOfTypeBuilderSolver m |> getMethodGeneric env parent annot
+    | InstantiationType(closeType, Some openType, _) -> closeTypeBuilderSolver m |> getMethodGeneric env (closeType, openType) annot
+    | InstantiationType(parent, None, _) -> runtimeTypeOfTypeBuilderSolver m |> getMethodGeneric env parent annot
 
 let getMethodBase env (MethodRef(parent, name, annot)) =
     getAnyMethodBase (methodInfoSource name) env parent annot
@@ -169,7 +169,7 @@ let getField env parent name =
     | TypeParam _ -> failwith "getField: TypeParam"
     | RuntimeType t -> t.GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
     | Builder { fmap = fmap } -> upcast get fmap name
-    | InstantiationType(tb, Some { fmap = fmap }) -> TypeBuilder.GetField(tb, get fmap name)
-    | InstantiationType(tb, None) ->
+    | InstantiationType(tb, Some { fmap = fmap }, _) -> TypeBuilder.GetField(tb, get fmap name)
+    | InstantiationType(tb, None, _) ->
         let fd = tb.GetGenericTypeDefinition().GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
         TypeBuilder.GetField(tb, fd)

@@ -89,8 +89,14 @@ module SolvedType =
         | InstantiationType(closeType = t) -> t
         | TypeParam(_, t) -> upcast t
         | Builder { t = t } -> upcast t
-        
-    let typeEq l r = getUnderlyingSystemType l = getUnderlyingSystemType r
+
+    let rec typeEq l r =
+        match l, r with
+        | RuntimeType l, RuntimeType r -> l = r
+        | InstantiationType(closeType=lc;typeParams=ls), InstantiationType(closeType=rc;typeParams=rs) -> lc.GetGenericTypeDefinition() = rc.GetGenericTypeDefinition() && List.forall2 typeEq ls rs
+        | TypeParam(_, l), TypeParam(_, r) -> l = r
+        | Builder { t = l }, Builder { t = r } -> l = r
+        | _ -> false
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module EmitException =
@@ -159,11 +165,11 @@ module TypeSpec =
                 let vs = List.map (solveTypeCore env) ts
                 let ts = Seq.map SolvedType.getUnderlyingSystemType vs |> Seq.toArray
                 match getTypeDef map pathRev with
-                | Builder({ t = t } as ti) -> InstantiationType(t.MakeGenericType ts, Some ti)
+                | Builder({ t = t } as ti) -> InstantiationType(t.MakeGenericType ts, Some ti, vs)
                 | RuntimeType t ->
                     let t = t.MakeGenericType ts
                     if List.forall (function RuntimeType _ -> true | _ -> false) vs then RuntimeType t
-                    else InstantiationType(t, None)
+                    else InstantiationType(t, None, vs)
 
                 | _ -> failwith "unreach"
 

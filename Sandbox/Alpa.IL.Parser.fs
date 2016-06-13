@@ -2,7 +2,6 @@
 
 open System
 open Alpa.Emit
-open Alpa.Emit.ILEmit
 open Alpa.ParserCombinator
 open Alpa.RegexLexer
 open Alpa.IO
@@ -435,7 +434,7 @@ let typeParams = tupleLike1(graveAccent >>. name) |>> function x,xs -> x::xs
 /// ex: "[mscorlib]System.Diagnostics.Stopwatch+Internals+LowTimer`1(int32)" "`T" "`0" "``2" "base" "this"
 let typeSpec, typeSpecRef = createParserForwardedToRef()
 do
-    let namedType = pipe2 fullName (opt (tupleOrValueLike1 typeSpec)) <| fun n vs -> TypeSpec(n, match vs with None -> [] | Some(v,vs) -> v::vs)
+    let namedType = pipe2 fullName (opt (tupleLike1 typeSpec)) <| fun n vs -> TypeSpec(n, match vs with None -> [] | Some(v,vs) -> v::vs)
 
     let primType = 
         choiceHead RequireType [

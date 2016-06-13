@@ -181,7 +181,7 @@ and TypeMap = HashMap<FullName, ILTypeBuilder>
 type SolvedType =
     | RuntimeType of Type
     | Builder of ILTypeBuilder
-    | InstantiationType of closeType: Type * openType: ILTypeBuilder option
+    | InstantiationType of closeType: Type * openType: ILTypeBuilder option * typeParams: SolvedType list
     | TypeParam of TypeVar * GenericTypeParameterBuilder
 
 type SolveEnv = {

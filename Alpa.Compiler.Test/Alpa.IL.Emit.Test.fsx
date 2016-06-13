@@ -19,14 +19,14 @@ let AliasError1() =
     
 [<Fact>]
 let AliasError2() =
-    "alias error2 `a = [mscorlib]System.Collections.Generic.List`1(error2 `a)"
+    "alias error2(`a) = [mscorlib]System.Collections.Generic.List`1(error2(`a))"
     |> assertThrowEmitException (RecursiveAlias "error2")
     
 [<Fact>]
 let AliasError3A() =
     "
-    alias error3A `a = [mscorlib]System.Collections.Generic.List`1(error3B `a)
-    alias error3B `a = [mscorlib]System.Collections.Generic.List`1(error3A `a)
+    alias error3A(`a) = [mscorlib]System.Collections.Generic.List`1(error3B(`a))
+    alias error3B(`a) = [mscorlib]System.Collections.Generic.List`1(error3A(`a))
     "
     |> assertThrowEmitException (RecursiveAlias "error3A")
 
