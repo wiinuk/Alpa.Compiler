@@ -13,6 +13,8 @@ open Alpa.Emit.SolveEnv
 open Alpa.Emit.ILMethodBuilder
 open Alpa.Emit.ILTypeBuilder
 open System.Reflection.Emit
+open Alpa.Emit.PreDefinedTypes
+open MethodBody
 
 // (1) type name definition
 // type IOrd`1 ... = ...;;
@@ -165,7 +167,7 @@ let defineParams defineParameter pars = List.iteri (fun i a -> defineParam defin
 let defineMethodHead ({ t = t } as ti) attr callconv (MethodHead(name,typeParams,pars,ret)) =
     let m = t.DefineMethod(name, attr, callconv)
     let mVarMap = defineVarMap typeParams <| mDefineGP m
-    
+
     m.SetReturnType(solveType (envOfTypeBuilder mVarMap ti) (paramType ret))
     m.SetParameters(solveParamTypes (envOfTypeBuilder mVarMap ti) pars)
 
@@ -291,7 +293,7 @@ let defineMember dt = function
             dt = dt
         }
 
-let defineTypeDef ({ t = t; mmap = mmap; d = { parent = d; kind = k } } as ti) { parent = parent; impls = impls; members = members } =
+let defineTypeDef ({ t = t; mmap = mmap; d = { parent = p }} as ti) { parent = parent; impls = impls; members = members } =
     let env = envOfTypeBuilder emptyVarMap ti
 
     match parent with
@@ -301,15 +303,21 @@ let defineTypeDef ({ t = t; mmap = mmap; d = { parent = d; kind = k } } as ti) {
     for impl in impls do t.AddInterfaceImplementation <| solveType env impl
     for m in members do defineMember ti m
 
-    if not t.IsInterface && not <| contines mmap ".ctor" then
-        let c = t.DefineDefaultConstructor(M.RTSpecialName ||| M.Public ||| M.HideBySig)
+    if not (t.IsInterface || (t.IsSealed && t.IsAbstract)) && not <| contines mmap ".ctor" then
+        let a = M.RTSpecialName ||| M.Public ||| M.HideBySig
+        let c = t.DefineConstructor(a, CC.Standard, null)
+        let body =
+            match p with
+            | None -> defaultConstructerBodyOfObject
+            | Some p -> defaultConstructerBody p
+
         addCtor ti {
             mb = Choice2Of2 c
             dt = ti
             mVarMap = emptyVarMap
             ov = None
-            h = ctorHead []
-            b = None
+            h = defaultCtorHead
+            b = Some body
         }
 
 let defineMembers { map = map } = for { d = d } as ti in values map do defineTypeDef ti d

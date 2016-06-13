@@ -17,7 +17,7 @@
 .class public auto ansi sealed beforefieldinit T1
        extends [mscorlib]System.Object
 {
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2
@@ -29,7 +29,7 @@
 .class public auto ansi sealed beforefieldinit T2
        extends [mscorlib]System.Object
 {
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2

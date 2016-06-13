@@ -198,6 +198,8 @@ module PreDefinedTypes =
     let charT = typeOf<Char>
     let stringT = typeOf<string>
     let objectT = typeOf<obj>
+
+open PreDefinedTypes
     
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Parameter =
@@ -208,6 +210,19 @@ module Parameter =
 module MethodHead =
     let cctorHead = MethodHead(".cctor", [], [], Parameter.voidParam)
     let ctorHead pars = MethodHead(".ctor", [], pars, Parameter.voidParam)
+    let defaultCtorHead = ctorHead []
+    
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module MethodBody =
+    let defaultConstructerBody baseType =
+        let bc = MethodRef(baseType, ".ctor", Some(MethodTypeAnnotation([],[], None)))
+        MethodBody [
+            Instr("", O.Ldarg_0, OpNone)
+            Instr("", O.Call, OpMethod bc)
+            Instr("", O.Ret, OpNone)
+        ]
+
+    let defaultConstructerBodyOfObject = defaultConstructerBody objectT
 
 module Member =
     open System.Reflection

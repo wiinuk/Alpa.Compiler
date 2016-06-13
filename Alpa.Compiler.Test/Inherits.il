@@ -46,7 +46,7 @@
           instance string  N() cil managed
   {
   }
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2
@@ -89,7 +89,7 @@
     IL_0000:  ldstr      "Parent.P()"
     IL_0005:  ret
   }
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2
@@ -131,7 +131,7 @@
     IL_0000:  ldstr      "Child.(IHasM.M)()"
     IL_0005:  ret
   }
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2

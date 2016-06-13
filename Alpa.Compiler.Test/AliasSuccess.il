@@ -17,7 +17,7 @@
 .class public auto ansi sealed beforefieldinit MyTuple`2<t1,t2>
        extends [mscorlib]System.Object
 {
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2

@@ -28,7 +28,7 @@
                                                                                        !1)
     IL_0007:  ret
   }
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2

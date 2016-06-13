@@ -36,7 +36,7 @@
   .field public static literal float64 Float64C2 = float64(11.)
   .field public static literal float32 Float32C2 = float32(11.)
   .field public static literal valuetype [mscorlib]System.ConsoleColor EnumC1 = int32(0x00000000)
-  .method public specialname rtspecialname 
+  .method public hidebysig specialname rtspecialname 
           instance void  .ctor() cil managed
   {
     .maxstack  2
