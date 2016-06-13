@@ -61,18 +61,18 @@ type CloSucc`1(`a) : (Num`1(`a) -> `a -> `a) =
         ret
 ;
 
-//module Program =
-//    let succ(``a)() : (Num`1(``a) -> ``a -> ``a) = newobj CloSucc`1(``a)::new() ret
-//    let 'Num`1(int32)' : Num`1(int32)
-//    let ten : int32
-//
-//    static new() =
+module Program =
+    let succ(``a)() : (Num`1(``a) -> ``a -> ``a) = newobj CloSucc`1(``a)::new() ret
+    let 'Num`1(int32)' : Num`1(int32)
+    let ten : int32
+
+    static new() =
 //        newobj 'Num`1(int32)'::new()
 //        stsfld this::'Num`1(int32)'
-//        ldc_i4 10
+//        ldc.i4 10
 //        stsfld this::ten
-//        ret
-//
+        ret
+
 //    let main() : void =
 //        ldsfld this::ten
 //        ldsfld this::'Num`1(int32)'
@@ -80,7 +80,8 @@ type CloSucc`1(`a) : (Num`1(`a) -> `a -> `a) =
 //        callvirt (Num`1(int32) -> int32 -> int32)::Apply
 //        callvirt (int32 -> int32)::Apply
 //        ret
-//;
+//
+;
 "
 |> toILSource "\n" "Complex"
 |> ilasm (__SOURCE_DIRECTORY__ + @"\bin\debug\Out.dll")
@@ -89,15 +90,13 @@ type CloSucc`1(`a) : (Num`1(`a) -> `a -> `a) =
 do
     let (==?) x y = if not <| LanguagePrimitives.PhysicalEquality x y then failwithf "(==?) %A %A" x y
     let (=?) x y = if x <> y then failwithf "(=?) %A %A" x y
-    let x: Fun<_,_> = null
-    let y: Num<_> = null
 
     let x = ``Num`1(int32)``()
     let y: Num<int> = upcast x
 
-    x.ofInteger(10I) =? 10
+    x.ofInteger 10I =? 10
     x.``_+_``(1, 2) =? 3
-    y.ofInteger(11I) =? 11
+    y.ofInteger 11I =? 11
     y.``_+_``(2, 3) =? 5
     
     let x = CloSucc2<_>(y)
@@ -105,8 +104,13 @@ do
     x.item1 ==? y
 
     let c = CloSucc<_>()
-    let f = c.Apply(y)
-    f.Apply 10 =? 11
+    c.Apply(y).Apply 10 =? 11
+
+    let i = Program.``Num`1(int32)``
+    i.ofInteger 2I =? 2
+    i.``_+_``(1, 2) =? 3
+    Program.succ().Apply(i).Apply(3) =? 4
+    Program.ten =? 10
 
 "
 alias integer = [System.Numerics]System.Numerics.BigInteger

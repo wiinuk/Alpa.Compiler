@@ -921,6 +921,8 @@ do
 
             Type, nestedTypeTail typeKindOpt
             Module, nestedTypeTail (preturn (Some TypeKind.Static))
+
+            Static, pipe5(K.``new``, ``(``, ``)``, ``d=``, methodBody, fun _ _ _ _ b -> CCtorDef b)
         ]
 let typeName =
     let typeArg = graveAccent >>. name
