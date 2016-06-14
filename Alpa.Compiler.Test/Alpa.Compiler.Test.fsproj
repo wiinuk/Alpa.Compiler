@@ -120,6 +120,9 @@
     <None Include="AliasSuccess.ail">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="ComplexType.il">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="ComplexType.ail">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

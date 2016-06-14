@@ -1,4 +1,7 @@
-﻿module RuntimeTypeGenericArg.Program =
+﻿assembly [RuntimeTypeGenericArg]
+this module RuntimeTypeGenericArg.dll
+
+module RuntimeTypeGenericArg.Program =
     let Main (string, string) : [mscorlib]System.Tuple`2(string, string) =
         ldarg.0
         ldarg.1

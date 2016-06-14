@@ -374,7 +374,23 @@ let emitMethods { map = map } =
 
 let createTypes { map = map } = for { t = t } in values map do t.CreateType() |> ignore
 
-let emitIL m { topDefs = ds } =
+let emitIL fileName (d: System.AppDomain)
+    {
+    assembly = AssemblyDef assemblyName
+    moduleDef = moduleDef
+    imports = imports
+    topDefs = ds
+    }
+    =
+    let moduleName = match moduleDef with None -> fileName | Some x -> x
+    let n = System.Reflection.AssemblyName assemblyName
+    let a = d.DefineDynamicAssembly(n, AssemblyBuilderAccess.Save)
+    let m = a.DefineDynamicModule(moduleName, fileName+"")
+
+    for AssemblyRef i in imports do
+        let n = System.Reflection.AssemblyName i
+        System.Reflection.Assembly.Load(n) |> ignore
+
     let env = { map = HashMap(); amap = AliasMap() }
     for d in ds do DefineTypes.topDef m env d
     let env = { env with amap = checkAlias env }
@@ -382,3 +398,4 @@ let emitIL m { topDefs = ds } =
     defineMembers env
     emitMethods env
     createTypes env
+    a

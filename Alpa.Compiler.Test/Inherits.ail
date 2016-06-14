@@ -1,4 +1,7 @@
-﻿type Inherits.IHasM = abstract M(): string;
+﻿assembly [Inherits]
+this module Inherits.dll
+
+type Inherits.IHasM = abstract M(): string;
 type Inherits.IHasO = abstract O(): string;
 type Inherits.IHasP = abstract P(): string;
 

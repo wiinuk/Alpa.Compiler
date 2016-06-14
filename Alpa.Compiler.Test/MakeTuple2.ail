@@ -1,4 +1,7 @@
-﻿type MakeTuple2.Make`1(`T1) =
+﻿assembly [MakeTuple2]
+this module MakeTuple2.dll
+
+type MakeTuple2.Make`1(`T1) =
     let Tuple (``T2) (`T1, ``T2) : [mscorlib]System.Tuple`2(`T1,``T2) =
         ldarg.0
         ldarg.1

@@ -64,6 +64,8 @@ type TokenKind =
     | InternalAndProtected
     | InternalOrProtected
     | Module
+    | Assembly
+    | Import
 
     | Int8
     | Int16
@@ -204,6 +206,8 @@ let keyword() = [|
     "protected_and_internal", InternalAndProtected
     "protected_or_internal", InternalOrProtected
     "module", Module
+    "assembly", Assembly
+    "import", Import
 
     "void", Void
     "bool", Bool
@@ -373,6 +377,10 @@ module Specials =
     let ``new`` = d New
     let ``static`` = d Static
     let ``open`` = d Open
+    let assembly = d Assembly
+    let import = d Import
+    let this = d This
+    let ``module`` = d Module
 
 module K = Specials
 
@@ -975,8 +983,15 @@ let topMember =
         Module, typeDefTail(typeAccessOpt, preturn <| Some TypeKind.Static, pathRev, enterType, leaveType, (fun a n d -> TopTypeDef(a, n, d)))
     ]
 
-/// ex: type Ns.A =; module B =; type T =;
-let top = many topMember |>> fun ds -> { topDefs = ds }
+// import [mscorlib], version = 4.0.0.0, culture = neutral, public_key_token = B"b7 7a 5c 56 19 34 e0 89"
+
+let path = pathRev |>> fun (x,xs) -> List.rev(x::xs) |> String.concat "."
+let assembly = pipe4 K.assembly ``[`` path ``]`` <| fun _ _ n _ -> AssemblyDef n
+let assemblyRef = pipe4 K.import ``[`` path ``]`` <| fun _ _ n _ -> AssemblyRef n
+let moduleDef = pipe3 K.this K.``module`` path <| fun _ _ n -> n
+
+/// ex: assembly MyAsm type Ns.A =; module B =; type T =;
+let top = pipe4 assembly (many assemblyRef) (opt moduleDef) (many topMember) <| fun a rs m ds -> { assembly = a; imports = rs; moduleDef = m; topDefs = ds }
 
 let initialState = {
     namespaceRev = []

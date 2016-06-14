@@ -1,4 +1,7 @@
-﻿alias `t1 * `t2 = [mscorlib]System.Tuple`2(`t1,`t2)
+﻿assembly [MakeTupleOverload]
+this module MakeTupleOverload.dll
+
+alias `t1 * `t2 = [mscorlib]System.Tuple`2(`t1,`t2)
 alias string4 = ((string * string) * (string * string))
 
 type MakeTupleOverload.Make`1(`T1) =

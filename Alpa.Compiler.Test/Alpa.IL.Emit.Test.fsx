@@ -14,17 +14,18 @@ type MB = Reflection.MethodBase
     
 [<Fact>]
 let AliasError1() =
-    "alias error1 = error1"
+    "assembly [AliasError1] alias error1 = error1"
     |> assertThrowEmitException (RecursiveAlias "error1")
     
 [<Fact>]
 let AliasError2() =
-    "alias error2(`a) = [mscorlib]System.Collections.Generic.List`1(error2(`a))"
+    "assembly [AliasError2] alias error2(`a) = [mscorlib]System.Collections.Generic.List`1(error2(`a))"
     |> assertThrowEmitException (RecursiveAlias "error2")
     
 [<Fact>]
-let AliasError3A() =
+let AliasError3() =
     "
+    assembly [AliasError3]
     alias error3A(`a) = [mscorlib]System.Collections.Generic.List`1(error3B(`a))
     alias error3B(`a) = [mscorlib]System.Collections.Generic.List`1(error3A(`a))
     "
@@ -48,3 +49,5 @@ let Fields() = assertOfFile <| MB.GetCurrentMethod().Name
 let Inherits() = assertOfFile <| MB.GetCurrentMethod().Name
 [<Fact>]
 let AliasSuccess() = assertOfFile <| MB.GetCurrentMethod().Name
+[<Fact>]
+let ComplexType() = assertOfFile <| MB.GetCurrentMethod().Name

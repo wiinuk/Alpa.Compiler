@@ -8,8 +8,11 @@ open System
 open Xunit
 open Alpa.IL.Parser
 
+let x = System.CodeDom.Compiler.CompilerParameters([||])
 
 "
+assembly [ComplexType]
+
 alias integer = [System.Numerics]System.Numerics.BigInteger
 alias `a -> `b = Fun`2(`a, `b)
 
@@ -42,7 +45,7 @@ type CloSucc2`1(`a) : (`a -> `a) =
         stfld this::item1
         ret
 
-    // override Apply(`a): `a = $0.item1.'_+_'($1, $0.item1.ofInteger(integer::get_One()))
+    // override Apply(`a) = $0.item1.'_+_'($1, $0.item1.ofInteger(integer::get_One()))
     override Apply(`a): `a =
         ldarg.0                         // .., this
         ldfld this::item1               // .., this::item1
@@ -67,64 +70,26 @@ module Program =
     let ten : int32
 
     static new() =
-//        newobj 'Num`1(int32)'::new()
-//        stsfld this::'Num`1(int32)'
-//        ldc.i4 10
-//        stsfld this::ten
+        newobj 'Num`1(int32)'::new()
+        stsfld this::'Num`1(int32)'
+        ldc.i4 10
+        stsfld this::ten
         ret
 
-//    let main() : void =
-//        ldsfld this::ten
-//        ldsfld this::'Num`1(int32)'
-//        call this::succ(int32)()
-//        callvirt (Num`1(int32) -> int32 -> int32)::Apply
-//        callvirt (int32 -> int32)::Apply
-//        ret
-//
+    // let main() =
+    //     [mscorlib]System.Console::WriteLine(
+    //         this::succ(int32)()
+    //             .Apply(this::'Num`1(int32)')
+    //             .Apply(ten)
+    //     )
+    let main() : int32 =
+        call this::succ(int32)()
+        ldsfld this::'Num`1(int32)'
+        callvirt (Num`1(int32) -> int32 -> int32)::Apply
+        ldsfld this::ten
+        callvirt (int32 -> int32)::Apply
+        ret
 ;
 "
 |> toILSource "\n" "Complex"
 |> ilasm (__SOURCE_DIRECTORY__ + @"\bin\debug\Out.dll")
-
-#r "./bin/debug/Out.dll"
-do
-    let (==?) x y = if not <| LanguagePrimitives.PhysicalEquality x y then failwithf "(==?) %A %A" x y
-    let (=?) x y = if x <> y then failwithf "(=?) %A %A" x y
-
-    let x = ``Num`1(int32)``()
-    let y: Num<int> = upcast x
-
-    x.ofInteger 10I =? 10
-    x.``_+_``(1, 2) =? 3
-    y.ofInteger 11I =? 11
-    y.``_+_``(2, 3) =? 5
-    
-    let x = CloSucc2<_>(y)
-    x.Apply 1 =? 2
-    x.item1 ==? y
-
-    let c = CloSucc<_>()
-    c.Apply(y).Apply 10 =? 11
-
-    let i = Program.``Num`1(int32)``
-    i.ofInteger 2I =? 2
-    i.``_+_``(1, 2) =? 3
-    Program.succ().Apply(i).Apply(3) =? 4
-    Program.ten =? 10
-
-"
-alias integer = [System.Numerics]System.Numerics.BigInteger
-alias `a -> `b = Fun`2(`a, `b)
-
-type abstract Fun`2(`a, `b) =
-    abstract Apply(`a): `b
-;
-type Num`1(`a) =
-    abstract ofInteger(integer): `a
-    abstract '_+_'(`a, `a) : `a
-;
-module A =
-    let main(``a)((Num`1(``a) -> (``a -> ``a))): void = ret
-;
-"
-|> toILSource "\n" "Test"

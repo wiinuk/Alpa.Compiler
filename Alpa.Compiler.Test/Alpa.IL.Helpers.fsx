@@ -213,9 +213,7 @@ let emitDll nl name il =
     if File.Exists path then File.Delete path else ()
 
     let d = AppDomain.CurrentDomain
-    let a = d.DefineDynamicAssembly(AssemblyName name, AssemblyBuilderAccess.Save)
-    let m = a.DefineDynamicModule moduleName
-    emitIL m il
+    let a = emitIL moduleName d il
     a.Save moduleName
     let source = ildasm nl path
     File.Delete path

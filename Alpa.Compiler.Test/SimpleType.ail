@@ -1,1 +1,5 @@
-﻿type T1 =; type T2 =;
+﻿assembly [SimpleType]
+this module SimpleType.dll
+
+type T1 =;
+type T2 =;

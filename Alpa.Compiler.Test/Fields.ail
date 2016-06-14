@@ -1,4 +1,7 @@
-﻿type Fields =
+﻿assembly [Fields]
+this module Fields.dll
+
+type Fields =
     member I1 : int32
     member mutable IM1 : int32
     let S1 : int32

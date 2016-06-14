@@ -131,8 +131,15 @@ type TopDef =
     | TopAliasDef of name: AliasSign * AliasDef
     | TopTypeDef of TypeAccess option * pathRev: (string * string list) * TypeDef
 
-type AssemblyDef = string
-type IL = { topDefs: TopDef list }
+type AssemblyDef = AssemblyDef of string
+
+type AssemblyRef = AssemblyRef of string
+type IL = {
+    assembly: AssemblyDef
+    imports: AssemblyRef list
+    moduleDef: string option
+    topDefs: TopDef list
+}
 
 [<Sealed; AllowNullLiteral>]
 type HashMap<'k,'v when 'k : equality> =

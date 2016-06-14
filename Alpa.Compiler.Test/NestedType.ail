@@ -1,4 +1,7 @@
-﻿module NestedType =
+﻿assembly [NestedType]
+this module NestedType.dll
+
+module NestedType =
     type Type1 =
         let Method1() : void = ret;
     module Module1 =
