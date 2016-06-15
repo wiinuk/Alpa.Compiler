@@ -374,6 +374,25 @@ let emitMethods { map = map } =
 
 let createTypes { map = map } = for { t = t } in values map do t.CreateType() |> ignore
 
+let loadAssemblyRef (d: System.AppDomain) (AssemblyRef(name, publicKeyToken, version)) =
+    let n = System.Reflection.AssemblyName name
+    match publicKeyToken with
+    | None -> ()
+    | Some k -> n.SetPublicKeyToken <| List.toArray k
+
+    match version with
+    | None -> ()
+    | Some v ->
+        let v =
+            match v with
+            | Version2(v1, v2) -> System.Version(v1,v2)
+            | Version3(v1, v2, v3) -> System.Version(v1,v2,v3)
+            | Version4(v1, v2, v3, v4) -> System.Version(v1,v2,v3,v4)
+
+        n.Version <- v
+
+    d.Load n |> ignore
+
 let emitIL fileName (d: System.AppDomain)
     {
     assembly = AssemblyDef assemblyName
@@ -386,10 +405,8 @@ let emitIL fileName (d: System.AppDomain)
     let n = System.Reflection.AssemblyName assemblyName
     let a = d.DefineDynamicAssembly(n, AssemblyBuilderAccess.Save)
     let m = a.DefineDynamicModule(moduleName, fileName+"")
-
-    for AssemblyRef i in imports do
-        let n = System.Reflection.AssemblyName i
-        System.Reflection.Assembly.Load(n) |> ignore
+    
+    for i in imports do loadAssemblyRef d i
 
     let env = { map = HashMap(); amap = AliasMap() }
     for d in ds do DefineTypes.topDef m env d

@@ -133,7 +133,8 @@ type TopDef =
 
 type AssemblyDef = AssemblyDef of string
 
-type AssemblyRef = AssemblyRef of string
+type Version = Version2 of int * int | Version3 of int * int * int | Version4 of int * int * int * int
+type AssemblyRef = AssemblyRef of name: string * publicKeyToken: byte list option * version: Version option
 type IL = {
     assembly: AssemblyDef
     imports: AssemblyRef list

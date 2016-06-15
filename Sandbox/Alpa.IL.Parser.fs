@@ -56,6 +56,10 @@ type TokenKind =
     | Alias
     | This
     | Base
+    | Module
+    | Assembly
+    | Import
+
     | Public
     | Internal
     | Protected
@@ -63,9 +67,6 @@ type TokenKind =
     | PrivateScope
     | InternalAndProtected
     | InternalOrProtected
-    | Module
-    | Assembly
-    | Import
 
     | Int8
     | Int16
@@ -129,6 +130,7 @@ type Errors =
     | ScanError of index: int * ScanErrors option
 
     | RequireToken of TokenKind
+    | RequireContexualKeyword of string
     | RequireInt32Token
     | RequireLiteralToken
     | RequireIdToken
@@ -149,6 +151,9 @@ type Errors =
 
     | UnsolvedThisType
     | UnsolvedBaseType
+
+    | DuplicateVersion
+    | DuplicatePublicKeyToken
 
 let delimiter() = [|
     "(", LParen
@@ -183,6 +188,21 @@ let keyword() = [|
     "member", Member
     "static", Static
     "alias", Alias
+    "this", This
+    "base", Base
+    "module", Module
+    "assembly", Assembly
+    "import", Import
+
+    "public", Public
+    "internal", Internal
+    "protected", Protected
+    "private", Private
+    "private_scope", PrivateScope
+    "internal_and_pretected", InternalAndProtected
+    "internal_or_protected", InternalOrProtected
+    "protected_and_internal", InternalAndProtected
+    "protected_or_internal", InternalOrProtected
 
     "int8", Int8
     "int16", Int16
@@ -194,20 +214,6 @@ let keyword() = [|
     "uint64", UInt64
     "float32", Float32
     "float64", Float64
-    "this", This
-    "base", Base
-    "public", Public
-    "internal", Internal
-    "protected", Protected
-    "private", Private
-    "private_scope", PrivateScope
-    "internal_and_pretected", InternalAndProtected
-    "internal_or_protected", InternalOrProtected
-    "protected_and_internal", InternalAndProtected
-    "protected_or_internal", InternalOrProtected
-    "module", Module
-    "assembly", Assembly
-    "import", Import
 
     "void", Void
     "bool", Bool
@@ -286,6 +292,8 @@ let lexData() = {
             let s = s.[1..s.Length-2]
             if String.forall ((<>) '\\') s then SQString s
             else SQString <| escape s
+
+        makeToken "blob" "[B]\"[0-9a-fA-F]{}\""
     |]
 }
 
@@ -983,11 +991,82 @@ let topMember =
         Module, typeDefTail(typeAccessOpt, preturn <| Some TypeKind.Static, pathRev, enterType, leaveType, (fun a n d -> TopTypeDef(a, n, d)))
     ]
 
-// import [mscorlib], version = 4.0.0.0, culture = neutral, public_key_token = B"b7 7a 5c 56 19 34 e0 89"
+// import [mscorlib] =
+//     version = 4.0.0.0
+//     public_key_token = b(b7 7a 5c 56 19 34 e0 89)
 
 let path = pathRev |>> fun (x,xs) -> List.rev(x::xs) |> String.concat "."
 let assembly = pipe4 K.assembly ``[`` path ``]`` <| fun _ _ n _ -> AssemblyDef n
-let assemblyRef = pipe4 K.import ``[`` path ``]`` <| fun _ _ n _ -> AssemblyRef n
+
+type PropKind = 
+    /// p
+    | Once
+    /// p?
+    | Optional
+    /// p*
+    | Many0
+    /// p+
+    | Many1
+
+let isValidProp n = function
+    | Once -> n = 1
+    | Optional -> 0 <= n && n <= 1
+    | Many0 -> true
+    | Many1 -> 0 < n
+
+let props reduce value props =
+    let p = List.mapi (fun i (_,_,p) -> p |>> fun x -> x, i) props |> choice
+    let map = Seq.map (fun (k,_,_) -> k, 0) props |> Seq.toArray
+    let rec aux s map xs =
+        let i' = xs.Index
+        let u' = xs.UserState
+
+        let r = p xs
+        if r.Status = Primitives.Ok && i' < xs.Index then
+            let r = r.Value
+            let x, i = Source.value r
+            let k, n = Array.get map i
+            if isValidProp (n+1) k then
+                map.[i] <- k,n+1
+                let s = reduce x (Source.value s)
+                aux (Source.VirtualSource s) map xs
+            else
+                let _,e,_ = List.item i props
+                Reply((), e)
+        else
+            xs.Index <- i'
+            xs.UserState <- u'
+
+            let i = Array.tryFindIndex (fun (k,n) -> not <| isValidProp n k) map
+            match i with
+            | None -> Reply s
+            | Some i -> let _,e,_ = List.item i props in Reply((), e)
+
+    fun stream -> aux value (Array.copy map) stream
+
+let (!!) k =
+    satisfyMapE
+        (function Id t -> t = k | _ -> false)
+        (function Id t -> t | _ -> "")
+        <| RequireContexualKeyword k
+
+let version = pipe5(!!"version", ``d=`` >>. tInt32 .>> ``.``, tInt32 .>> ``.``, tInt32 .>> ``.``, tInt32, (fun _ v1 v2 v3 v4 -> Version4(v1, v2, v3, v4)))
+let publicKeyToken = pipe3 !!"public_key_token" ``d=`` tBlob <| fun _ _ blob -> blob
+
+let assemblyRefDecls =
+    let reduce p (AssemblyRef(n,t,v)) =
+        match p with
+        | Choice1Of2 v -> AssemblyRef(n, t, Some v)
+        | Choice2Of2 t -> AssemblyRef(n, Some t, v)
+
+    props reduce (Source.VirtualSource <| AssemblyRef("", None, None)) [
+        Optional, DuplicateVersion, version |>> Choice1Of2
+        Optional, DuplicatePublicKeyToken, publicKeyToken |>> Choice2Of2
+    ]
+
+/// ex: import [System.Numerics] = version = 4.0.0.0 public_key_token = B"B7 7A 5C 56 19 34 E0 89"
+let assemblyRef = pipe5(K.import, ``[``, path, ``]`` .>> ``d=``, assemblyRefDecls, (fun _ _ n _ (AssemblyRef(_,t,v)) -> AssemblyRef(n,t,v)))
+
 let moduleDef = pipe3 K.this K.``module`` path <| fun _ _ n -> n
 
 /// ex: assembly MyAsm type Ns.A =; module B =; type T =;

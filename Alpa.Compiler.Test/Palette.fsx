@@ -8,7 +8,7 @@ open System
 open Xunit
 open Alpa.IL.Parser
 
-let x = System.CodeDom.Compiler.CompilerParameters([||])
+ildasm "\n" @"C:\Users\pc-2\project\Sandbox\Alpa.Compiler.Test\bin\Debug\Alpa.Compiler.Test.dll"
 
 "
 assembly [ComplexType]
