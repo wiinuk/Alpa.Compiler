@@ -134,10 +134,17 @@ type TopDef =
 type AssemblyDef = AssemblyDef of string
 
 type Version = Version2 of int * int | Version3 of int * int * int | Version4 of int * int * int * int
-type AssemblyRef = AssemblyRef of name: string * publicKeyToken: byte list option * version: Version option
+type AssemblyRef = 
+    {
+        name: string
+        version: Version option
+        culture: string option
+        publicKeyToken: byte array option
+    }
+type AssemblyImport = AssemblyImport of AssemblyRef * string option
 type IL = {
     assembly: AssemblyDef
-    imports: AssemblyRef list
+    imports: AssemblyImport list
     moduleDef: string option
     topDefs: TopDef list
 }
@@ -159,6 +166,7 @@ type FieldSign = string
 type Env = {
     amap: AliasMap
     map: TypeMap
+    imap: HashMap<string, AssemblyRef>
 }
 and ILTypeBuilder = {
     env: Env

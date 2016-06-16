@@ -229,9 +229,9 @@ module Result =
         | Ok x -> Ok <| mapping x
         | Error x -> Error x
 
-let lex = Alpa.IL.Parser.lex >> Result.map (Array.map Source.value)
+let lex = Alpa.IL.Lexer.lex >> Result.map (Array.map Source.value)
 
-let ops = opKeyword()
+let ops = Alpa.IL.Lexer.opKeyword()
 let findOp name = Array.find (fst >> (=) name) ops |> snd
 
 let rec tryPick (|Pick|_|) e =

@@ -1,5 +1,5 @@
 ﻿assembly [ComplexType]
-import [System.Numerics]
+import [System.Numerics] version = 4,0,0,0 culture = neutral public_key_token = B"b77a5c561934e089"
 this module ComplexType.dll
 
 alias integer = [System.Numerics]System.Numerics.BigInteger

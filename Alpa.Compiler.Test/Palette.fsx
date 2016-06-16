@@ -8,7 +8,16 @@ open System
 open Xunit
 open Alpa.IL.Parser
 
-ildasm "\n" @"C:\Users\pc-2\project\Sandbox\Alpa.Compiler.Test\bin\Debug\Alpa.Compiler.Test.dll"
+"""
+assembly [Test1]
+import [System.Numerics] version = 4,0,0,0 public_key_token = B"B77A5C561934E089"
+"""
+|> toILSource "\n" "Test1"
+
+parseWith version "version = 4,0,0,0"
+parseWith publicKeyToken "public_key_token = B\"B77A5C561934E089\""
+parseWith assemblyRef "import [System.Numerics] version = 4,0,0,0 public_key_token = B\"B77A5C561934E089\""
+
 
 "
 assembly [ComplexType]

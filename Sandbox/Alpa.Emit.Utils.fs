@@ -47,10 +47,48 @@ module TypeVarMap =
     let emptyVarMap = []
     let typeParams xs = Seq.map fst xs
     let typeVarMapToSolvedType xs = Seq.map TypeParam xs
+    
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module AssemblyRef =
+    open System.Reflection
+    open System.Globalization
+
+    let toAssemblyName
+        {
+            name = name
+            publicKeyToken = publicKeyToken
+            culture = culture
+            version = version
+        }
+        =
+        let n = AssemblyName name
+        match publicKeyToken with
+        | None -> ()
+        | Some k -> n.SetPublicKeyToken(Array.copy k)
+
+        match version with
+        | None -> ()
+        | Some v ->
+            let v =
+                match v with
+                | Version2(v1, v2) -> Version(v1,v2)
+                | Version3(v1, v2, v3) -> Version(v1,v2,v3)
+                | Version4(v1, v2, v3, v4) -> Version(v1,v2,v3,v4)
+
+            n.Version <- v
+
+        match culture with
+        | None -> ()
+        | Some x ->
+            n.CultureInfo <-
+                if x = "neutral"
+                then CultureInfo.InvariantCulture
+                else CultureInfo.GetCultureInfo x
+        n
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module FullName =
-    let toTypeName = function
+    let toTypeName { imap = imap } = function
     //    | FullName(name, [], [], None) -> name
     //    | FullName(name, [], [], Some asmName) -> name + ", " + asmName
     //    | FullName(name, [], [ns1], None) -> ns1 + "." + name
@@ -61,7 +99,19 @@ module FullName =
             for nester in nestersRev do b.Insert(0, '+').Insert(0, nester) |> ignore
             for ns in nsRev do b.Insert(0, d).Insert(0, ns) |> ignore
             match asmName with
-            | Some n -> b.Append(", ").Append(n) |> ignore
+            | Some n ->
+                b.Append(", ") |> ignore
+                match n with
+                | "mscorlib" -> b.Append(n)
+                | _ ->
+                    let mutable r = Unchecked.defaultof<_>
+                    if HashMap.tryGet imap n &r then
+                        let n = AssemblyRef.toAssemblyName r
+                        b.Append n
+                    else
+                        b.Append n
+
+                |> ignore
             | None -> ()
 
             b.ToString()
@@ -148,12 +198,12 @@ module TypeSpec =
         eval t
 
     let solveTypeVarMap xs v = List.find (fst >> (=) v) xs |> snd
-    let rec solveTypeCore ({ senv = { map = map; amap = amap }; sVarMap = varMap; sMVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
+    let rec solveTypeCore ({ senv = { map = map; amap = amap } as senv; sVarMap = varMap; sMVarMap = mVarMap; typeArgs = typeArgs; mTypeArgs = mTypeArgs } as env) t =
         let getTypeDef map name =
             let mutable ti = Unchecked.defaultof<_>
             if tryGet map name &ti then Builder ti
-            else RuntimeType <| Type.GetType(FullName.toTypeName name, true)
-        
+            else RuntimeType <| Type.GetType(FullName.toTypeName senv name, true)
+
         let rec aux t =
             let mutable ad = Unchecked.defaultof<_>
             match t with

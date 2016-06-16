@@ -99,7 +99,7 @@ module DefineTypes =
                 type'(t.DefineNestedType, getName, nestedAccess access, addTypeName fullName name, env, td)
 
     let topDef (m: ModuleBuilder) ({ amap = amap } as env) = function
-        | TopTypeDef(access, name, td) -> type'(m.DefineType, toTypeName, typeAccess access, ofTypeName name, env, td)
+        | TopTypeDef(access, name, td) -> type'(m.DefineType, toTypeName env, typeAccess access, ofTypeName name, env, td)
         | TopAliasDef(name, ad) -> add amap name ad
 
 let rec checkTypeParam aTypeParams = function
@@ -374,24 +374,11 @@ let emitMethods { map = map } =
 
 let createTypes { map = map } = for { t = t } in values map do t.CreateType() |> ignore
 
-let loadAssemblyRef (d: System.AppDomain) (AssemblyRef(name, publicKeyToken, version)) =
-    let n = System.Reflection.AssemblyName name
-    match publicKeyToken with
-    | None -> ()
-    | Some k -> n.SetPublicKeyToken <| List.toArray k
-
-    match version with
-    | None -> ()
-    | Some v ->
-        let v =
-            match v with
-            | Version2(v1, v2) -> System.Version(v1,v2)
-            | Version3(v1, v2, v3) -> System.Version(v1,v2,v3)
-            | Version4(v1, v2, v3, v4) -> System.Version(v1,v2,v3,v4)
-
-        n.Version <- v
-
-    d.Load n |> ignore
+let loadAssemblyRef (d: System.AppDomain) r =
+    let n = AssemblyRef.toAssemblyName r
+    if d.GetAssemblies() |> Seq.forall(fun a -> a.GetName() <> n) then
+        d.Load n |> ignore
+    else ()
 
 let emitIL fileName (d: System.AppDomain)
     {
@@ -406,9 +393,17 @@ let emitIL fileName (d: System.AppDomain)
     let a = d.DefineDynamicAssembly(n, AssemblyBuilderAccess.Save)
     let m = a.DefineDynamicModule(moduleName, fileName+"")
     
-    for i in imports do loadAssemblyRef d i
+    let imap = HashMap()
+    for AssemblyImport({ name = name } as i, alias) in imports do
+        add imap name i
+        Option.iter (fun a -> add imap a i) alias
+        loadAssemblyRef d i
 
-    let env = { map = HashMap(); amap = AliasMap() }
+    let env = {
+        map = HashMap()
+        amap = AliasMap()
+        imap = imap
+    }
     for d in ds do DefineTypes.topDef m env d
     let env = { env with amap = checkAlias env }
     defineTypeParams env
