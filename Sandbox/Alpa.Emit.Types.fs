@@ -233,4 +233,6 @@ type EmitErrors =
 
     | ConstructorIsNotOverride of MethodRef
 
+    | DuplicatedAssemblyAlias of string
+
 exception EmitException of EmitErrors

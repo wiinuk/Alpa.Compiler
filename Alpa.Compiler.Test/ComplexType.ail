@@ -12,7 +12,7 @@ type Num`1(`a) =
     abstract ofInteger(integer): `a
     abstract '_+_'(`a, `a) : `a
 ;
-type 'Num`1(int32)' / Num`1(int32) =
+type 'Num`1(int32)' + Num`1(int32) =
     override ofInteger(integer): int32 =
         ldarg.1
         call integer::op_Explicit(integer): int32

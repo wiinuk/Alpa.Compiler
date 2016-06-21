@@ -8,7 +8,7 @@ open Alpa.IO
 open Alpa.IL.Lexer
 open Alpa.IL.Lexer.SourceParsers
 
-type OT = System.Reflection.Emit.OperandType
+type internal OT = System.Reflection.Emit.OperandType
 
 [<AutoOpen>]
 module Specials =
@@ -38,9 +38,67 @@ module Specials =
     let import = d Import
     let this = d This
     let ``module`` = d Module
-    let ``as`` = d As
 
 module K = Specials
+
+/// ($p, ...) | ()
+let tupleLike0 p = between ``(`` ``)`` (sepBy p ``,``)
+/// ($p, ...)
+let tupleLike1 p = between ``(`` ``)`` (sepBy1 p ``,``)
+/// ($p, ...) | $p | ()
+let tupleOrValueLike0 p = tupleLike0 p <|> (p |>> List.singleton)
+/// ($p, ...) | $p
+let tupleOrValueLike1 p = tupleLike1 p <|> (p |>> fun x -> x, [])
+
+type PropKind = 
+    /// p
+    | Once
+    /// p?
+    | Optional
+    /// p*
+    | Many0
+    /// p+
+    | Many1
+
+let isValidProp n = function
+    | Once -> n = 1
+    | Optional -> 0 <= n && n <= 1
+    | Many0 -> true
+    | Many1 -> 0 < n
+
+let props reduce value props =
+    let p = List.mapi (fun i (_,_,p) -> p |>> fun x -> x, i) props |> choice
+    let map = Seq.map (fun (k,_,_) -> k, ref 0) props |> Seq.toArray
+    let rec aux s map xs =
+        let i' = xs.Index
+        let u' = xs.UserState
+
+        let r = p xs
+        if r.Status = Primitives.Ok && i' < xs.Index then
+            let r = r.Value
+            let x, i = Source.value r
+            let k, n = Array.get map i
+            if isValidProp (!n+1) k then
+                incr n
+                let s = reduce (Source.value s) x
+                aux (Source.VirtualSource s) map xs
+            else
+                let _,e,_ = List.item i props
+                Reply((), e)
+        else
+            xs.Index <- i'
+            xs.UserState <- u'
+            let f (k, n) = isValidProp !n k |> not
+            let i = Array.tryFindIndex f map
+            match i with
+            | None -> Reply s
+            | Some i -> let _,e,_ = List.item i props in Reply((), e)
+
+    fun xs ->
+        let r = aux (Source.VirtualSource value) map xs
+        for _,n in map do n := 0
+        r
+
 
 let tInt32 = satisfyMapE (function LInt32 _ -> true | _ -> false) (function LInt32(_,x) -> x | _ -> 0) RequireInt32Token
 
@@ -73,18 +131,9 @@ let typeKind =
         RequireTypeKind
 let typeKindOpt = opt typeKind
 
-/// ($p, ...) | ()
-let tupleLike0 p = between ``(`` ``)`` (sepBy p ``,``)
-/// ($p, ...)
-let tupleLike1 p = between ``(`` ``)`` (sepBy1 p ``,``)
-/// ($p, ...) | $p | ()
-let tupleOrValueLike0 p = tupleLike0 p <|> (p |>> List.singleton)
-/// ($p, ...) | $p
-let tupleOrValueLike1 p = tupleLike1 p <|> (p |>> fun x -> x, [])
-
 let namespaceRev = manyRev (name .>> ``.``)
 let pathRev = pipe2 namespaceRev name <| fun ns n -> n, ns
-let nestersRev = manyRev (name .>> ``+``)
+let nestersRev = manyRev (name .>> ``/``)
 let assemblyName = between ``[`` ``]`` pathRev |>> fun (x,xs) ->  List.rev (x::xs) |> String.concat "."
 
 /// ex: [mscorlib]System.Diagnostics.Stopwatch+InternalTimers+LowTimer
@@ -173,9 +222,6 @@ do
         sepBy1 tupleType ``->`` |>> foldArrow
 
     typeSpecRef := arrowType
-
-let extends = ``:`` >>. typeSpec
-let implements = ``/`` >>. typeSpec
 
 #nowarn "9"
 module Unsafe =
@@ -479,21 +525,31 @@ let memberAccess =
 let memberAccessOpt = opt memberAccess
 
 let methodKind = K.``open`` >>% MethodKind.Open
-let methodKindOpt = opt methodKind
 
 let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
 let methodAttrs =
-    optDefault (None, None) (
-        pipe2 memberAccess methodKindOpt (fun m k -> Some m, k) <|>
-        pipe2 methodKind memberAccessOpt (fun k m -> m, Some k)
-    )
+    props
+        (fun (k, a) -> function Choice1Of2 k -> Some k, a | Choice2Of2 a -> k, Some a)
+        (None, None)
+        [
+            Optional, DuplicatedAccess, memberAccess |>> Choice1Of2
+            Optional, DuplicatedMethodKind, methodKind |>> Choice2Of2
+        ]
 
 let methodInfo = pipe3 methodHead ``d=`` methodBody <| fun h _ b -> MethodInfo(h, b)
 
 let baseMethods = tupleLike0 methodRef
 let baseMethodsOpt = optDefault [] baseMethods
 
-let fieldTail make = pipe4 (optBool K.``mutable``) memberAccessOpt name typing make
+let fieldAttrs =
+    props
+        (fun (m, a) -> function Choice1Of2 m -> m, a | Choice2Of2 a -> m, Some a)
+        (false, None)
+        [
+            Optional, DuplicatedFieldKind, K.``mutable`` |>> (let x = Choice1Of2 true in fun _ -> x)
+            Optional, DuplicatedAccess, memberAccess |>> Choice2Of2
+        ]
+let fieldTail make = pipe3 fieldAttrs name typing make
 let literalTail make = 
     let defaultType = function
         | Literal.Null -> objectT
@@ -521,19 +577,22 @@ let literalTail make =
 
 let staticMemberTail =
     choice [
-        fieldTail <| fun m a n t -> Field(a, true, m, n, t)
+        fieldTail <| fun (m, a) n t -> Field(a, true, m, n, t)
         literalTail <| fun a n b c -> MemberDef.Literal(a, n, b, c)
         pipe2 memberAccessOpt methodInfo <| fun a m -> StaticMethodDef(a, m)
     ]
 let instanceMemberTail =
     choice [
         pipe2 methodAttrs methodInfo <| fun (a, k) m -> MethodDef(a, None, k, m)
-        fieldTail <| fun m a n t -> Field(a, false, m, n, t)
+        fieldTail <| fun (m, a) n t -> Field(a, false, m, n, t)
     ]
 let typeMember, typeMemberRef = createParserForwardedToRef()
 let members = many typeMember
 
-/// ex: type open MyLib.List`1 (T) <: [mscorlib]System.Object = ...
+let extends = ``:`` >>. typeSpec
+let implements = ``+`` >>. typeSpec
+
+/// ex: type open MyLib.List`1 (T) : object + [mscorlib]System.IEquatable`1(T) = ...
 let typeDefTail(access, kind, name, enterType, leaveType, make) =
     let make a k (n, ps, p) is ms =
         make a n {
@@ -649,52 +708,6 @@ let topMember =
 let path = pathRev |>> fun (x,xs) -> List.rev(x::xs) |> String.concat "."
 let assembly = pipe2 K.assembly assemblyName <| fun _ n -> AssemblyDef n
 
-type PropKind = 
-    /// p
-    | Once
-    /// p?
-    | Optional
-    /// p*
-    | Many0
-    /// p+
-    | Many1
-
-let isValidProp n = function
-    | Once -> n = 1
-    | Optional -> 0 <= n && n <= 1
-    | Many0 -> true
-    | Many1 -> 0 < n
-
-let props reduce value props =
-    let p = List.mapi (fun i (_,_,p) -> p |>> fun x -> x, i) props |> choice
-    let map = Seq.map (fun (k,_,_) -> k, 0) props |> Seq.toArray
-    let rec aux s map xs =
-        let i' = xs.Index
-        let u' = xs.UserState
-
-        let r = p xs
-        if r.Status = Primitives.Ok && i' < xs.Index then
-            let r = r.Value
-            let x, i = Source.value r
-            let k, n = Array.get map i
-            if isValidProp (n+1) k then
-                map.[i] <- k,n+1
-                let s = reduce x (Source.value s)
-                aux (Source.VirtualSource s) map xs
-            else
-                let _,e,_ = List.item i props
-                Reply((), e)
-        else
-            xs.Index <- i'
-            xs.UserState <- u'
-
-            let i = Array.tryFindIndex (fun (k,n) -> isValidProp n k |> not) map
-            match i with
-            | None -> Reply s
-            | Some i -> let _,e,_ = List.item i props in Reply((), e)
-
-    fun stream -> aux value (Array.copy map) stream
-
 let (!!) k =
     satisfyMapE
         (function Id t -> t = k | _ -> false)
@@ -707,13 +720,12 @@ let publicKeyToken = pipe3 !!"public_key_token" ``d=`` tBlob <| fun _ _ blob -> 
 let culture = pipe3 !!"culture" ``d=`` name <| fun _ _ s -> s
 
 let assemblyRefDecls =
-    let reduce p r =
-        match p with
+    let reduce r = function
         | Choice1Of3 v -> { r with version = Some v }
         | Choice2Of3 t -> { r with publicKeyToken = Some t }
         | Choice3Of3 c -> { r with culture = Some c }
 
-    let init = Source.VirtualSource { name = ""; version = None; culture = None; publicKeyToken = None }
+    let init = { name = ""; version = None; culture = None; publicKeyToken = None }
     props reduce init [
         Optional, DuplicateVersion, version |>> Choice1Of3
         Optional, DuplicatePublicKeyToken, publicKeyToken |>> Choice2Of3
@@ -726,7 +738,7 @@ let assemblyImport =
         K.import
         assemblyName
         assemblyRefDecls
-        (opt (K.``as`` >>. assemblyName))
+        (opt (!!"as" >>. assemblyName))
         (fun _ n r a -> AssemblyImport({ r with name = n }, a))
 
 let moduleDef = pipe3 K.this K.``module`` path <| fun _ _ n -> n

@@ -57,7 +57,6 @@ type TokenKind =
     | Module
     | Assembly
     | Import
-    | As
 
     | Public
     | Internal
@@ -157,6 +156,10 @@ type Errors =
     | DuplicatePublicKeyToken
     | DuplicateCulture
 
+    | DuplicatedAccess
+    | DuplicatedMethodKind
+    | DuplicatedFieldKind
+
 let delimiter() = [|
     "(", LParen
     ")", RParen
@@ -195,7 +198,6 @@ let keyword() = [|
     "module", Module
     "assembly", Assembly
     "import", Import
-    "as", As
 
     "public", Public
     "internal", Internal

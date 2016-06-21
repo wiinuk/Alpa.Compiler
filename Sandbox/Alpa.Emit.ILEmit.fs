@@ -376,9 +376,7 @@ let createTypes { map = map } = for { t = t } in values map do t.CreateType() |>
 
 let loadAssemblyRef (d: System.AppDomain) r =
     let n = AssemblyRef.toAssemblyName r
-    if d.GetAssemblies() |> Seq.forall(fun a -> a.GetName() <> n) then
-        d.Load n |> ignore
-    else ()
+    d.Load n |> ignore
 
 let emitIL fileName (d: System.AppDomain)
     {
@@ -396,7 +394,10 @@ let emitIL fileName (d: System.AppDomain)
     let imap = HashMap()
     for AssemblyImport({ name = name } as i, alias) in imports do
         add imap name i
-        Option.iter (fun a -> add imap a i) alias
+        Option.iter (fun a ->
+            if contines imap a then raiseEmitExn <| DuplicatedAssemblyAlias a
+            else add imap a i
+        ) alias
         loadAssemblyRef d i
 
     let env = {

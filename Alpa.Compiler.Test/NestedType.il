@@ -14,42 +14,41 @@
 .stackreserve 0x00100000
 .subsystem 0x0003
 .corflags 0x00000001
-.class public abstract auto ansi sealed beforefieldinit NestedType
+.class public abstract auto ansi sealed beforefieldinit NestedType.Types.T1
        extends [mscorlib]System.Object
 {
-  .class auto ansi sealed nested public beforefieldinit Type1
+  .class abstract auto ansi sealed nested public beforefieldinit T2
          extends [mscorlib]System.Object
   {
-    .method public static void  Method1() cil managed
+    .class abstract auto ansi sealed nested public beforefieldinit T3
+           extends [mscorlib]System.Object
     {
-      .maxstack  0
-      IL_0000:  ret
+      .method public static void  M3() cil managed
+      {
+        .maxstack  0
+        IL_0000:  ret
+      }
     }
-    .method public hidebysig specialname rtspecialname 
-            instance void  .ctor() cil managed
-    {
-      .maxstack  2
-      IL_0000:  ldarg.0
-      IL_0001:  call       instance void [mscorlib]System.Object::.ctor()
-      IL_0006:  ret
-    }
-  }
-  .class abstract auto ansi sealed nested public beforefieldinit Module1
-         extends [mscorlib]System.Object
-  {
-    .method public static void  Fun1() cil managed
+    .method public static void  M2() cil managed
     {
       .maxstack  0
       IL_0000:  ret
     }
   }
-  .class abstract auto ansi sealed nested public beforefieldinit Module2
-         extends [mscorlib]System.Object
+  .method public static void  M1() cil managed
   {
-    .method public static void  Fun1() cil managed
-    {
-      .maxstack  0
-      IL_0000:  ret
-    }
+    .maxstack  0
+    IL_0000:  ret
+  }
+}
+.class public abstract auto ansi sealed beforefieldinit NestedType.Program
+       extends [mscorlib]System.Object
+{
+  .method public static void  main() cil managed
+  {
+    .maxstack  0
+    IL_0000:  call       void NestedType.Types.T1::M1()
+    IL_0005:  call       void NestedType.Types.T1/T2::M2()
+    IL_000a:  call       void NestedType.Types.T1/T2/T3::M3()
   }
 }

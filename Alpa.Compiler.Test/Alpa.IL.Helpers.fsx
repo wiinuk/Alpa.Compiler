@@ -206,15 +206,16 @@ let ildasm nl path =
     |> Seq.filter (not << System.String.IsNullOrWhiteSpace)
     |> String.concat nl
 
-let emitDll nl name il =
-    let moduleName = Path.ChangeExtension(name, ".dll")
-    let path = Path.Combine(System.Environment.CurrentDirectory, moduleName)
+let emitDll nl ({ assembly = AssemblyDef assemblyName; moduleDef = moduleName } as il) =
+    let name = match moduleName with None -> assemblyName | Some n -> n
+    let fileName = Path.ChangeExtension(name, ".dll")
+    let path = Path.Combine(System.Environment.CurrentDirectory, fileName)
 
     if File.Exists path then File.Delete path else ()
 
     let d = AppDomain.CurrentDomain
-    let a = emitIL moduleName d il
-    a.Save moduleName
+    let a = emitIL fileName d il
+    a.Save fileName
     let source = ildasm nl path
     File.Delete path
     source
@@ -275,7 +276,7 @@ let assertEq (act: 'a) (exp: 'a) =
 let assertTokenEq xs = for t, ts in xs do assertEq (lex t) (Ok ts)
 let assertLexEq xs = for t, e in xs do assertEq (lex t) e
 
-let toILSource nl name source =
+let toILSource nl source =
     match parse source with
     | Error(e, token) ->
         let clamp x = min (source.Length-1) (max 0 x)
@@ -306,21 +307,15 @@ let toILSource nl name source =
 
         failwithf "%A, %A\n%s" e token src
 
-    | Ok il ->
-        let name =
-            match name with 
-            | null
-            | "" -> sprintf "anon%s" <| System.DateTime.Now.ToString "yyyyMMdd_hhmmss_FFFFFFF"
-            | n -> n
-        emitDll nl name il
+    | Ok il -> emitDll nl il
 
 let (==?) act exp = assertEq act exp
 
 let assertOfFile name =
     let source = File.ReadAllText(name + ".ail")
     let expected = File.ReadAllText(name + ".il")
-    toILSource "\r\n" name source ==? expected
+    toILSource "\r\n" source ==? expected
 
 let assertThrowEmitException exp source =
-    let e = Assert.Throws<EmitException>(fun _ -> toILSource "\n" "error" source |> ignore)
+    let e = Assert.Throws<EmitException>(fun _ -> toILSource "\n" source |> ignore)
     assertEq e.Data0 exp

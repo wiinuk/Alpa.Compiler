@@ -32,6 +32,15 @@ let AliasError3() =
     |> assertThrowEmitException (RecursiveAlias "error3A")
 
 [<Fact>]
+let AssemblyImportError() =
+    "
+    assembly [AssemblyImportError]
+    import [System.Numerics] version=4,0,0,0 culture=neutral public_key_token=B\"B7 7A 5C 56 19 34 E0 89\" as [asm]
+    import [FSharp.Core] version=4,4,0,0 culture=neutral public_key_token=B\"b03f5f7f11d50a3a\" as [asm]
+    "
+    |> assertThrowEmitException (DuplicatedAssemblyAlias "asm")
+
+[<Fact>]
 let SimpleType() = assertOfFile <| MB.GetCurrentMethod().Name
 [<Fact>]
 let OverloadOps() = assertOfFile <| MB.GetCurrentMethod().Name
@@ -51,3 +60,5 @@ let Inherits() = assertOfFile <| MB.GetCurrentMethod().Name
 let AliasSuccess() = assertOfFile <| MB.GetCurrentMethod().Name
 [<Fact>]
 let ComplexType() = assertOfFile <| MB.GetCurrentMethod().Name
+[<Fact>]
+let AssemblyImport() = assertOfFile <| MB.GetCurrentMethod().Name

@@ -11,9 +11,9 @@ type abstract Inherits.GrandParent =
 ;
 type open Inherits.Parent
     : Inherits.GrandParent
-    / Inherits.IHasM
-    / Inherits.IHasO
-    / Inherits.IHasP
+    + Inherits.IHasM
+    + Inherits.IHasO
+    + Inherits.IHasP
     =
     override open M(): string = ldstr "Parent.M()" ret
     override N(): string = ldstr "Parent.N()" ret
@@ -22,7 +22,7 @@ type open Inherits.Parent
 ;
 type open Inherits.Child
     : Inherits.Parent
-    / Inherits.IHasM
+    + Inherits.IHasM
     =
     override M(): string = ldstr "Child.M()" ret
     member open N(): string = ldstr "Child.N()" ret
