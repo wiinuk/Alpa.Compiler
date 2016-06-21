@@ -88,7 +88,9 @@
     <None Include="PolyTyping2.fsx" />
     <None Include="PolyTyping2.Test.fsx" />
     <None Include="PolyTyping2.Emit.fsx" />
-    <None Include="PolyTyping2.Emit2.fsx" />
+    <None Include="PolyTyping2.ILEmit.fsx" />
+    <None Include="PolyTyping2.Typing.fsx" />
+    <None Include="asmparse.grammar" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

@@ -38,6 +38,9 @@ module Specials =
     let import = d Import
     let this = d This
     let ``module`` = d Module
+    let ``as`` = d As
+    let ``let`` = d Let
+    let pinned = d Pinned
 
 module K = Specials
 
@@ -526,7 +529,10 @@ let memberAccessOpt = opt memberAccess
 
 let methodKind = K.``open`` >>% MethodKind.Open
 
-let methodBody = many1 instr |>> fun (x,xs) -> MethodBody(x::xs)
+let local = pipe2 (optBool K.pinned) typeSpec <| fun p s -> Local(p, s)
+/// ex: let default (int32, pinned void*)
+let locals = pipe3 K.``let`` tupleOrValueLike0 local
+let methodBody = pipe2 locals (many1 instr) <| fun ls (x,xs) -> MethodBody(ls, x::xs)
 let methodAttrs =
     props
         (fun (k, a) -> function Choice1Of2 k -> Some k, a | Choice2Of2 a -> k, Some a)
