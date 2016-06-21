@@ -49,7 +49,8 @@ type Override = Override of baseMethods: MethodRef list
 
 type Parameter = Parameter of name: string option * TypeSpec
 type Local = Local of isPinned: bool * TypeSpec
-type MethodBody = MethodBody of Local list * Instr list
+type Locals = Locals of initLocals: bool * locals: Local list
+type MethodBody = MethodBody of Locals option * Instr list
 type MethodHead = MethodHead of name: MethodName * typeParams: TypeVar list * pars: Parameter list * ret: Parameter
 type MethodInfo = MethodInfo of MethodHead * MethodBody
 type StaticMethodInfo = MethodInfo

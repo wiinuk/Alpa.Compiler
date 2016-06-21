@@ -272,11 +272,13 @@ module MethodHead =
 module MethodBody =
     let defaultConstructerBody baseType =
         let bc = MethodRef(baseType, ".ctor", Some(MethodTypeAnnotation([],[], None)))
-        MethodBody [
-            Instr("", O.Ldarg_0, OpNone)
-            Instr("", O.Call, OpMethod bc)
-            Instr("", O.Ret, OpNone)
-        ]
+        MethodBody(None,
+            [
+                Instr("", O.Ldarg_0, OpNone)
+                Instr("", O.Call, OpMethod bc)
+                Instr("", O.Ret, OpNone)
+            ]
+        )
 
     let defaultConstructerBodyOfObject = defaultConstructerBody objectT
 
@@ -361,6 +363,14 @@ module ILMethodBuilder =
         match mb with
         | Choice1Of2 m -> m.GetILGenerator()
         | Choice2Of2 m -> m.GetILGenerator()
+
+    let setInitLocals { mb = mb } x =
+        match mb with
+        | Choice2Of2 m -> m.InitLocals <- x
+        | Choice1Of2 m ->
+            if not m.IsGenericMethod || m.IsGenericMethodDefinition then
+                m.InitLocals <- x
+            else ()
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module ILTypeBuilder =

@@ -38,11 +38,16 @@ module Specials =
     let import = d Import
     let this = d This
     let ``module`` = d Module
-    let ``as`` = d As
     let ``let`` = d Let
     let pinned = d Pinned
 
 module K = Specials
+
+let (!!) k =
+    satisfyMapE
+        (function Id t -> t = k | _ -> false)
+        (function Id t -> t | _ -> "")
+        <| RequireContexualKeyword k
 
 /// ($p, ...) | ()
 let tupleLike0 p = between ``(`` ``)`` (sepBy p ``,``)
@@ -530,9 +535,9 @@ let memberAccessOpt = opt memberAccess
 let methodKind = K.``open`` >>% MethodKind.Open
 
 let local = pipe2 (optBool K.pinned) typeSpec <| fun p s -> Local(p, s)
-/// ex: let default (int32, pinned void*)
-let locals = pipe3 K.``let`` tupleOrValueLike0 local
-let methodBody = pipe2 locals (many1 instr) <| fun ls (x,xs) -> MethodBody(ls, x::xs)
+/// ex: let noinit (int32, pinned void*)
+let locals = pipe3 K.``let`` (optBool !!"noinit") (tupleOrValueLike0 local) <| fun _ noInit locals -> Locals(not noInit, locals)
+let methodBody = pipe2 (opt locals) (many1 instr) <| fun ls (x,xs) -> MethodBody(ls, x::xs)
 let methodAttrs =
     props
         (fun (k, a) -> function Choice1Of2 k -> Some k, a | Choice2Of2 a -> k, Some a)
@@ -713,12 +718,6 @@ let topMember =
 
 let path = pathRev |>> fun (x,xs) -> List.rev(x::xs) |> String.concat "."
 let assembly = pipe2 K.assembly assemblyName <| fun _ n -> AssemblyDef n
-
-let (!!) k =
-    satisfyMapE
-        (function Id t -> t = k | _ -> false)
-        (function Id t -> t | _ -> "")
-        <| RequireContexualKeyword k
 
 let version = pipe5(!!"version", ``d=`` >>. tInt32 .>> ``,``, tInt32 .>> ``,``, tInt32 .>> ``,``, tInt32, (fun _ v1 v2 v3 v4 -> Version4(v1, v2, v3, v4)))
 let publicKeyToken = pipe3 !!"public_key_token" ``d=`` tBlob <| fun _ _ blob -> blob

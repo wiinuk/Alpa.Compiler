@@ -178,7 +178,14 @@ let defineMethodHead ({ t = t } as ti) attr callconv (MethodHead(name,typeParams
 
 let defineMethodInfo dt a c ov (MethodInfo(head, body)) =
     let mb, mVarMap = defineMethodHead dt a c head
-    addMethod dt head { h = head; b = Some body; mb = Choice1Of2 mb; mVarMap = mVarMap; ov = ov; dt = dt }
+    addMethod dt head {
+        h = head
+        b = Some body
+        mb = Choice1Of2 mb
+        mVarMap = mVarMap
+        ov = ov
+        dt = dt
+    }
 
 let defineMethodDef dt a ov k m =
     let kindAttr = function
@@ -273,25 +280,27 @@ let defineStaticMethod dt a (MethodInfo(head, body)) =
         dt = dt
     }
 
+let defineAbstract dt a head =
+    let a = methodAccess a ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
+    let mb, mVarMap = defineMethodHead dt a CC.HasThis head
+    addMethod dt head {
+        mb = Choice1Of2 mb
+        mVarMap = mVarMap
+        h = head
+        b = None
+        ov = None
+        dt = dt
+    }
+
 let defineMember dt = function
     | NestedType _ -> ()
-    | Field(access, isStatic, isMutable, n, ft) -> defineField dt (access, isStatic, isMutable, n, ft)
+    | Field(a, isStatic, isMutable, n, ft) -> defineField dt (a, isStatic, isMutable, n, ft)
     | Literal(a, n, t, l) -> defineLiteral dt a n t l
     | MethodDef(a, ov, k, m) -> defineMethodDef dt a ov k m
     | StaticMethodDef(a, m) -> defineStaticMethod dt a m
     | CtorDef(a, pars, body) -> defineCtor dt a pars body
     | CCtorDef body -> defineCCtor dt body
-    | AbstractDef(a, head) ->
-        let a = methodAccess a ||| M.HideBySig ||| M.NewSlot ||| M.Abstract ||| M.Virtual
-        let mb, mVarMap = defineMethodHead dt a CC.HasThis head
-        addMethod dt head {
-            mb = Choice1Of2 mb
-            mVarMap = mVarMap
-            h = head
-            b = None
-            ov = None
-            dt = dt
-        }
+    | AbstractDef(a, head) -> defineAbstract dt a head
 
 let defineTypeDef ({ t = t; mmap = mmap; d = { parent = p }} as ti) { parent = parent; impls = impls; members = members } =
     let env = envOfTypeBuilder emptyVarMap ti
@@ -358,15 +367,19 @@ let defineOverride env { dt = { t = t }; ov = ov; mb = mb } =
 
             | _ -> raise <| System.NotImplementedException()
 
-let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body } as m) =
+let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body; mb = mb } as m) =
     match body with
     | None -> ()
     | Some(MethodBody(locals, instrs)) ->
         let env = envOfTypeBuilder mVarMap dt
         defineOverride env m
         let g = getILGenerator m
-        for Local(t, isPinned) in locals do
-            g.DeclareLocal(solveType env t, isPinned) |> ignore
+
+        Option.iter (fun (Locals(initLocals,locals)) ->
+            setInitLocals m initLocals
+            for Local(isPinned, t) in locals do
+                g.DeclareLocal(solveType env t, isPinned) |> ignore
+        ) locals
 
         for instr in instrs do emitInstr g env instr
 

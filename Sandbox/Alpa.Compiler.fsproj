@@ -88,8 +88,8 @@
     <None Include="PolyTyping2.fsx" />
     <None Include="PolyTyping2.Test.fsx" />
     <None Include="PolyTyping2.Emit.fsx" />
-    <None Include="PolyTyping2.ILEmit.fsx" />
     <None Include="PolyTyping2.Typing.fsx" />
+    <None Include="PolyTyping2.ILEmit.fsx" />
     <None Include="asmparse.grammar" />
   </ItemGroup>
   <ItemGroup>

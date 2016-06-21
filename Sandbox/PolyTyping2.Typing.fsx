@@ -1,32 +1,33 @@
 ﻿module PolyTyping2.Typing
 #load "PolyTyping2.fsx"
 open PolyTyping2
+open System.Collections.Generic
 
-type Pat =
+type TPat =
     | AnyPat
     | VarPat of Var * TypeSign
-    | ConPat of Var * Pat * Pat list
+    | ConPat of Var * TPat * TPat list
     | LitPat of TypeScheme
-    | AsPat of Pat * Var * TypeSign
+    | AsPat of TPat * Var * TypeSign
 
 [<NoComparison>]
-type Exp =
+type TExp =
     | Lit of Lit
     | Var of Var * TypeSign
-    | Lam of Var * TypeSign * Exp
-    | App of Exp * Exp
-    | Ext of Var * TypeScheme * Exp
-    | Let of Var * TypeScheme * Exp * Exp
-    | LetRec of assoc<Var, TypeScheme * Exp> * Exp
+    | Lam of Var * TypeSign * TExp
+    | App of TExp * TExp
+    | Ext of Var * TypeScheme * TExp
+    | Let of Var * TypeScheme * TExp * TExp
+    | LetRec of assoc<Var, TypeScheme * TExp> * TExp
     
-    | Mat of Exp * (Pat * Exp) * (Pat * Exp) list
+    | Mat of TExp * (TPat * TExp) * (TPat * TExp) list
 
-    | TypeDef of name: Symbol * TypeDef * Exp
-    | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Var, TypeScheme * Exp> * cont: Exp
+    | TypeDef of name: Symbol * TypeDef * TExp
+    | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Var, TypeScheme * TExp> * cont: TExp
 
 type P = PolyTyping2.Pat
 type E = PolyTyping2.Exp
-let raiseE e = raise <| TypingException e
+let (!?) e = raise <| TypingException e
 
 let typingPat e env p =
     let rec aux locals = function 
@@ -34,18 +35,18 @@ let typingPat e env p =
         | P.ConPat(v, ps) as p ->
             match Env.tryFindP v env, ps with
             | None, [] ->
-                if List.exists (fst >> (=) v) locals then raiseE <| DuplicatedPatternVariable(e, v)
+                if List.exists (fst >> (=) v) locals then !?DuplicatedPatternVariable(e, v)
                 else
                     let t = TypeSign([], newVarT())
                     VarPat(v, t), t, (v, t)::locals
 
-            | None, _::_ -> raiseE <| PatternNotFound(e, env, v)
-            | Some(TypeScheme(_, TypeSign(_, LamNT _)) as t), [] -> raiseE <| InvalidConstructorPattern(e, t, p)
+            | None, _::_ -> !?PatternNotFound(e, env, v)
+            | Some(TypeScheme(_, TypeSign(_, LamNT _)) as t), [] -> !?InvalidConstructorPattern(e, t, p)
             | Some t, [] -> let t = free t in VarPat(v, t), t, locals
             | Some t, _::_ ->
                 match free t with
                 | TypeSign(tc, LamNT(dt, ft, fts)) ->
-                    if List.length ps <> List.length fts + 1 then raiseE <|InvalidConstructorPattern(e, t, p)
+                    if List.length ps <> List.length fts + 1 then !?InvalidConstructorPattern(e, t, p)
                     let fts = ft::fts
                     let ps, tc, locals =
                         List.fold2 (fun (ps, tc, locals) p ft ->
@@ -58,12 +59,12 @@ let typingPat e env p =
                     let p, ps = List.head ps, List.tail ps
                     ConPat(v, p, ps), TypeSign(tc, dt), locals
 
-                | _ -> raiseE <| InvalidConstructorPattern(e, t, p)
+                | _ -> !?InvalidConstructorPattern(e, t, p)
 
         | P.LitPat t -> LitPat t, free t, locals
         | P.AsPat(p, v) ->
             let p, pt, locals = aux locals p
-            if List.exists (fst >> (=) v) locals then raiseE <| DuplicatedPatternVariable(e, v)
+            if List.exists (fst >> (=) v) locals then !?DuplicatedPatternVariable(e, v)
             else
                 AsPat(p, v, pt), pt, (v, pt)::locals
 
@@ -95,7 +96,7 @@ and typingLet env var body cont e =
 
 and typingRec env varBodies cont e =
     match tryGetDuplicated (fun l r -> fst l = fst r) varBodies with
-    | Some(v, _) -> raiseE <| DuplicatedLetRecDecrale(e, varBodies, v)
+    | Some(v, _) -> !?DuplicatedLetRecDecrale(e, varBodies, v)
     | _ ->
         let vbts = List.map (fun vb -> vb, newVarT()) varBodies
         let env = List.fold (fun env ((v,_),vt) -> Env.add v (bind (TypeSign([], vt))) env) env vbts
@@ -157,8 +158,8 @@ and typingDataDef env name (td, vs, cs) cont e =
         env
 
     match List.exists (isPureTypeArg >> not) vs, tryGetDuplicated (==) vs with
-    | true, _ -> raiseE <| InvalidTypeArgments(e, vs)
-    | _, Some v -> raiseE <| DuplicatedTypeArgment(e, vs, v)
+    | true, _ -> !?InvalidTypeArgments(e, vs)
+    | _, Some v -> !?DuplicatedTypeArgment(e, vs, v)
     | _ ->
         let t = Type(name, List.map IndefType vs)
         let env = Env.addT name td env
@@ -167,10 +168,10 @@ and typingDataDef env name (td, vs, cs) cont e =
         TypeDef(name, DataDef(vs, cs), cont), ct
 
 and typingClassDef env name (td, vs, ms) cont e =
-    if List.exists (isPureTypeArg >> not) vs then raiseE <| InvalidTypeArgments(e, vs)
+    if List.exists (isPureTypeArg >> not) vs then !?InvalidTypeArgments(e, vs)
     match tryGetDuplicated (==) vs, tryGetDuplicated (fun l r -> fst l = fst r) ms with
-    | Some v, _ -> raiseE <| DuplicatedTypeArgment(e, vs, v)
-    | _, Some(v,_) -> raiseE <| DuplicatedMethodDeclare(e, ms, v)
+    | Some v, _ -> !?DuplicatedTypeArgment(e, vs, v)
+    | _, Some(v,_) -> !?DuplicatedMethodDeclare(e, ms, v)
     | _ ->
         let env = Env.addT name td env
         
@@ -192,19 +193,24 @@ and typingTypeDef env name td cont e =
 and typingInsDef env (className, instanceTypeArgs, impls, cont) e =
     let td =
         try Env.findT className env with
-        | :? System.Collections.Generic.KeyNotFoundException ->
-            raiseE <| TypeNotFound(e, env, className)
+        | :? KeyNotFoundException -> !?TypeNotFound(e, env, className)
 
     match td with
-    | DataDef _ -> raiseE <| InvalidInstanceDeclare e
+    | DataDef _ -> !?InvalidInstanceDeclare(e)
     | ClassDef(classTypeVars, methodDefs) ->
-        if List.length instanceTypeArgs <> List.length classTypeVars then raiseE <| InvalidInstanceDeclare e
+        if List.length instanceTypeArgs <> List.length classTypeVars then !?InvalidInstanceDeclare(e)
 
         match tryGetDuplicated (fun l r -> fst l = fst r) impls with
-        | Some(v,_) -> raiseE <| DuplicatedInstanceImplement(e, v)
+        | Some(v,_) -> !?DuplicatedInstanceImplement(e, v)
         | _ ->
-            List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') impls then raiseE <| MethodNotImplemented(e, n)) methodDefs
-            List.iter (fun (n,_) -> if not <| List.exists (fun (n',_) -> n = n') methodDefs then raiseE <| MethodMismatch(e, n)) impls
+            List.iter (fun (n,_) ->
+                if not <| List.exists (fun (n',_) -> n = n') impls
+                then !?MethodNotImplemented(e, n)
+            ) methodDefs
+            List.iter (fun (n,_) ->
+                if not <| List.exists (fun (n',_) -> n = n') methodDefs
+                then !?MethodMismatch(e, n)
+            ) impls
             
             let typeVars = List.map (!) classTypeVars
             List.iter2 (fun classTypeVar instanceTypeArg -> classTypeVar := SomeType instanceTypeArg) classTypeVars instanceTypeArgs
@@ -240,8 +246,7 @@ and typingCore env = function
             let t = free <| Env.find v env
             Var(v, t), t
         with
-        | :? System.Collections.Generic.KeyNotFoundException ->
-            raiseE <| VariableNotFound(env, v)
+        | :? KeyNotFoundException -> !?VariableNotFound(env, v)
 
     | E.Lam(v, e) -> typingLam env v e
     | E.App(f, x) as e -> typingApp env f x e
