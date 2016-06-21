@@ -42,16 +42,14 @@ type Operand =
     | OpField of thisType: TypeSpec * name: string
     | OpMethod of MethodRef
 
-type Macro =
-    | BaseInit of TypeSpec list
-
 type Instr = 
     | Instr of string * OpCode * Operand
 
 type Override = Override of baseMethods: MethodRef list
 
 type Parameter = Parameter of name: string option * TypeSpec
-type MethodBody = MethodBody of Instr list
+type Local = Local of isPinned: bool * TypeSpec
+type MethodBody = MethodBody of Local list * Instr list
 type MethodHead = MethodHead of name: MethodName * typeParams: TypeVar list * pars: Parameter list * ret: Parameter
 type MethodInfo = MethodInfo of MethodHead * MethodBody
 type StaticMethodInfo = MethodInfo

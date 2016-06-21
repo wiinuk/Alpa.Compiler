@@ -297,6 +297,9 @@ namespace ConsoleApplication1
         public static int OfInteger(BigInteger i) => (int)i;
         public static void Main(string[] args)
         {
+            'c'.GetType();
+            WriteLine('c');
+            WriteLine(new BigInteger());
             new BigInteger(10);
         }
     }

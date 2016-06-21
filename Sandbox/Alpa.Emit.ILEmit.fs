@@ -17,42 +17,42 @@ open Alpa.Emit.PreDefinedTypes
 open MethodBody
 
 // (1) type name definition
-// type IOrd`1 ... = ...;;
-// type IMap`2 ... = ...;;
-// type IntMap`1 ... = ...;;
+// type IOrd`1 ... = ...;
+// type IMap`2 ... = ...;
+// type IntMap`1 ... = ...;
 // module Module =
 //     type X = ...;
-//     ...;;
+//     ...;
 //
 // (2) type param definition
-// type IOrd`1 a = ...;;
-// type IMap`2(k <: IOrd, v) = ...;;
-// type IntMap`1 v = ...;;
+// type IOrd`1(a) = ...;
+// type IMap`2(k + IOrd, v) = ...;
+// type IntMap`1(v) = ...;
 // module Module =
 //     type X = ...;
-//     ...;;
+//     ...;
 //
 // (3) member definition
-// type IOrd`1 a =
-//     abstract CompareTo a : int;;
-// type IMap`2(k <: IOrd, v) =
-//     abstract Add(k, v) : void;;
-// type IntMap`1 v <: object, IMap(int32, v) =
-//     override Add(int32, v) : void = ...;;
+// type IOrd`1(a) =
+//     abstract CompareTo a : int32;
+// type IMap`2(k + IOrd, v) =
+//     abstract Add(k, v) : void;
+// type IntMap`1(v) : object + IMap`2(int32, v) =
+//     override Add(int32, v) : void = ...;
 // module Module =
-//     type X = fun Member (a <: IOrd b, b) (a) : void = ...;
-//     fun main () : void = ...;;
+//     type X = fun Member (a + IOrd b, b) (a) : void = ...;
+//     fun main () : void = ...;
 //
 // (4) emit method body
-// type IOrd`1 a =
-//     abstract CompareTo a : int;;
-// type IMap`2(k <: IOrd, v) =
-//     abstract Add(k, v) : void;;
-// type IntMap`1 v <: object, IMap(int32, v) =
-//     override Add(int32, v) : void = ret;;
+// type IOrd`1(a) =
+//     abstract CompareTo a : int32;
+// type IMap`2(k + IOrd, v) =
+//     abstract Add(k, v) : void;
+// type IntMap`1(v) : object + IMap`2(int32, v) =
+//     override Add(int32, v) : void = ret;
 // module Module =
-//     type X = fun Member (a <: IOrd b, b) (a) : void = ret;
-//     fun main () : void = ret;;
+//     type X = fun Member (a + IOrd b, b) (a) : void = ret;
+//     fun main () : void = ret;
 
 module DefineTypes =
     let rec type'(defineType, toName, accessAttr, fullName, ({ map = map } as env), ({ kind = kind; members = members } as d)) =
@@ -361,10 +361,13 @@ let defineOverride env { dt = { t = t }; ov = ov; mb = mb } =
 let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body } as m) =
     match body with
     | None -> ()
-    | Some(MethodBody instrs) ->
+    | Some(MethodBody(locals, instrs)) ->
         let env = envOfTypeBuilder mVarMap dt
         defineOverride env m
         let g = getILGenerator m
+        for Local(t, isPinned) in locals do
+            g.DeclareLocal(solveType env t, isPinned) |> ignore
+
         for instr in instrs do emitInstr g env instr
 
 let emitMethods { map = map } =

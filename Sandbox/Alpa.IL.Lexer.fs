@@ -58,6 +58,7 @@ type TokenKind =
     | Assembly
     | Import
     | As
+    | Pinned
 
     | Public
     | Internal
@@ -196,6 +197,7 @@ let keyword() = [|
     "assembly", Assembly
     "import", Import
     "as", As
+    "pinned", Pinned
 
     "public", Public
     "internal", Internal
