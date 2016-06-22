@@ -7,7 +7,6 @@ open PolyTyping2.Typing
 open Alpa.Emit.TypeSpec
 
 type E = PolyTyping2.Typing.TExp
-type O = System.Reflection.Emit.OpCodes
 
 type CLit =
     | LitI4 of int32
@@ -38,7 +37,7 @@ type CExp =
     ///     string::Equals(string, string)();
     ///     "".Equals(string)(null)
     | Call of MethodRef * CExp list
-    
+
     /// ex: upcast "" IEquatable`1(string)
     | Upcast of CExp * Type
 
@@ -136,22 +135,29 @@ f a =
 
 let mutable ident = 0
 let fleshId() = ident <- ident + 1; ident
+let lambdaT x r = TypeSpec(FullName("Lambda`2", [], [], None), [x; r])
 let emit = function
     | E.Lit l -> emitLit l
     | E.Var(v, _) -> LVar v
-    | E.Lam(v, t, b) ->
+    | E.Lam(v, vt, b) ->
         // closure = tuple, func
         let lamType tps =
-            let name = sprintf "Lambda@%d" <| fleshId()
+            let name =
+                match tps with
+                | [] -> sprintf "ALambda@%d" (fleshId())
+                | _ -> sprintf "ALambda@%d`%d" (fleshId()) (List.length tps)
+
             TopTypeDef(
                 Some TypeAccess.Private,
                 (name, []),
                 {
                     kind = None
                     typeParams = tps
-                    parent = failwith "Not implemented yet"
-                    impls = failwith "Not implemented yet"
-                    members = failwith "Not implemented yet"
+                    parent = Some <| lambdaT vt rt
+                    impls = []
+                    members = [
+                        
+                    ]
                 }
             )
 

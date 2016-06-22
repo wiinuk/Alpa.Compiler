@@ -19,7 +19,7 @@ type TExp =
     | Ext of Var * TypeScheme * TExp
     | Let of Var * TypeScheme * TExp * TExp
     | LetRec of assoc<Var, TypeScheme * TExp> * TExp
-    
+
     | Mat of TExp * (TPat * TExp) * (TPat * TExp) list
 
     | TypeDef of name: Symbol * TypeDef * TExp
