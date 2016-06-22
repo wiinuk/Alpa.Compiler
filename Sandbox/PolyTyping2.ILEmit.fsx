@@ -69,7 +69,7 @@ type CExp =
 //    | n when int System.SByte.MinValue <= n && n <= int System.SByte.MaxValue -> Instr("", O.Ldc_I4_S, OpI1 <| int8 n)
 //    | n -> Instr("", O.Ldc_I4, OpI4 n)
 
-/// a: T in initobj &a; !a
+/// a: T in initobj &a; *a
 let emitDefault t = LetZero("a", t, Next(Initobj(Ref(LVar "a")), Deref(LVar "a")))
 
 
