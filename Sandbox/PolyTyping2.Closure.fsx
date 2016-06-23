@@ -11,6 +11,7 @@ type Type =
 type TypeScheme = Type
 
 type Symbol = Symbol of Var | ISymbol of Type
+type GlobalName = GlobalName of Symbol
 type CPat =
     | AnyPat
     | VarPat of Symbol * Type
@@ -30,11 +31,19 @@ type CExp =
     
     | Mat of CExp * (CPat * CExp) * (CPat * CExp) list
 
-    | MakeClosure of (Symbol * Type) list * CExp
+    // `a = 10; map (\x -> x + a) xs` -> `a = 10; map (new Clo(a) xs`
+    | MakeClosure of (Symbol * Type) list * cloName: GlobalName * env: CExp list * CExp
     | AppClosure of CExp * CExp
 
     | TypeDef of name: Symbol * TypeDef * CExp
-    | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Symbol, TypeScheme * CExp> * cont: CExp
+
+type Program =
+    | CloDef of
+        name: Symbol *
+        arg: Symbol *
+        argT: Type *
+        retT: Type *
+        body: CExp
 
 type E = PolyTyping2.Typing.TExp
 type P = PolyTyping2.Typing.TPat
@@ -59,7 +68,7 @@ let rec go env = function
 
     | E.Lam(v, TypeSign(vcs, t), b) ->
         // `\(n: Num a => a) : (Num b => b) -> fromInteger 0I` 
-        // => `\(n: a) (#(Num a): Num a) (#(Num b): Num b) : b ->
+        // => `\(#(Num a): Num a) (#(Num b): Num b) (n: a) : b ->
         //     ignore (n + fromInteger 0I #(Num a));
         //     fromInteger 0I #(Num b)`
         //
@@ -68,13 +77,13 @@ let rec go env = function
         let b, bcs = go env b
         let t = toType t
         let cs = unionContext vcs bcs
-        match cs with
-        | [] -> Lam(Symbol v, t, b), []
-        | [c] ->
+        let f c e =
             let c = toType c
-            Lam(Symbol v, t, Lam(ISymbol c, c, b)), cs
+            Lam(ISymbol c, c, e)
 
-        failwith "Not implemented yet"
+        let l = List.foldBack f cs <| Lam(Symbol v, t, b)
+        l, cs
+
     | E.App(_, _) -> failwith "Not implemented yet"
     | E.Ext(_, _, _) -> failwith "Not implemented yet"
     | E.Let(_, _, _, _) -> failwith "Not implemented yet"
