@@ -179,6 +179,29 @@ module TypeSpec =
     [<RequiresExplicitTypeArguments>]
     let typeOf<'a> = typeOfT typeof<'a>
 
+    type private C = System.TypeCode
+    let getTypeCode = function
+        | TypeSpec(FullName(n, [], ["System"], Some "mscorlib"), []) ->
+            match n with
+            | "Boolean" -> C.Boolean
+            | "Byte" ->  C.Byte
+            | "Char" -> C.Char
+            | "DBNull" -> C.DBNull
+            | "DateTime" -> C.DateTime
+            | "Decimal" -> C.Decimal
+            | "Double" -> C.Double
+            | "Int16" -> C.Int16
+            | "Int32" -> C.Int32
+            | "Int64" -> C.Int64
+            | "SByte" -> C.SByte
+            | "Single" -> C.Single
+            | "String" -> C.String
+            | "UInt16" -> C.UInt16
+            | "UInt32" -> C.UInt32
+            | "UInt64" -> C.UInt64
+            | _ -> C.Object
+        | _ -> C.Object
+
     let rec getReplacedType subst = function
         | TypeSpec(n, ts) -> TypeSpec(n, List.map (getReplacedType subst) ts)
         | TypeVar v as t ->

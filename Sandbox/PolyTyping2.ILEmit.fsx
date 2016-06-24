@@ -2,23 +2,33 @@
 #load "PolyTyping2.Typing.fsx"
 #r "./bin/debug/Alpa.Compiler.dll"
 open Alpa.Emit
+open Alpa.Emit.TypeSpec
+open Alpa.Emit.PreDefinedTypes
 open PolyTyping2
 open PolyTyping2.Typing
-open Alpa.Emit.TypeSpec
 
 type E = PolyTyping2.Typing.TExp
 
+type Type = TypeSpec
+type LocalName = Var
+
 type CLit =
+    | LitB of bool
+    | LitI1 of int8
+    | LitI2 of int16
     | LitI4 of int32
     | LitI8 of int64
     | LitU1 of uint8
+    | LitU2 of uint16
+    | LitU4 of uint32
     | LitU8 of uint64
     | LitC of char
+    | LitF4 of single
     | LitF8 of double
+    /// ex: null; "abc"
     | LitS of string
+    | LitNull of Type
 
-type Type = TypeSpec
-type LocalName = Var
 type CExp =
     /// ex: 10i; 'c'; "test"; null[string]
     | Lit of CLit
@@ -68,9 +78,27 @@ type CExp =
 //    | n when int System.SByte.MinValue <= n && n <= int System.SByte.MaxValue -> Instr("", O.Ldc_I4_S, OpI1 <| int8 n)
 //    | n -> Instr("", O.Ldc_I4, OpI4 n)
 
-/// a: T in initobj &a; !a
-let emitDefault t = LetZero("a", t, Next(Initobj(Ref(LVar "a")), Deref(LVar "a")))
+type C = System.TypeCode
 
+let emitDefault env t =
+    match getTypeCode t with
+    | C.Boolean -> Lit <| LitB false
+    | C.Byte -> Lit <| LitU1 0uy
+    | C.Char -> Lit <| LitC '\000'
+    | C.Double -> Lit <| LitF8 0.0
+    | C.Int16 -> Lit <| LitI2 0s
+    | C.Int32 -> Lit <| LitI4 0
+    | C.Int64 -> Lit <| LitI8 0L
+    | C.SByte -> Lit <| LitI1 0y
+    | C.Single -> Lit <| LitF4 0.0f
+    | C.String -> Lit <| LitS null
+    | C.UInt16 -> Lit <| LitU2 0us
+    | C.UInt32 -> Lit <| LitU4 0u
+    | C.UInt64 -> Lit <| LitU8 0UL
+    | _ ->
+        if (let t = solveType env t in t.IsValueType || t.IsGenericParameter)
+        then LetZero("a", t, Next(Initobj(Ref(LVar "a")), Deref(LVar "a")))
+        else Lit <| LitNull t
 
 let bigintT = typeOf<bigint>
 let rec tryPick (|Pick|_|) = function
@@ -103,8 +131,8 @@ let int64Max = bigint(System.Int64.MaxValue)
 let uint64Min = bigint(System.UInt64.MinValue)
 let uint64Max = bigint(System.UInt64.MaxValue)
 
-let emitBigint (n: bigint) = 
-    if n.IsZero then emitDefault bigintT
+let emitBigint env (n: bigint) = 
+    if n.IsZero then emitDefault env bigintT
     elif n.IsOne then Call(methodOf <@ bigint.get_One @>, [])
     elif n = bigint.MinusOne then Call(methodOf <@ bigint.get_MinusOne @>, [])
     elif inRange int32Min int32Max n then
@@ -120,9 +148,9 @@ let emitBigint (n: bigint) =
         let xs = NewArray [for x in n.ToByteArray() -> Lit(LitU1 x)]
         Newobj(methodOf <@ bigint : byte array -> _ @>, [xs])
 
-let emitLit = function
+let emitLit env = function
     | CharLit n -> Lit(LitC n)
-    | IntegerLit n -> emitBigint n
+    | IntegerLit n -> emitBigint env n
     | IntLit n -> Lit(LitI4 n)
     | FloatLit n -> Lit(LitF8 n)
     | StringLit s -> Lit(LitS s)

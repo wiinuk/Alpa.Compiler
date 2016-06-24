@@ -295,6 +295,14 @@ namespace ConsoleApplication1
     {
         public static bool RetBool() => true;
         public static int OfInteger(BigInteger i) => (int)i;
+        public static BigInteger DefaultBigInt() => default(BigInteger);
+        public static int DefaultInt() => default(int);
+        public static string DefaultString() => default(string);
+        public static List<T> DefaultList<T>() => default(List<T>);
+        public static T DefaultClass<T>() where T : class => default(T);
+        public static T DefaultStruct<T>() where T : struct => default(T);
+        public static T Default<T>() => default(T);
+
         public static void Main(string[] args)
         {
             'c'.GetType();
