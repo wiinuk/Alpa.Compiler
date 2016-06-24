@@ -138,14 +138,22 @@ let fleshId() = ident <- ident + 1; ident
 let lambdaT x r = TypeSpec(FullName("Lambda`2", [], [], None), [x; r])
 let emit = function
     | E.Lit l -> emitLit l
+
+    // map (\x -> x + a) xs
+    // type Closure@123 : Lambda`2(int32, int32) =
+    //     let a: int32
+    //     new (int32) => base(); this::a <- $0
+    //     override Apply(int32): int32 => $0 + this::a
+    // ;
+    // map(int)().Apply[Lambda`2(Lambda`2(int32,int32),Lambda`2(List`1(int32),List`1(int32)))](new Closure@123(a)).Apply[Lambda`2(List`1(int32),List`1(int32))](xs)
     | E.Var(v, _) -> LVar v
     | E.Lam(v, vt, b) ->
         // closure = tuple, func
         let lamType tps =
             let name =
                 match tps with
-                | [] -> sprintf "ALambda@%d" (fleshId())
-                | _ -> sprintf "ALambda@%d`%d" (fleshId()) (List.length tps)
+                | [] -> sprintf "Closure@%d" (fleshId())
+                | _ -> sprintf "Closure@%d`%d" (fleshId()) (List.length tps)
 
             TopTypeDef(
                 Some TypeAccess.Private,
