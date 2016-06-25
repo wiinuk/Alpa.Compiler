@@ -6,6 +6,8 @@ open Alpa.Emit.TypeSpec
 open Alpa.Emit.PreDefinedTypes
 open PolyTyping2
 open PolyTyping2.Typing
+open System.Reflection.Emit
+open System
 
 type E = PolyTyping2.Typing.TExp
 
@@ -29,7 +31,7 @@ type CLit =
     | LitS of string
     | LitNull of Type
 
-open System.Reflection.Emit
+
 let opMap = Map.empty
 
 OpCodes.Calli
@@ -122,6 +124,68 @@ type CExp =
     | Initobj of CExp
     /// ex: newobj string('a', 10i)
     | Newobj of MethodRef * CExp list
+
+type O = System.Reflection.Emit.OpCodes
+
+let macroLdcI4 = function
+    | -1 -> Instr("", O.Ldc_I4_M1, OpNone)
+    | 0 -> Instr("", O.Ldc_I4_0, OpNone)
+    | 1 -> Instr("", O.Ldc_I4_1, OpNone)
+    | 2 -> Instr("", O.Ldc_I4_2, OpNone)
+    | 3 -> Instr("", O.Ldc_I4_3, OpNone)
+    | 4 -> Instr("", O.Ldc_I4_4, OpNone)
+    | 5 -> Instr("", O.Ldc_I4_5, OpNone)
+    | 6 -> Instr("", O.Ldc_I4_6, OpNone)
+    | 7 -> Instr("", O.Ldc_I4_7, OpNone)
+    | 8 -> Instr("", O.Ldc_I4_8, OpNone)
+    | n when int32 SByte.MinValue <= n && n <= int32 SByte.MaxValue ->
+        Instr("", O.Ldc_I4_S, OpI1(int8 n))
+    | n -> Instr("", O.Ldc_I4, OpI4 n)
+
+let emitLit = function
+    | LitB x ->
+        if x then Instr("", O.Ldc_I4_1, OpNone), boolT
+        else Instr("", O.Ldc_I4_0, OpNone), boolT
+
+    | LitI1 x -> macroLdcI4(int32 x), int8T
+    | LitI2 x -> macroLdcI4(int32 x), int16T
+    | LitI4 x -> macroLdcI4 x, int32T
+    | LitI8 x -> Instr("", O.Ldc_I8, OpI8 x), int64T
+
+    | LitU1 x -> macroLdcI4(int32 x), uint8T
+    | LitU2 x -> macroLdcI4(int32 x), uint16T
+    | LitU4 x -> macroLdcI4(int32 x), uint32T
+    | LitU8 x -> Instr("", O.Ldc_I8, OpI8(int64 x)), uint64T
+    | LitC x -> macroLdcI4(int32 x), charT
+    | LitF4 x -> Instr("", O.Ldc_R4, OpF4 x), float32T
+    | LitF8 x -> Instr("", O.Ldc_R8, OpF8 x), float64T
+    | LitS null -> Instr("", O.Ldnull, OpNone), stringT
+    | LitS x -> Instr("", O.Ldstr, OpString x), stringT
+    | LitNull t -> Instr("", O.Ldnull, OpNone), t
+
+type Env = {
+    locals: Map<string, int * Type>
+}
+let go env rs = function
+    | Lit x -> emitLit x
+    | LVar v ->
+        let n, t = Map.find v env.locals
+        let i =
+            match n with
+            | 0 -> Instr("", O.Ldloc_0, OpNone)
+        i, t
+
+    | LetZero(_, _, _) -> failwith "Not implemented yet"
+    | Let(_, _, _, _) -> failwith "Not implemented yet"
+    | Next(_, _) -> failwith "Not implemented yet"
+    | VCall(_, _, _) -> failwith "Not implemented yet"
+    | Call(_, _) -> failwith "Not implemented yet"
+    | Upcast(_, _) -> failwith "Not implemented yet"
+    | NewArray(_) -> failwith "Not implemented yet"
+    | Ref(_) -> failwith "Not implemented yet"
+    | Deref(_) -> failwith "Not implemented yet"
+    | Initobj(_) -> failwith "Not implemented yet"
+    | Newobj(_, _) -> failwith "Not implemented yet"
 
 //let emitI4 = function
 //    | -1 -> Instr("", O.Ldc_I4_M1, OpNone)
