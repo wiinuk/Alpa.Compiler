@@ -28,15 +28,12 @@ type MEnv = {
     MethodTypeArgs: Type array
 }
 let envOfMethodBase (m: MethodBase) =
+    let t = m.DeclaringType
     {
         Module = m.Module
-        BaseModule = m.DeclaringType.BaseType.Module
-        TypeArgs =
-            let t = m.DeclaringType
-            if t.IsGenericType then t.GetGenericArguments() else Type.EmptyTypes
-
-        MethodTypeArgs =
-            if m.IsGenericMethod then m.GetGenericArguments() else Type.EmptyTypes
+        BaseModule = t.BaseType.Module
+        TypeArgs = if t.IsGenericType then t.GetGenericArguments() else null
+        MethodTypeArgs = if m.IsGenericMethod then m.GetGenericArguments() else null
     }
 
 let opMap =
@@ -74,7 +71,7 @@ type Operand =
 
 let readOperand env s = function
     | O.InlineBrTarget -> OpBr <| readI4 s + s.index
-    | O.InlineField -> OpField <| env.Module.ResolveField(readI4 s)
+    | O.InlineField -> OpField <| env.Module.ResolveField(readI4 s, env.TypeArgs, env.MethodTypeArgs)
     | O.InlineI -> OpI4 <| readI4 s
     | O.InlineI8 -> OpI8 <| readI8 s
     | O.InlineMethod ->
@@ -129,11 +126,12 @@ let rec printType (x: Type) =
                 printType t
         printf ")"
 
-let printMethod (x: MethodBase) =
-    printType x.DeclaringType
-    printf "::("
-    if x.IsGenericMethod then
-        match x.GetGenericArguments() |> Array.toList with
+let printMethod (m: MethodBase) =
+    printType m.DeclaringType
+    printf "::"
+    printf "%s(" m.Name
+    if m.IsGenericMethod then
+        match m.GetGenericArguments() |> Array.toList with
         | [] -> ()
         | t::ts ->
             printType t
@@ -144,7 +142,7 @@ let printMethod (x: MethodBase) =
         printf ")("
     else ()
 
-    match x.GetParameters() |> Array.toList with
+    match m.GetParameters() |> Array.toList with
     | [] -> ()
     | p::ps ->
         printType p.ParameterType
@@ -154,7 +152,7 @@ let printMethod (x: MethodBase) =
     printf ") : "
 
     let ret =
-        match x with
+        match m with
         | :? MethodInfo as x -> x.ReturnType
         | _ -> typeof<Void>
     printType ret
@@ -169,7 +167,11 @@ let printString x =
 
     printf "\""
 
-let printField (x: FieldInfo) = printType x.DeclaringType; printf "::%s" x.Name
+let printField (x: FieldInfo) =
+    printType x.DeclaringType
+    printf "::%s : " x.Name
+    printType x.FieldType
+
 let printOperand = function
     | OpNone -> ()
     | OpI1 x -> printf "%dy" x
@@ -193,7 +195,6 @@ let printOperand = function
         printf ")"
 
     | OpString x -> printString x
-
     | OpField x -> printField x
     | OpMethod x -> printMethod x
     | OpMember x ->
@@ -213,12 +214,50 @@ let printInstr (Instr(offset, op, operand)) =
     printf "@IL%04d %s " offset op.Name
     printOperand operand
 
+let (@) l r = Array.append l r
+
+let x =
+    let t = typeof<ResizeArray<int>>
+    let typeArgs = t.GetGenericArguments()
+    t.Module.ResolveField(0x0A0005E0, typeArgs, [||])
+
+// ldarg.0
+"\x02"B @
+// ldfld 
+"\x7B"B @
+// 0x0A0005E0
+"\xE0\x05\x00\x0A"B @
+"\x02\x7B\xDF\x05\x00\x0A\x8E\x69\x33\x0E\x02\x02\x7B\xE0\x05\x00\x0A\x17\x58\x28\xE5\x05\x00\x0A\x02\x7B\xDF\x05\x00\x0A\x02\x02\x7B\xE0\x05\x00\x0A\x0A\x06\x17\x58\x7D\xE0\x05\x00\x0A\x06\x03\xA4\xCB\x00\x00\x1B\x02\x02\x7B\xE2\x05\x00\x0A\x17\x58\x7D\xE2\x05\x00\x0A\x2A"B
+
+printfn "%08X" 167773664
+System.BitConverter.ToInt32("\xE0\x05\x00\x0A"B, 0)
+opMap.[0x7Bs]
 
 let m = typeof<ResizeArray<int>>.GetMethod("Add")
-(envOfMethodBase m).
-let instrs = read m
+let b = m.GetMethodBody()
+let bs = b.GetILAsByteArray()
 
-for i in instrs do
+let bs' =
+    [|2uy; 123uy; 224uy; 5uy; 0uy; 10uy; 2uy; 123uy; 223uy; 5uy; 0uy; 10uy;
+        142uy; 105uy; 51uy; 14uy; 2uy; 2uy; 123uy; 224uy; 5uy; 0uy; 10uy; 23uy;
+        88uy; 40uy; 229uy; 5uy; 0uy; 10uy; 2uy; 123uy; 223uy; 5uy; 0uy; 10uy; 2uy;
+        2uy; 123uy; 224uy; 5uy; 0uy; 10uy; 10uy; 6uy; 23uy; 88uy; 125uy; 224uy;
+        5uy; 0uy; 10uy; 6uy; 3uy; 164uy; 203uy; 0uy; 0uy; 27uy; 2uy; 2uy; 123uy;
+        226uy; 5uy; 0uy; 10uy; 23uy; 88uy; 125uy; 226uy; 5uy; 0uy; 10uy; 42uy|]
+    // "\x02\x7B\xE0\x05\x00\x0A\x02\x7B\xDF\x05\x00\x0A\x8E\x69\x33\x0E\x02\x02\x7B\xE0\x05\x00\x0A\x17\x58\x28\xE5\x05\x00\x0A\x02\x7B\xDF\x05\x00\x0A\x02\x02\x7B\xE0\x05\x00\x0A\x0A\x06\x17\x58\x7D\xE0\x05\x00\x0A\x06\x03\xA4\xCB\x00\x00\x1B\x02\x02\x7B\xE2\x05\x00\x0A\x17\x58\x7D\xE2\x05\x00\x0A\x2A"B
+
+let showByteArray xs =
+    Seq.map (sprintf "\\x%02X") xs
+    |> String.concat ""
+    |> sprintf "\"%s\"B"
+
+fsi.AddPrinter showByteArray
+
+"\x10"
+showByteArray "\005\123\224\005\000\010"B
+envOfMethodBase(m)
+
+for i in read m do
     printInstr i
     printfn ""
 

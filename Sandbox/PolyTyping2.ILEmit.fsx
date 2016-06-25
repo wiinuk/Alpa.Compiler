@@ -29,6 +29,65 @@ type CLit =
     | LitS of string
     | LitNull of Type
 
+open System.Reflection.Emit
+let opMap = Map.empty
+
+OpCodes.Calli
+OpCodes.Call
+OpCodes.Callvirt
+OpCodes.Ret
+OpCodes.Newobj
+Seq.filter (fun (KeyValue(k,v: OpCode)) -> v.StackBehaviourPop = StackBehaviour.Varpop || v.StackBehaviourPush = StackBehaviour.Varpush) opMap
+|> Seq.toArray
+
+StackBehaviour.Pop0
+StackBehaviour.Pop1
+StackBehaviour.Pop1_pop1
+StackBehaviour.Popi
+StackBehaviour.Popi_pop1
+StackBehaviour.Popi_popi
+StackBehaviour.Popi_popi8
+StackBehaviour.Popi_popi_popi
+StackBehaviour.Popi_popr4
+StackBehaviour.Popi_popr8
+StackBehaviour.Popref
+StackBehaviour.Popref_pop1
+StackBehaviour.Popref_popi
+StackBehaviour.Popref_popi_pop1
+StackBehaviour.Popref_popi_popi
+StackBehaviour.Popref_popi_popi8
+StackBehaviour.Popref_popi_popr4
+StackBehaviour.Popref_popi_popr8
+StackBehaviour.Popref_popi_popref
+StackBehaviour.Varpop
+
+StackBehaviour.Push0
+StackBehaviour.Push1
+StackBehaviour.Push1_push1
+StackBehaviour.Pushi
+StackBehaviour.Pushi8
+StackBehaviour.Pushr4
+StackBehaviour.Pushr8
+StackBehaviour.Pushref
+StackBehaviour.Varpush
+
+// OpCodeType.Annotation
+OpCodeType.Macro
+OpCodeType.Nternal
+OpCodeType.Objmodel
+OpCodeType.Prefix
+OpCodeType.Primitive
+
+FlowControl.Branch
+FlowControl.Break
+FlowControl.Call
+FlowControl.Cond_Branch
+FlowControl.Meta
+FlowControl.Next
+// FlowControl.Phi
+FlowControl.Return
+FlowControl.Throw
+
 type CExp =
     /// ex: 10i; 'c'; "test"; null[string]
     | Lit of CLit
