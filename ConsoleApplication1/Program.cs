@@ -302,12 +302,19 @@ namespace ConsoleApplication1
         public static T DefaultClass<T>() where T : class => default(T);
         public static T DefaultStruct<T>() where T : struct => default(T);
         public static T Default<T>() => default(T);
-
+        
         public static void Main(string[] args)
         {
             'c'.GetType();
             WriteLine('c');
             WriteLine(new BigInteger());
+            WriteLine(true);
+            WriteLine(false);
+            var x = (sbyte)3;
+            WriteLine((object)x);
+            WriteLine(123u);
+            WriteLine((string)null);
+            WriteLine("");
             new BigInteger(10);
         }
     }
