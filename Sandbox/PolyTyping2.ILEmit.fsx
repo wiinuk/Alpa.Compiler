@@ -90,6 +90,9 @@ FlowControl.Next
 FlowControl.Return
 FlowControl.Throw
 
+OperandType.ShortInlineVar
+OperandType.InlineVar
+
 type CExp =
     /// ex: 10i; 'c'; "test"; null[string]
     | Lit of CLit
@@ -97,17 +100,17 @@ type CExp =
     | LVar of LocalName
     /// ex: a: string in x
     | LetZero of LocalName * Type * CExp
-    /// ex: a: string <- "" in x
-    | Let of LocalName * Type option * CExp * CExp
+    /// ex: a <- "" in x
+    | Let of LocalName * CExp * CExp
     /// ex: a; b
     | Next of CExp * CExp
 
-    /// ex: x.[object::ToString]()
+    /// ex: 'a'.[object::ToString]()
     | VCall of CExp * MethodRef * CExp list
     /// ex: object::ReferenceEquals(x, y);
     ///     string::Equals(string, string)();
     ///     "".Equals(string)(null)
-    | Call of MethodRef * CExp list
+    | ICall of CExp * Choice<string, MethodRef> * CExp list
 
     /// ex: upcast "" IEquatable`1(string)
     | Upcast of CExp * Type
@@ -127,6 +130,7 @@ type CExp =
 
 type O = System.Reflection.Emit.OpCodes
 
+let inRange l h x = l <= x && x <= h
 let macroLdcI4 = function
     | -1 -> Instr("", O.Ldc_I4_M1, OpNone)
     | 0 -> Instr("", O.Ldc_I4_0, OpNone)
@@ -138,9 +142,27 @@ let macroLdcI4 = function
     | 6 -> Instr("", O.Ldc_I4_6, OpNone)
     | 7 -> Instr("", O.Ldc_I4_7, OpNone)
     | 8 -> Instr("", O.Ldc_I4_8, OpNone)
-    | n when int32 SByte.MinValue <= n && n <= int32 SByte.MaxValue ->
+    | n when inRange (int32 SByte.MinValue) (int32 SByte.MaxValue) n ->
         Instr("", O.Ldc_I4_S, OpI1(int8 n))
     | n -> Instr("", O.Ldc_I4, OpI4 n)
+
+let macroLdloc = function
+    | 0s -> Instr("", O.Ldloc_0, OpNone)
+    | 1s -> Instr("", O.Ldloc_1, OpNone)
+    | 2s -> Instr("", O.Ldloc_2, OpNone)
+    | 3s -> Instr("", O.Ldloc_3, OpNone)
+    | n when inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n ->
+        Instr("", O.Ldloc_S, OpI1(int8 n))
+    | n -> Instr("", O.Ldloc, OpI2 n)
+
+let macroStloc = function
+    | 0s -> Instr("", O.Stloc_0, OpNone)
+    | 1s -> Instr("", O.Stloc_1, OpNone)
+    | 2s -> Instr("", O.Stloc_2, OpNone)
+    | 3s -> Instr("", O.Stloc_3, OpNone)
+    | n when inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n ->
+        Instr("", O.Stloc_S, OpI1(int8 n))
+    | n -> Instr("", O.Stloc, OpI2 n)
 
 let emitLit = function
     | LitB x ->
@@ -163,25 +185,99 @@ let emitLit = function
     | LitS x -> Instr("", O.Ldstr, OpString x), stringT
     | LitNull t -> Instr("", O.Ldnull, OpNone), t
 
-type Env = {
-    locals: Map<string, int * Type>
-}
-let go env rs = function
-    | Lit x -> emitLit x
-    | LVar v ->
-        let n, t = Map.find v env.locals
-        let i =
-            match n with
-            | 0 -> Instr("", O.Ldloc_0, OpNone)
-        i, t
+type LocalInfo = { i: int16; t: Type; using: bool }
+let LocalInfo(i, t, u) = { i = i; t = t; using = u }
 
-    | LetZero(_, _, _) -> failwith "Not implemented yet"
-    | Let(_, _, _, _) -> failwith "Not implemented yet"
-    | Next(_, _) -> failwith "Not implemented yet"
-    | VCall(_, _, _) -> failwith "Not implemented yet"
-    | Call(_, _) -> failwith "Not implemented yet"
-    | Upcast(_, _) -> failwith "Not implemented yet"
-    | NewArray(_) -> failwith "Not implemented yet"
+let rec appendRev ls rs =
+    match ls with
+    | [] -> rs
+    | l::ls -> appendRev ls (l::rs)
+
+type Env = {
+    locals: Map<string, LocalInfo>
+    menv: SolveEnv
+}
+let updateLocals ({ locals = locals } as env) (ls: ResizeArray<_>) v vt =
+    let l = 
+        let i = ls.FindIndex(fun { t = t; using = using } -> not using && t = vt)
+        if 0 <= i then
+            let l = LocalInfo(int16 i, vt, true)
+            ls.[i] <- l
+            l
+        else
+            let l = LocalInfo(int16 locals.Count, vt, true)
+            ls.Add l
+            l
+
+    l, { env with locals = Map.add v l locals }
+
+let rec go env ls (rs: ResizeArray<_>) = function
+    | Lit x -> let i, t = emitLit x in rs.Add i; t
+    | LVar v ->
+        let { i = i; t = t } = Map.find v env.locals
+        rs.Add <| macroLdloc i
+        t
+
+    | LetZero(v, vt, e) ->
+        let { i = i } as l, env = updateLocals env ls v vt
+        let t = go env ls rs e
+        ls.[int32 i] <- { l with using = false }
+        t
+
+    | Let(v, init, e) ->
+        let vt = go env ls rs init
+        let { i = i } as l, env = updateLocals env ls v vt
+        rs.Add <| macroStloc i
+        let t = go env ls rs e
+        ls.[int32 i] <- { l with using = false }
+        t
+
+    | Next(l, r) ->
+        let t = go env ls rs l
+        if t <> voidT then rs.Add <| Instr("", O.Pop, OpNone)
+        go env ls rs r
+
+    | VCall(this, m, args) ->
+        go env ls rs this |> ignore
+        for arg in args do go env ls rs arg |> ignore
+        rs.Add <| Instr("", O.Callvirt, OpMethod m)
+        match m with
+        | MethodRef(_, _, Some(MethodTypeAnnotation(returnType=Some r))) -> r
+        | _ ->
+            match Solve.getMethodBase env.menv m with
+            | :? System.Reflection.MethodInfo as m ->
+                // TODO: typeparam
+                typeOfT m.ReturnType
+
+            | _ -> failwithf ""
+
+    | ICall(this, m, args) ->
+        let thisT = go env ls rs this
+        let argsT = [for arg in args -> go env ls rs arg]
+
+        let m =
+            match m with
+            | Choice2Of2 m -> m
+            | Choice1Of2 name -> MethodRef(thisT, name, Some(MethodTypeAnnotation([], argsT, None)))
+
+        rs.Add <| Instr("", O.Call, OpMethod m)
+
+        match m with
+        | MethodRef(_, _, Some(MethodTypeAnnotation(returnType=Some r))) -> r
+        | _ ->
+            match Solve.getMethodBase env.menv m with
+            | :? System.Reflection.MethodInfo as m ->
+                // TODO: typeparam
+                typeOfT m.ReturnType
+
+            | _ -> failwithf ""
+
+    | Upcast(x, t) ->
+        go env ls rs x |> ignore
+        t
+
+    | NewArray xs ->
+
     | Ref(_) -> failwith "Not implemented yet"
     | Deref(_) -> failwith "Not implemented yet"
     | Initobj(_) -> failwith "Not implemented yet"

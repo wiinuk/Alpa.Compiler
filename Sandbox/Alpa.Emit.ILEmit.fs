@@ -367,7 +367,7 @@ let defineOverride env { dt = { t = t }; ov = ov; mb = mb } =
 
             | _ -> raise <| System.NotImplementedException()
 
-let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body; mb = mb } as m) =
+let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body } as m) =
     match body with
     | None -> ()
     | Some(MethodBody(locals, instrs)) ->

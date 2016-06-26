@@ -302,7 +302,9 @@ namespace ConsoleApplication1
         public static T DefaultClass<T>() where T : class => default(T);
         public static T DefaultStruct<T>() where T : struct => default(T);
         public static T Default<T>() => default(T);
-        
+
+        public static string Show<T>(T x) => x.ToString();
+
         public static void Main(string[] args)
         {
             'c'.GetType();
@@ -315,6 +317,7 @@ namespace ConsoleApplication1
             WriteLine(123u);
             WriteLine((string)null);
             WriteLine("");
+            WriteLine(true.ToString());
             new BigInteger(10);
         }
     }
