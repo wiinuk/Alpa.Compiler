@@ -1,32 +1,45 @@
-﻿module Alpa.IL.Emit.Test
+﻿open System.Reflection
+open System.Reflection.Emit
 
-#load "Alpa.IL.Lexer.Test.fsx"
+type Stream = {
+    mutable index : int
+    items: byte array
+}
+let makeStream xs = {
+    index = 0
+    items = Seq.toArray xs
+}
+let canRead s = s.index < s.items.Length
+let postIncr s =
+    let x = s.index
+    s.index <- s.index + 1
+    x
+let readU1 s = s.items.[postIncr s]
 
-open Alpa.IL.Helpers
-open Alpa.Emit
-open System
-open Xunit
-open Alpa.IL.Parser
+let makeMEnv (m: MethodBase) = m
 
-"""
-assembly [AssemblyImport]
-import [System.Numerics] version=4,0,0,0 culture=neutral public_key_token=B"B7 7A 5C 56 19 34 E0 89" as [numerics]
-import [FSharp.Core] version=4,4,0,0 culture=neutral public_key_token=B"b03f5f7f11d50a3a" as [fs]
+let opMap =
+    typeof<OpCodes>.GetFields()
+    |> Seq.map (fun f -> f.GetValue null)
+    |> Seq.choose (function :? OpCode as x -> Some x | _ -> None)
+    |> Seq.map (fun x -> x.Value, x)
+    |> Map.ofSeq
 
-module AssemblyImport.Program =
-    let Main([fs]Microsoft.FSharp.Core.Unit, [numerics]System.Numerics.BigInteger): void = ret
-;
-"""
-|> toILSource "\n"
+let readCode s =
+    match readU1 s with
+    | 0xFEuy ->
+        readU1 s
 
+    | v -> opMap.[int16 v]
 
-"""
-assembly [AssemblyImportError]
-import [System.Numerics] version=4,0,0,0 culture=neutral public_key_token=B"B7 7A 5C 56 19 34 E0 89" as [asm]
-import [FSharp.Core] version=4,4,0,0 culture=neutral public_key_token=B"b03f5f7f11d50a3a" as [asm]
-"""
-|> toILSource "\n"
+let readInstr env s =
+    let c = readCode s
+    readU1 read s
 
-"FSharp.Core, Version=4.4.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
+let readIL env s = seq { while canRead s do yield readInstr env s }
 
-typeof<unit>.AssemblyQualifiedName
+let parseIL m =
+    let env = makeMEnv m
+    let b = m.GetMethodBody()
+    let xs = b.GetILAsByteArray()
+    readIL env (makeStream xs)
