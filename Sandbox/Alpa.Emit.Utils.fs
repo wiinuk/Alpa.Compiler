@@ -134,11 +134,15 @@ module SolveEnv =
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module SolvedType =
-    let getUnderlyingSystemType = function
+    let rec getUnderlyingSystemType = function
         | RuntimeType t
         | InstantiationType(closeType = t) -> t
         | TypeParam(_, t) -> upcast t
         | Builder { t = t } -> upcast t
+
+        | PointerType t -> getUnderlyingSystemType(t).MakePointerType()
+        | ByrefType t -> getUnderlyingSystemType(t).MakeByRefType()
+        | ArrayType t -> getUnderlyingSystemType(t).MakeArrayType()
 
     let rec typeEq l r =
         match l, r with
@@ -230,6 +234,10 @@ module TypeSpec =
         let rec aux t =
             let mutable ad = Unchecked.defaultof<_>
             match t with
+            | Pointer t -> PointerType (aux t)
+            | Byref t -> ByrefType (aux t)
+            | Array t -> ArrayType (aux t)
+
             | TypeSpec(FullName(name, [], [], None), ts) when tryGet amap name &ad ->
                 solveTypeCore env (applyType name ad ts)
                 

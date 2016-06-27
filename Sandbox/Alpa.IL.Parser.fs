@@ -29,6 +29,7 @@ module Specials =
     let ``->`` = d HyphenGreaterThan
     let ``*`` = d Multiply
     let ``/`` = d Slash
+    let ``d&`` = d Ampasend
 
     let ``mutable`` = d Mutable
     let ``new`` = d New
@@ -194,6 +195,15 @@ do
             GraveAccent, ((name |>> TypeVar) <|> (tInt32 |>> TypeArgRef))
             DGraveAccent, ((name |>> MethodTypeVar) <|> (tInt32 |>> MethodTypeArgRef))
         ] <|> namedType
+
+    let primType =
+        let prefix =
+            choice [
+                ``*`` >>% Pointer
+                ``d&`` >>% Byref
+                ``[`` >>. ``]`` >>% Array
+            ]
+        pipe2 primType (optDefault id prefix) <| fun t f -> f t
 
     let tupleType =
         let tuple2Name = FullName("*`2", [], [], None)

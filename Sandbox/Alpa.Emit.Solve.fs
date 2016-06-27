@@ -153,9 +153,13 @@ let getMethodGeneric env parent name annot (s: Solver<_,_,_>) =
     Seq.map getUnderlyingSystemType mTypeArgs
     |> MethodBase.makeCloseMethod openMethodOfCloseType 
     
-let getMethodBase env (MethodRef(parent, name, annot)) =
+let getMethodBase env (MethodRef(parent, name, annot) as m) =
     match solveTypeCore env parent with
-    | TypeParam _ -> failwith "getMethodBase: TypeParam"
+    | TypeParam _ 
+    | PointerType _
+    | ByrefType _
+    | ArrayType _ -> failwithf "method not found { env = %A; method = %A }" env m
+
     | RuntimeType parent -> runtimeTypeSolver() |> getMethodGeneric env parent name annot
     | Builder parent -> nonGenericTypeBuilderSolver() |> getMethodGeneric env parent name annot
     | InstantiationType(closeType, Some openType, _) -> closeTypeBuilderSolver() |> getMethodGeneric env (closeType, openType) name annot
@@ -163,7 +167,11 @@ let getMethodBase env (MethodRef(parent, name, annot)) =
 
 let getField env parent name =
     match solveTypeCore env parent with
-    | TypeParam _ -> failwith "getField: TypeParam"
+    | TypeParam _
+    | PointerType _
+    | ByrefType _
+    | ArrayType _ -> failwithf "field not found { env = %A; parent = %A; name = %A }" env parent name
+
     | RuntimeType t -> t.GetField(name, B.DeclaredOnly ||| B.Static ||| B.Instance ||| B.Public ||| B.NonPublic)
     | Builder { fmap = fmap } -> upcast get fmap name
     | InstantiationType(tb, Some { fmap = fmap }, _) -> TypeBuilder.GetField(tb, get fmap name)

@@ -103,6 +103,10 @@ module DefineTypes =
         | TopAliasDef(name, ad) -> add amap name ad
 
 let rec checkTypeParam aTypeParams = function
+    | Pointer t
+    | Byref t
+    | Array t -> checkTypeParam aTypeParams t
+
     | TypeSpec(_, ts) -> for t in ts do checkTypeParam aTypeParams t
     | TypeVar v ->
         if List.contains v aTypeParams then ()
@@ -113,7 +117,7 @@ let rec checkTypeParam aTypeParams = function
 
     | MethodTypeArgRef i -> raiseEmitExn <| UnownedAliasTypeParameterRef i
     | MethodTypeVar v -> raiseEmitExn <| UnownedAliasTypeParameter v
-    
+
 let rec occur amap visitedNames = function
     | TypeSpec(FullName(n, [], [], None), ts) as t ->
         if List.contains n visitedNames then raiseEmitExn <| RecursiveAlias n

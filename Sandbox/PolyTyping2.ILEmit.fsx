@@ -116,7 +116,9 @@ type CExp =
     | Upcast of CExp * Type
 
     /// ex: [1; 2; 3]
-    | NewArray of CExp list
+    | NewArray of CExp * CExp list
+    /// ex: []: int array
+    | NewEmptyArray of Type
 
     /// ex: &a
     | Ref of CExp
@@ -163,6 +165,13 @@ let macroStloc = function
     | n when inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n ->
         Instr("", O.Stloc_S, OpI1(int8 n))
     | n -> Instr("", O.Stloc, OpI2 n)
+
+type C = System.TypeCode
+let macroStelem = function
+    | Array t ->
+        Instr("", O.Ste)
+    match getTypeCode t with
+    | C.Boolean -> Instr("", O.stele)
 
 let emitLit = function
     | LitB x ->
@@ -276,7 +285,26 @@ let rec go env ls (rs: ResizeArray<_>) = function
         go env ls rs x |> ignore
         t
 
-    | NewArray xs ->
+    | NewArray(x, xs) ->
+        let rs' = ResizeArray()
+        let t = go env ls rs' x
+        let stElem = macroStelem t
+        rs.Add <| Instr("", O.Newarr, OpType t)
+        rs.Add <| Instr("", O.Dup, OpNone)
+        rs.Add <| macroLdcI4 0
+        rs.AddRange rs'
+        rs.Add stElem
+
+        for x in xs do
+            rs.Add <| Instr("", O.Dup, OpNone)
+            rs.Add <| macroLdcI4 (i + 1)
+            let t' = go env ls rs x
+            if t <> t' then failwith "NewArray"
+            rs.Add stElem
+
+        arrayT t
+
+    | NewEmptyArray()
 
     | Ref(_) -> failwith "Not implemented yet"
     | Deref(_) -> failwith "Not implemented yet"

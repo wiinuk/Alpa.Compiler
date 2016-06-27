@@ -8,8 +8,16 @@ type FullName = FullName of name: string * nestersRev: string list * namespaceRe
 
 type TypeVar = string
 and TypeSpec =
+    /// ex: T*
+    | Pointer of TypeSpec
+    /// ex: T&
+    | Byref of TypeSpec
+    /// ex: T[]
+    | Array of TypeSpec
+
     /// ex: [mscorlib]System.Tuple(..., ...)
     | TypeSpec of pathRev: FullName * TypeSpec list
+
     /// ex: `T1
     | TypeVar of TypeVar
     /// ex: ``T1
@@ -194,6 +202,10 @@ and FieldMap = HashMap<FieldSign, FieldBuilder>
 and TypeMap = HashMap<FullName, ILTypeBuilder>
 
 type SolvedType =
+    | PointerType of element: SolvedType
+    | ByrefType of element: SolvedType
+    | ArrayType of element: SolvedType
+
     | RuntimeType of Type
     | Builder of ILTypeBuilder
     | InstantiationType of closeType: Type * openType: ILTypeBuilder option * typeParams: SolvedType list

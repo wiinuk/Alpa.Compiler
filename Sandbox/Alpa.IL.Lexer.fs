@@ -38,6 +38,8 @@ type TokenKind =
     | Multiply
     /// "/"
     | Slash
+    /// "&"
+    | Ampasend
 
     | Abstract
     | Override
@@ -178,6 +180,7 @@ let delimiter() = [|
     "->", HyphenGreaterThan
     "*", Multiply
     "/", Slash
+    "&", Ampasend
 |]
 
 let keyword() = [|

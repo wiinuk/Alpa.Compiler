@@ -99,6 +99,9 @@ let readOperand env s = function
     | _ -> failwith ""
 
 type Instr = Instr of offset: int * OpCode * Operand
+type Body = {
+    il: Instr seq
+}
 
 let readInstr env s =
     let op = opMap.[readOpValue s]
@@ -111,7 +114,9 @@ let read m =
     let env = envOfMethodBase m
     let b = m.GetMethodBody()
     let xs = b.GetILAsByteArray()
-    readIL env (makeStream xs)
+    {
+        il = readIL env (makeStream xs)
+    }
 
 let rec printType (x: Type) =
     printf "%s" x.Name
@@ -210,63 +215,45 @@ let printOperand = function
     | OpBr x -> printf "@IL%04d" x
     | OpVar x -> printf "%d" x
 
-let printInstr (Instr(offset, op, operand)) =
-    printf "@IL%04d %s " offset op.Name
+let printInstr printOffset (Instr(offset, op, operand)) =
+    if printOffset then printf "@IL%04d " offset
+    printf "%s "  op.Name
+    match operand with
+    | OpNone -> printf " "
+    | _ -> ()
     printOperand operand
 
-let (@) l r = Array.append l r
+let printBody { il = il } =
+    let il = Seq.cache il
+    let brs =
+        Seq.collect (function
+            | Instr(_,_,OpBr x) -> [|x|]
+            | Instr(_,_,OpSwitch xs) -> xs
+            | _ -> [||]
+        ) il
+        |> Seq.cache
 
-let x =
-    let t = typeof<ResizeArray<int>>
-    let typeArgs = t.GetGenericArguments()
-    t.Module.ResolveField(0x0A0005E0, typeArgs, [||])
+    for Instr(offset,_,_) as il in il do
+        printInstr (Seq.contains offset brs) il
+        printfn ""
 
-// ldarg.0
-"\x02"B @
-// ldfld 
-"\x7B"B @
-// 0x0A0005E0
-"\xE0\x05\x00\x0A"B @
-"\x02\x7B\xDF\x05\x00\x0A\x8E\x69\x33\x0E\x02\x02\x7B\xE0\x05\x00\x0A\x17\x58\x28\xE5\x05\x00\x0A\x02\x7B\xDF\x05\x00\x0A\x02\x02\x7B\xE0\x05\x00\x0A\x0A\x06\x17\x58\x7D\xE0\x05\x00\x0A\x06\x03\xA4\xCB\x00\x00\x1B\x02\x02\x7B\xE2\x05\x00\x0A\x17\x58\x7D\xE2\x05\x00\x0A\x2A"B
+open FSharp.Quotations
+let rec tryPick (|Pick|_|) = function
+    | Pick x -> Some x
+    | ExprShape.ShapeCombination(_, xs) -> List.tryPick (tryPick (|Pick|_|)) xs
+    | ExprShape.ShapeLambda(_, x) -> tryPick (|Pick|_|) x
+    | ExprShape.ShapeVar _ -> None
 
-printfn "%08X" 167773664
-System.BitConverter.ToInt32("\xE0\x05\x00\x0A"B, 0)
-opMap.[0x7Bs]
+let getMethod e =
+    tryPick (function 
+        | Patterns.Call(_,m,_) -> m :> MethodBase |> Some
+        | Patterns.NewObject(m,_) -> m :> MethodBase |> Some
+        | _ -> None
+    ) e
+    |> Option.get
 
-let m = typeof<ResizeArray<int>>.GetMethod("Add")
-let b = m.GetMethodBody()
-let bs = b.GetILAsByteArray()
+let print e = getMethod e |> read |> printBody
 
-let bs' =
-    [|2uy; 123uy; 224uy; 5uy; 0uy; 10uy; 2uy; 123uy; 223uy; 5uy; 0uy; 10uy;
-        142uy; 105uy; 51uy; 14uy; 2uy; 2uy; 123uy; 224uy; 5uy; 0uy; 10uy; 23uy;
-        88uy; 40uy; 229uy; 5uy; 0uy; 10uy; 2uy; 123uy; 223uy; 5uy; 0uy; 10uy; 2uy;
-        2uy; 123uy; 224uy; 5uy; 0uy; 10uy; 10uy; 6uy; 23uy; 88uy; 125uy; 224uy;
-        5uy; 0uy; 10uy; 6uy; 3uy; 164uy; 203uy; 0uy; 0uy; 27uy; 2uy; 2uy; 123uy;
-        226uy; 5uy; 0uy; 10uy; 23uy; 88uy; 125uy; 226uy; 5uy; 0uy; 10uy; 42uy|]
-    // "\x02\x7B\xE0\x05\x00\x0A\x02\x7B\xDF\x05\x00\x0A\x8E\x69\x33\x0E\x02\x02\x7B\xE0\x05\x00\x0A\x17\x58\x28\xE5\x05\x00\x0A\x02\x7B\xDF\x05\x00\x0A\x02\x02\x7B\xE0\x05\x00\x0A\x0A\x06\x17\x58\x7D\xE0\x05\x00\x0A\x06\x03\xA4\xCB\x00\x00\x1B\x02\x02\x7B\xE2\x05\x00\x0A\x17\x58\x7D\xE2\x05\x00\x0A\x2A"B
+let x() = [|20n; 30n|]
 
-let showByteArray xs =
-    Seq.map (sprintf "\\x%02X") xs
-    |> String.concat ""
-    |> sprintf "\"%s\"B"
-
-fsi.AddPrinter showByteArray
-
-"\x10"
-showByteArray "\005\123\224\005\000\010"B
-envOfMethodBase(m)
-
-for i in read m do
-    printInstr i
-    printfn ""
-
-let ReadInt32 s =
-    let val0 = readU1 s
-    let val1 = readU1 s
-    let val2 = readU1 s
-    let val3 = readU1 s
-    (int32 val3 <<< 24) ||| (int32 val2 <<< 16) ||| (int32 val1 <<< 8) ||| int32 val0
-
-let xs = [|0x12uy; 0x34uy; 0x56uy; 0x78uy|]
-readI4 (makeStream xs) = ReadInt32 (makeStream xs)
+print <@ x @>
