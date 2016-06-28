@@ -56,14 +56,14 @@ let ValueOk (result: 'T) = ValueResult<'T,'E> result
 let ValueError (error: 'E) = ValueResult<'T,'E> error
 
 type TokenData<'t,'r,'e> = TokenData of name: string * regex: 'r * (string -> ValueResult<'t, 'e>)
-type LexData<'t,'r,'e> = {
+type LexData<'t,'r,'kr,'e> = {
     trivia: 'r
-    keyword: TokenData<'t,'r,'e>
+    keyword: TokenData<'t,'kr,'e>
     custom: TokenData<'t,'r,'e> array
 }
 let makeTokenOrError n r f = TokenData(n, r, f)
 let makeToken n r make = TokenData(n, r, ValueOk << make)
-let makeTokenOfTable name table =
+let makeTokenOfKeywords name table =
     let concat pred sep table =
         Seq.filter (fst >> pred) table
         |> Seq.sortByDescending fst
@@ -77,15 +77,20 @@ let makeTokenOfTable name table =
     let map = Dictionary()
     for k, v in table do map.Add(k, v)
 
-    makeToken name regex <| fun t -> map.[t]
+    makeToken name (table, regex) <| fun t -> map.[t]
+
+let makeTokenOfTable name table =
+    let (TokenData(n, (_,r), f)) = makeTokenOfKeywords name table
+    TokenData(n, r, f)
     
+let regex p = Regex(p, RegexOptions.Compiled ||| RegexOptions.CultureInvariant ||| RegexOptions.ExplicitCapture )
+let compileToken (TokenData(n, p, f)) = TokenData(n, regex p, f)
+
 let compile { trivia = trivia; keyword = keyword; custom = custom } =
-    let r p = Regex(p, RegexOptions.Compiled ||| RegexOptions.CultureInvariant ||| RegexOptions.ExplicitCapture )
-    let customR (TokenData(n, p, f)) = TokenData(n, r p, f)
     {
-        trivia = r trivia
-        keyword = customR keyword
-        custom = Array.map customR custom
+        trivia = regex trivia
+        keyword = keyword
+        custom = Array.map compileToken custom
     }
 
 let lex { trivia = trivia; keyword = keyword; custom = custom } source =
@@ -97,6 +102,20 @@ let lex { trivia = trivia; keyword = keyword; custom = custom } source =
     let rs = ResizeArray()
     let mutable errorPosition = -1
     let mutable error = None
+
+    let compileKeyword (TokenData(kn,(ps,_),_)) =
+        let minKeywordLength, maxKeywordLength =
+            match ps with
+            | [||] -> 0, 0
+            | _ ->
+                let ls = Seq.map (fst >> String.length) ps |> Seq.cache
+                Seq.min ls, Seq.max ls
+
+        let keyword = makeTokenOfTable kn ps |> compileToken
+
+        keyword, minKeywordLength, maxKeywordLength
+
+    let keyword, minKeywordLength, maxKeywordLength = compileKeyword keyword
 
     let scanC (TokenData(_, r: Regex, f)) source i =
         let m = r.Match(source, i)
@@ -122,10 +141,13 @@ let lex { trivia = trivia; keyword = keyword; custom = custom } source =
             match scanC customs.[customI] source i with
             | -1 -> scanToken i (customI + 1) customs
             | i' ->
-                match scanC keyword source i with
-                | -1 -> i'
-                | i'' when i' <= i'' -> rs.RemoveAt(rs.Count-2); i''
-                | _ -> rs.RemoveAt(rs.Count-1); i'
+                let tokenLength = i' - i
+                if minKeywordLength <= tokenLength && tokenLength <= maxKeywordLength then
+                    match scanC keyword source i with
+                    | -1 -> i'
+                    | i'' when i' <= i'' -> rs.RemoveAt(rs.Count-2); i''
+                    | _ -> rs.RemoveAt(rs.Count-1); i'
+                else i'
 
     let rec scan i =
         let i = skipTrivias i

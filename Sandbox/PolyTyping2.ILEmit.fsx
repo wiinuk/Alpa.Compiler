@@ -167,11 +167,6 @@ let macroStloc = function
     | n -> Instr("", O.Stloc, OpI2 n)
 
 type C = System.TypeCode
-let macroStelem = function
-    | Array t ->
-        Instr("", O.Ste)
-    match getTypeCode t with
-    | C.Boolean -> Instr("", O.stele)
 
 let emitLit = function
     | LitB x ->
@@ -288,11 +283,12 @@ let rec go env ls (rs: ResizeArray<_>) = function
     | NewArray(x, xs) ->
         let rs' = ResizeArray()
         let t = go env ls rs' x
-        let stElem = macroStelem t
+        rs.Add <| macroLdcI4 (List.length xs + 1)
         rs.Add <| Instr("", O.Newarr, OpType t)
         rs.Add <| Instr("", O.Dup, OpNone)
         rs.Add <| macroLdcI4 0
         rs.AddRange rs'
+        let stElem = macroStelem t
         rs.Add stElem
 
         for x in xs do
@@ -304,9 +300,15 @@ let rec go env ls (rs: ResizeArray<_>) = function
 
         arrayT t
 
-    | NewEmptyArray()
+    | NewEmptyArray t ->
+        rs.Add <| macroLdcI4 0
+        rs.Add <| Instr("", O.Newarr, OpType t)
 
-    | Ref(_) -> failwith "Not implemented yet"
+    | Ref(_) ->
+        let mutable x = 10
+        let a = &x
+        failwith "Not implemented yet"
+
     | Deref(_) -> failwith "Not implemented yet"
     | Initobj(_) -> failwith "Not implemented yet"
     | Newobj(_, _) -> failwith "Not implemented yet"

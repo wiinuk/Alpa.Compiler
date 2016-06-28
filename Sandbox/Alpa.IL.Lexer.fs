@@ -273,7 +273,7 @@ let escape s =
 
 let lexData() = {
     trivia = @"\s+|//[^\n]*"
-    keyword = makeTokenOfTable "keyword" (Array.append (keyword()) (opKeyword()))
+    keyword = makeTokenOfKeywords "keyword" (Array.append (keyword()) (opKeyword()))
     custom =
     [|
         makeToken "blob" @"B""(\s*[0-9a-fA-F]{2})*\s*""" <| fun s ->
