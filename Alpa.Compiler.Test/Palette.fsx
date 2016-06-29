@@ -78,15 +78,31 @@ let printTupleLike print (xs: #seq<_>) =
             printf ", "
             print e.Current 
     printf ")"
+    
+let printString q x = 
+    printf "%c" q
+    for x in x do
+        if x = q then printf "\\%c" q
+        elif Char.IsLetterOrDigit x then printf "%c" x
+        else printf "\\u%04x" <| int16 x
+    printf "%c" q
+
+let isIdStartOrContinue = function '_' | '`' -> true | c -> Char.IsLetterOrDigit c
+let isIdStart = function '_' -> true | c -> Char.IsLetter c
+
+let printId = function
+    | "" -> printf "''"
+    | s when isIdStart s.[0] && String.forall isIdStartOrContinue s -> printf "%s" s
+    | s -> printString '\'' s
 
 let rec printType (x: Type) = 
-    printf "%s" x.Name
+    printId x.Name
     if x.IsGenericType then printTupleLike printType <| x.GetGenericArguments()
 
 let printMethod (m : MethodBase) = 
     printType m.DeclaringType
     printf "::"
-    printf "%s" m.Name
+    printId m.Name
     if m.IsGenericMethod then printTupleLike printType <| m.GetGenericArguments()
     else ()
 
@@ -99,18 +115,11 @@ let printMethod (m : MethodBase) =
         | _ -> typeof<Void>
     printType ret
 
-let printString x = 
-    printf "\""
-    for x in x do
-        match x with
-        | '"' -> printf "\\\""
-        | _ when Char.IsLetterOrDigit x -> printf "%c" x
-        | _ -> printf "\\u%04x" <| int16 x
-    printf "\""
-
 let printField (x: FieldInfo) = 
     printType x.DeclaringType
-    printf "::%s : " x.Name
+    printf "::"
+    printId x.Name
+    printf " : "
     printType x.FieldType
 
 let printBr x = printf "@x%04X" x
@@ -130,7 +139,7 @@ let printOperand env s =
     | O.InlineNone -> ()
     | O.InlineR -> printf "%f" <| readF8 s
     | O.InlineSig -> printf "signature (%A)" <| env.Module.ResolveSignature(readI4 s)
-    | O.InlineString -> printString <| env.Module.ResolveString(readI4 s)
+    | O.InlineString -> printString '"' <| env.Module.ResolveString(readI4 s)
     | O.InlineSwitch -> 
         let count = readI4 s
         let offset = s.index + count * 4
@@ -281,7 +290,11 @@ let app f x = f x
 
 let tryf() = try 1 / 0 with :? DivideByZeroException -> 0
 
-print <@ let mutable x = ResizeArray.Enumerator() in x.MoveNext() @>
+// print <@ let mutable x = ResizeArray.Enumerator() in x.MoveNext() @>
+
+
+let y() = [|1s;2s|]
+print <@ y @>
 
 try print <@ tryf @>
 with e -> printfn "%A" e

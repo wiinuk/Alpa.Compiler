@@ -133,7 +133,7 @@ type CExp =
 type O = System.Reflection.Emit.OpCodes
 
 let inRange l h x = l <= x && x <= h
-let macroLdcI4 = function
+let ldcI4 = function
     | -1 -> Instr("", O.Ldc_I4_M1, OpNone)
     | 0 -> Instr("", O.Ldc_I4_0, OpNone)
     | 1 -> Instr("", O.Ldc_I4_1, OpNone)
@@ -148,7 +148,7 @@ let macroLdcI4 = function
         Instr("", O.Ldc_I4_S, OpI1(int8 n))
     | n -> Instr("", O.Ldc_I4, OpI4 n)
 
-let macroLdloc = function
+let ldloc = function
     | 0s -> Instr("", O.Ldloc_0, OpNone)
     | 1s -> Instr("", O.Ldloc_1, OpNone)
     | 2s -> Instr("", O.Ldloc_2, OpNone)
@@ -157,7 +157,7 @@ let macroLdloc = function
         Instr("", O.Ldloc_S, OpI1(int8 n))
     | n -> Instr("", O.Ldloc, OpI2 n)
 
-let macroStloc = function
+let stloc = function
     | 0s -> Instr("", O.Stloc_0, OpNone)
     | 1s -> Instr("", O.Stloc_1, OpNone)
     | 2s -> Instr("", O.Stloc_2, OpNone)
@@ -165,24 +165,33 @@ let macroStloc = function
     | n when inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n ->
         Instr("", O.Stloc_S, OpI1(int8 n))
     | n -> Instr("", O.Stloc, OpI2 n)
-
+    
 type C = System.TypeCode
+let stelem = function
+    | TypeSpec.Pointer t -> Instr("", O.Stelem_I, OpNone)
+    | t ->
+        match getTypeCode t with
+        | C.Boolean -> Instr("", O.Stelem_)
+    | TypeSpec.Array t -> Instr("", O.Stelem_Ref, OpNone)
+    | TypeSpec.Byref t ->
+    match getTypeCode t with
+    | C.Boolean -> Instr("", O.St)
 
 let emitLit = function
     | LitB x ->
         if x then Instr("", O.Ldc_I4_1, OpNone), boolT
         else Instr("", O.Ldc_I4_0, OpNone), boolT
 
-    | LitI1 x -> macroLdcI4(int32 x), int8T
-    | LitI2 x -> macroLdcI4(int32 x), int16T
-    | LitI4 x -> macroLdcI4 x, int32T
+    | LitI1 x -> ldcI4(int32 x), int8T
+    | LitI2 x -> ldcI4(int32 x), int16T
+    | LitI4 x -> ldcI4 x, int32T
     | LitI8 x -> Instr("", O.Ldc_I8, OpI8 x), int64T
 
-    | LitU1 x -> macroLdcI4(int32 x), uint8T
-    | LitU2 x -> macroLdcI4(int32 x), uint16T
-    | LitU4 x -> macroLdcI4(int32 x), uint32T
+    | LitU1 x -> ldcI4(int32 x), uint8T
+    | LitU2 x -> ldcI4(int32 x), uint16T
+    | LitU4 x -> ldcI4(int32 x), uint32T
     | LitU8 x -> Instr("", O.Ldc_I8, OpI8(int64 x)), uint64T
-    | LitC x -> macroLdcI4(int32 x), charT
+    | LitC x -> ldcI4(int32 x), charT
     | LitF4 x -> Instr("", O.Ldc_R4, OpF4 x), float32T
     | LitF8 x -> Instr("", O.Ldc_R8, OpF8 x), float64T
     | LitS null -> Instr("", O.Ldnull, OpNone), stringT
@@ -219,7 +228,7 @@ let rec go env ls (rs: ResizeArray<_>) = function
     | Lit x -> let i, t = emitLit x in rs.Add i; t
     | LVar v ->
         let { i = i; t = t } = Map.find v env.locals
-        rs.Add <| macroLdloc i
+        rs.Add <| ldloc i
         t
 
     | LetZero(v, vt, e) ->
@@ -231,7 +240,7 @@ let rec go env ls (rs: ResizeArray<_>) = function
     | Let(v, init, e) ->
         let vt = go env ls rs init
         let { i = i } as l, env = updateLocals env ls v vt
-        rs.Add <| macroStloc i
+        rs.Add <| stloc i
         let t = go env ls rs e
         ls.[int32 i] <- { l with using = false }
         t
@@ -283,17 +292,17 @@ let rec go env ls (rs: ResizeArray<_>) = function
     | NewArray(x, xs) ->
         let rs' = ResizeArray()
         let t = go env ls rs' x
-        rs.Add <| macroLdcI4 (List.length xs + 1)
+        rs.Add <| ldcI4 (List.length xs + 1)
         rs.Add <| Instr("", O.Newarr, OpType t)
         rs.Add <| Instr("", O.Dup, OpNone)
-        rs.Add <| macroLdcI4 0
+        rs.Add <| ldcI4 0
         rs.AddRange rs'
         let stElem = macroStelem t
         rs.Add stElem
 
         for x in xs do
             rs.Add <| Instr("", O.Dup, OpNone)
-            rs.Add <| macroLdcI4 (i + 1)
+            rs.Add <| ldcI4 (i + 1)
             let t' = go env ls rs x
             if t <> t' then failwith "NewArray"
             rs.Add stElem
@@ -301,7 +310,7 @@ let rec go env ls (rs: ResizeArray<_>) = function
         arrayT t
 
     | NewEmptyArray t ->
-        rs.Add <| macroLdcI4 0
+        rs.Add <| ldcI4 0
         rs.Add <| Instr("", O.Newarr, OpType t)
 
     | Ref(_) ->
