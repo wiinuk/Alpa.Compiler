@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System;
 using System.Linq.Expressions;
 using System.Linq;
+using System.Collections.ObjectModel;
 using static System.Linq.Expressions.ExpressionType;
 using static System.Reflection.Emit.OperandType;
 using static System.Reflection.ExceptionHandlingClauseOptions;
@@ -378,9 +379,14 @@ static IEnumerable<T> Append<T>(IEnumerable<T> values, T value)
     foreach (var v in values) { yield return v; }
     yield return value;
 }
+
 static StrongBox<T> tryPick<T>(this Expression expr, Func<Expression, StrongBox<T>> picker)
 {
     if (expr == null) { return null; }
+
+    var result = picker(expr);
+    if (result != null) { return result; }
+
     switch (expr.NodeType)
     {
         case Add:
@@ -539,26 +545,28 @@ static StrongBox<T> tryPick<T>(this Expression expr, Func<Expression, StrongBox<
 }
 
 StrongBox<T> Some<T>(T v) => new StrongBox<T>(v);
+StrongBox<T> None<T>() => null;
+static T UnwrapOrDefault<T>(this StrongBox<T> v) => v == null ? default(T) : v.Value;
+static T Unwrap<T>(this StrongBox<T> v)
+{
+    if (v == null) { throw new Exception($"{nameof(StrongBox<T>)} is empty."); }
+    return v.Value;
+}
+static T UnwrapOr<T>(this StrongBox<T> v, Func<T> ifNone) => (v == null) ? ifNone() : v.Value;
 
 MethodBase getMethod<T>(Expression<Func<T>> expr) =>
     expr.tryPick(e =>
     {
         switch (e.NodeType)
         {
-            case Call:
-                var c = e as MethodCallExpression;
-                return Some((MethodBase)c.Method);
-
-            case New:
-                var n = e as NewExpression;
-                return Some((MethodBase)n.Constructor);
-
-            default:
-                return null;
+            case Call: return Some((MethodBase)(e as MethodCallExpression).Method);
+            case New: return Some((MethodBase)(e as NewExpression).Constructor);
+            default: return None<MethodBase>();
         }
-    }).Value;
+    })
+    .UnwrapOr(() => { throw new InvalidOperationException($"method not found. { nameof(expr) }: { expr }"); });
 
-getMethod(() => "".ToLower());
+var m = getMethod(() => "abc" + "rc");
 
 public static class T
 {
@@ -570,6 +578,10 @@ public static class T
 }
 
 printMethodBase(typeof(T).GetMethod("F"));
+
+var p = Expression.Parameter(typeof(int));
+var xs = new ReadOnlyCollection<ParameterExpression>(new[] { p });
+IEnumerable<Expression> ixs = xs;
 
 //let print e = getMethod e |> printMethodBase; printfn ""
 //let x() = [| 20n; 30n |]

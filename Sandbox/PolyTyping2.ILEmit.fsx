@@ -32,72 +32,74 @@ type CLit =
     | LitNull of Type
 
 
-let opMap = Map.empty
-
-OpCodes.Calli
-OpCodes.Call
-OpCodes.Callvirt
-OpCodes.Ret
-OpCodes.Newobj
-Seq.filter (fun (KeyValue(k,v: OpCode)) -> v.StackBehaviourPop = StackBehaviour.Varpop || v.StackBehaviourPush = StackBehaviour.Varpush) opMap
-|> Seq.toArray
-
-StackBehaviour.Pop0
-StackBehaviour.Pop1
-StackBehaviour.Pop1_pop1
-StackBehaviour.Popi
-StackBehaviour.Popi_pop1
-StackBehaviour.Popi_popi
-StackBehaviour.Popi_popi8
-StackBehaviour.Popi_popi_popi
-StackBehaviour.Popi_popr4
-StackBehaviour.Popi_popr8
-StackBehaviour.Popref
-StackBehaviour.Popref_pop1
-StackBehaviour.Popref_popi
-StackBehaviour.Popref_popi_pop1
-StackBehaviour.Popref_popi_popi
-StackBehaviour.Popref_popi_popi8
-StackBehaviour.Popref_popi_popr4
-StackBehaviour.Popref_popi_popr8
-StackBehaviour.Popref_popi_popref
-StackBehaviour.Varpop
-
-StackBehaviour.Push0
-StackBehaviour.Push1
-StackBehaviour.Push1_push1
-StackBehaviour.Pushi
-StackBehaviour.Pushi8
-StackBehaviour.Pushr4
-StackBehaviour.Pushr8
-StackBehaviour.Pushref
-StackBehaviour.Varpush
-
-// OpCodeType.Annotation
-OpCodeType.Macro
-OpCodeType.Nternal
-OpCodeType.Objmodel
-OpCodeType.Prefix
-OpCodeType.Primitive
-
-FlowControl.Branch
-FlowControl.Break
-FlowControl.Call
-FlowControl.Cond_Branch
-FlowControl.Meta
-FlowControl.Next
-// FlowControl.Phi
-FlowControl.Return
-FlowControl.Throw
-
-OperandType.ShortInlineVar
-OperandType.InlineVar
+//let opMap = Map.empty
+//
+//OpCodes.Calli
+//OpCodes.Call
+//OpCodes.Callvirt
+//OpCodes.Ret
+//OpCodes.Newobj
+//Seq.filter (fun (KeyValue(k,v: OpCode)) -> v.StackBehaviourPop = StackBehaviour.Varpop || v.StackBehaviourPush = StackBehaviour.Varpush) opMap
+//|> Seq.toArray
+//
+//StackBehaviour.Pop0
+//StackBehaviour.Pop1
+//StackBehaviour.Pop1_pop1
+//StackBehaviour.Popi
+//StackBehaviour.Popi_pop1
+//StackBehaviour.Popi_popi
+//StackBehaviour.Popi_popi8
+//StackBehaviour.Popi_popi_popi
+//StackBehaviour.Popi_popr4
+//StackBehaviour.Popi_popr8
+//StackBehaviour.Popref
+//StackBehaviour.Popref_pop1
+//StackBehaviour.Popref_popi
+//StackBehaviour.Popref_popi_pop1
+//StackBehaviour.Popref_popi_popi
+//StackBehaviour.Popref_popi_popi8
+//StackBehaviour.Popref_popi_popr4
+//StackBehaviour.Popref_popi_popr8
+//StackBehaviour.Popref_popi_popref
+//StackBehaviour.Varpop
+//
+//StackBehaviour.Push0
+//StackBehaviour.Push1
+//StackBehaviour.Push1_push1
+//StackBehaviour.Pushi
+//StackBehaviour.Pushi8
+//StackBehaviour.Pushr4
+//StackBehaviour.Pushr8
+//StackBehaviour.Pushref
+//StackBehaviour.Varpush
+//
+//// OpCodeType.Annotation
+//OpCodeType.Macro
+//OpCodeType.Nternal
+//OpCodeType.Objmodel
+//OpCodeType.Prefix
+//OpCodeType.Primitive
+//
+//FlowControl.Branch
+//FlowControl.Break
+//FlowControl.Call
+//FlowControl.Cond_Branch
+//FlowControl.Meta
+//FlowControl.Next
+//// FlowControl.Phi
+//FlowControl.Return
+//FlowControl.Throw
+//
+//OperandType.ShortInlineVar
+//OperandType.InlineVar
 
 type CExp =
     /// ex: 10i; 'c'; "test"; null[string]
     | Lit of CLit
     /// ex: a
-    | LVar of LocalName
+    | NVar of Var
+    /// ex: $0
+    | AVar of int
     /// ex: a: string in x
     | LetZero of LocalName * Type * CExp
     /// ex: a <- "" in x
@@ -119,11 +121,18 @@ type CExp =
     | NewArray of CExp * CExp list
     /// ex: []: int array
     | NewEmptyArray of Type
+    /// ex: xs.[i]
+    | ArrayIndex of CExp * CExp
 
     /// ex: &a
-    | Ref of CExp
-    /// ex: *a
-    | Deref of CExp
+    | MRef of CExp
+    /// ex: *r
+    | MRefRead of CExp
+    /// ex: r *<- 10
+    | MRefWrite of CExp * CExp
+
+    /// ex: x.Value; String.Empty
+    | GetField of Choice<CExp, Type> * fieldName: string
 
     /// ex: initobj &a
     | Initobj of CExp
@@ -148,6 +157,16 @@ let ldcI4 = function
         Instr("", O.Ldc_I4_S, OpI1(int8 n))
     | n -> Instr("", O.Ldc_I4, OpI4 n)
 
+let ldarg = function
+    | 0s -> Instr("", O.Ldarg_0, OpNone)
+    | 1s -> Instr("", O.Ldarg_1, OpNone)
+    | 2s -> Instr("", O.Ldarg_2, OpNone)
+    | 3s -> Instr("", O.Ldarg_3, OpNone)
+    | n when inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n ->
+        Instr("", O.Ldarg_S, OpI1(int8 n))
+        
+    | n -> Instr("", O.Ldarg, OpI2 n)
+
 let ldloc = function
     | 0s -> Instr("", O.Ldloc_0, OpNone)
     | 1s -> Instr("", O.Ldloc_1, OpNone)
@@ -165,17 +184,34 @@ let stloc = function
     | n when inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n ->
         Instr("", O.Stloc_S, OpI1(int8 n))
     | n -> Instr("", O.Stloc, OpI2 n)
-    
+
+let ldloca n =
+    if inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n then Instr("", O.Ldloca_S, OpI1(int8 n))
+    else Instr("", O.Ldloca, OpI2 n)
+
+let ldarga n =
+    if inRange (int16 SByte.MinValue) (int16 SByte.MaxValue) n then Instr("", O.Ldarga_S, OpI1(int8 n))
+    else Instr("", O.Ldarga, OpI2 n)
+
+let ldind t =
+    O.Ldind_I
+
 type C = System.TypeCode
-let stelem = function
-    | TypeSpec.Pointer t -> Instr("", O.Stelem_I, OpNone)
+let stelem env = function
+    | TypeSpec.Pointer _ -> Instr("", O.Stelem_I, OpNone)
+    | TypeSpec.Array _ -> Instr("", O.Stelem_Ref, OpNone)
     | t ->
         match getTypeCode t with
-        | C.Boolean -> Instr("", O.Stelem_)
-    | TypeSpec.Array t -> Instr("", O.Stelem_Ref, OpNone)
-    | TypeSpec.Byref t ->
-    match getTypeCode t with
-    | C.Boolean -> Instr("", O.St)
+        | C.SByte -> Instr("", O.Stelem_I1, OpNone)
+        | C.Int16 -> Instr("", O.Stelem_I2, OpNone)
+        | C.Int32 -> Instr("", O.Stelem_I4, OpNone)
+        | C.Int64 -> Instr("", O.Stelem_I8, OpNone)
+        | C.Single -> Instr("", O.Stelem_R4, OpNone)
+        | C.Double -> Instr("", O.Stelem_R8, OpNone)
+        | _ ->
+            let t' = solveType env t
+            if t'.IsValueType then Instr("", O.Stelem, OpType t)
+            else Instr("", O.Stelem_Ref, OpType t)
 
 let emitLit = function
     | LitB x ->
@@ -208,6 +244,7 @@ let rec appendRev ls rs =
 
 type Env = {
     locals: Map<string, LocalInfo>
+    args: (string option * Type) list
     menv: SolveEnv
 }
 let updateLocals ({ locals = locals } as env) (ls: ResizeArray<_>) v vt =
@@ -224,11 +261,27 @@ let updateLocals ({ locals = locals } as env) (ls: ResizeArray<_>) v vt =
 
     l, { env with locals = Map.add v l locals }
 
-let rec go env ls (rs: ResizeArray<_>) = function
+
+let findNVar { args = args; locals = locals } v =
+    match Map.tryFind v locals with
+    | Some { i = i; t = t } -> true, i, t
+    | None ->
+        let rec findi i = function
+            | (Some n, t)::_ when n = v -> false, i, t
+            | _::xs -> findi (i+1s) xs
+            | [] -> failwithf "not found NVar(%A)" v
+        findi 0s args
+
+let rec go ({ menv = menv; args = args; locals = locals } as env) ls (rs: ResizeArray<_>) = function
     | Lit x -> let i, t = emitLit x in rs.Add i; t
-    | LVar v ->
-        let { i = i; t = t } = Map.find v env.locals
-        rs.Add <| ldloc i
+    | NVar v ->
+        let isLoc, i, t = findNVar env v
+        rs.Add <| if isLoc then ldloc i else ldarg i
+        t
+
+    | AVar i ->
+        let _,t = List.item i args
+        rs.Add <| ldarg(int16 i)
         t
 
     | LetZero(v, vt, e) ->
@@ -297,28 +350,71 @@ let rec go env ls (rs: ResizeArray<_>) = function
         rs.Add <| Instr("", O.Dup, OpNone)
         rs.Add <| ldcI4 0
         rs.AddRange rs'
-        let stElem = macroStelem t
+        let stElem = stelem menv t
         rs.Add stElem
 
-        for x in xs do
+        List.iteri (fun i x ->
             rs.Add <| Instr("", O.Dup, OpNone)
             rs.Add <| ldcI4 (i + 1)
             let t' = go env ls rs x
-            if t <> t' then failwith "NewArray"
+            if t <> t' then failwithf "NewArray: %A <> %A" t t'
             rs.Add stElem
+        ) xs
 
-        arrayT t
+        TypeSpec.Array t
 
     | NewEmptyArray t ->
         rs.Add <| ldcI4 0
         rs.Add <| Instr("", O.Newarr, OpType t)
+        TypeSpec.Array t
 
-    | Ref(_) ->
-        let mutable x = 10
-        let a = &x
-        failwith "Not implemented yet"
+    | MRef e ->
+        match e with
+        // ex: a: int32; &a
+        | NVar v ->
+            let isLoc, i, t = findNVar env v
+            rs.Add <| if isLoc then ldloca i else ldarga i
+            TypeSpec.Byref t
 
-    | Deref(_) -> failwith "Not implemented yet"
+        | AVar i ->
+            let _,t = List.item i args
+            rs.Add <| ldarga (int16 i)
+            TypeSpec.Byref t
+
+        // ex: &(...).[...]
+        | ArrayIndex(xs, i) ->
+            let arrayT = go env ls rs xs
+            go env ls rs i |> ignore
+            rs.Add <| Instr("", O.Ldelema, OpNone)
+            match arrayT with
+            | TypeSpec.Array t -> TypeSpec.Byref t
+            | _ -> failwithf "ArrayIndex %A" arrayT
+
+        // ex: &x.Value
+        | GetField(Choice1Of2 this, name) ->
+            let thisT = go env ls rs this
+            rs.Add <| Instr("", O.Ldflda, OpField(thisT, name))
+            let field = Solve.getField menv thisT name
+            let fieldT = typeOfT field.FieldType
+            TypeSpec.Byref fieldT
+
+        // ex: &Ty.F
+        | GetField(Choice2Of2 thisT, name) ->
+            rs.Add <| Instr("", O.Ldsflda, OpField(thisT, name))
+            let field = Solve.getField menv thisT name
+            let fieldT = typeOfT field.FieldType
+            TypeSpec.Byref fieldT
+
+        | _ -> failwithf "MRef(%A)" e
+//        O.Ldvirtftn
+//        O.Ldftn
+
+    | MRefRead e ->
+        let byrefT = go env ls rs e
+        let elemT = match byrefT with| TypeSpec.Byref t -> t | _ -> failwithf "MRefRead(%A : %A)" e byrefT
+        rs.Add <| ldind elemT
+        elemT
+
     | Initobj(_) -> failwith "Not implemented yet"
     | Newobj(_, _) -> failwith "Not implemented yet"
 

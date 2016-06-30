@@ -298,3 +298,226 @@ print <@ y @>
 
 try print <@ tryf @>
 with e -> printfn "%A" e
+
+
+type Pair<'a,'b> = struct
+    val mutable Key: 'a
+    val mutable Value: 'b
+end
+type T =
+    static member F(x: Pair<_,_> byref) =
+        let v = &x.Value
+        v
+
+printMethodBase <| typeof<T>.GetMethod("F")
+
+open System.Linq.Expressions
+type B = System.Linq.Expressions.MemberBindingType
+type N = System.Linq.Expressions.ExpressionType
+type E = System.Linq.Expressions.Expression
+
+let rec memberBindingExpressions (m: MemberBinding) =
+    match m.BindingType with
+    | B.Assignment -> let m = m :?> MemberAssignment in Seq.singleton m.Expression
+    | B.MemberBinding -> let m = m :?> MemberMemberBinding in Seq.collect memberBindingExpressions m.Bindings
+    | B.ListBinding -> let m = m :?> MemberListBinding in m.Initializers |> Seq.collect (fun i -> i.Arguments)
+    | _ -> Seq.empty
+
+let paramExprsToExprs (xs: ParameterExpression seq) : Expression seq = unbox(box xs)
+let objToSeq = function null -> Seq.empty | x -> upcast [|x|]
+let staticOrInstance this xs = if isNull this then xs else seq { yield this; yield! xs }
+
+let (|Parameter|Lambda|Combination|) (e: Expression) =
+    match e.NodeType with
+    | N.Add
+    | N.AddChecked
+    | N.And
+    | N.AndAlso
+    | N.ArrayIndex
+    | N.Coalesce
+    | N.Divide
+    | N.Equal
+    | N.ExclusiveOr
+    | N.GreaterThan
+    | N.GreaterThanOrEqual
+    | N.LeftShift
+    | N.LessThan
+    | N.LessThanOrEqual
+    | N.Modulo
+    | N.Multiply
+    | N.MultiplyChecked
+    | N.NotEqual
+    | N.Or
+    | N.OrElse
+    | N.Power
+    | N.RightShift
+    | N.Subtract
+    | N.SubtractChecked
+    | N.Assign
+    | N.AddAssign
+    | N.AndAssign
+    | N.DivideAssign
+    | N.ExclusiveOrAssign
+    | N.LeftShiftAssign
+    | N.ModuloAssign
+    | N.MultiplyAssign
+    | N.OrAssign
+    | N.PowerAssign
+    | N.RightShiftAssign
+    | N.SubtractAssign
+    | N.AddAssignChecked
+    | N.MultiplyAssignChecked
+    | N.SubtractAssignChecked ->
+        let e = e :?> BinaryExpression
+        Combination(box e, [|e.Left; e.Right|] :> _ seq)
+
+    | N.ArrayLength
+    | N.Convert
+    | N.ConvertChecked
+    | N.Negate
+    | N.UnaryPlus
+    | N.NegateChecked
+    | N.Not
+    | N.Quote
+    | N.TypeAs
+    | N.Decrement
+    | N.Increment
+    | N.Throw
+    | N.Unbox
+    | N.PreIncrementAssign
+    | N.PreDecrementAssign
+    | N.PostIncrementAssign
+    | N.PostDecrementAssign
+    | N.OnesComplement
+    | N.IsTrue
+    | N.IsFalse ->
+        let e = e :?> UnaryExpression
+        Combination(box e, upcast [|e.Operand|])
+
+    | N.Call ->
+        let e = e :?> MethodCallExpression
+        Combination(box e, staticOrInstance e.Object e.Arguments)
+
+    | N.Conditional ->
+        let ce = e :?> ConditionalExpression
+        Combination(box ce, upcast [|ce.Test; ce.IfTrue; ce.IfFalse|])
+
+    | N.Constant
+    | N.DebugInfo
+    | N.Default
+    | N.Extension -> Combination(box e, Seq.empty)
+    
+    | N.Parameter -> Parameter(e :?> ParameterExpression)
+    | N.Invoke ->
+        let e = e :?> InvocationExpression
+        Combination(box e, seq { yield e.Expression; yield! e.Arguments })
+
+    | N.Lambda -> Lambda(e :?> LambdaExpression)
+    | N.ListInit ->
+        let e = e :?> ListInitExpression
+        let xs = seq {
+            yield e.NewExpression :> E
+            for i in e.Initializers do yield! i.Arguments
+        }
+        Combination(box e, xs)
+
+    | N.MemberAccess ->
+        let e = e :?> MemberExpression
+        Combination(box e, upcast [| e.Expression |])
+
+    | N.MemberInit ->
+        let e = e :?> MemberInitExpression
+        let xs = seq {
+            yield e.NewExpression :> E
+            for b in e.Bindings do yield! memberBindingExpressions b
+        }
+        Combination(box e, xs)
+
+    | N.New ->
+        let e = e :?> NewExpression
+        Combination(box e, upcast e.Arguments)
+
+    | N.NewArrayInit
+    | N.NewArrayBounds ->
+        let e = e :?> NewArrayExpression
+        Combination(box e, upcast e.Expressions)
+
+    | N.TypeIs
+    | N.TypeEqual ->
+        let e = e :?> TypeBinaryExpression
+        Combination(box e, upcast [| e.Expression |])
+
+    | N.Block ->
+        let e = e :?> BlockExpression
+        let xs = seq {
+            yield! paramExprsToExprs e.Variables
+            yield! e.Expressions
+            yield e.Result
+        }
+        Combination(box e, xs)
+
+    | N.Dynamic ->
+        let e = e :?> DynamicExpression
+        Combination(box e, upcast e.Arguments)
+
+    | N.Goto ->
+        let e = e :?> GotoExpression
+        Combination(box e, objToSeq e.Value)
+
+    | N.Index ->
+        let e = e :?> IndexExpression
+        Combination(box e, staticOrInstance e.Object e.Arguments)
+
+    | N.Label ->
+        let e = e :?> LabelExpression
+        Combination(box e, objToSeq e.DefaultValue)
+
+    | N.RuntimeVariables ->
+        let e = e :?> RuntimeVariablesExpression
+        Combination(box e, paramExprsToExprs e.Variables)
+
+    | N.Loop ->
+        let e = e :?> LoopExpression
+        Combination(box e, upcast [|e.Body|])
+
+    | N.Switch ->
+        let e = e :?> SwitchExpression
+        let xs = seq {
+            yield e.SwitchValue 
+            for c in e.Cases do
+                yield! c.TestValues
+                yield c.Body
+            yield! objToSeq e.DefaultBody
+        }
+        Combination(box e, xs)
+
+    | N.Try ->
+        let e = e :?> TryExpression
+        let xs = seq {
+            yield e.Body
+            yield! objToSeq e.Fault
+            for c in e.Handlers do
+                yield upcast c.Variable
+                yield c.Filter
+                yield c.Body
+            yield! objToSeq e.Finally
+        }
+        Combination(box e, xs)
+
+    | _ -> failwith ""
+
+let rec tryPickL (|Pick|_|) = function
+    | Pick x -> Some x
+    | Combination(_, xs) -> Seq.tryPick (tryPickL (|Pick|_|)) xs
+    | Lambda l -> Seq.tryPick (tryPickL (|Pick|_|)) l.Parameters
+    | Parameter _ -> None
+
+
+let getMethodL (e: Expression) =
+    tryPickL (function
+        | :? MethodCallExpression as e -> Some(e.Method :> System.Reflection.MethodBase)
+        | :? NewExpression as e -> Some(e.Constructor :> _)
+        | _ -> None
+    ) e
+
+getMethodL (E.Call(typeof<string>.GetMethod("Copy"), E.Constant("abc")))
