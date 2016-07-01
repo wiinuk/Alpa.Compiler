@@ -393,7 +393,12 @@ type GenericArrayType(elementType: Type, shape: ArrayShape) =
 [<Sealed>]
 type FnptrType(signature: Sig) =
     inherit Type()
-    
+
+
+let ruadCustomModTail elementType env s =
+    let md = readTypeDefOrRefEncoded s
+    Mod((elementType = E.CMOD_OPT), resolveType env md)
+
 let rec readType env s = readTypeTail (readElementType s) env s
 and readTypeTail elementType env s =
     match elementType with
@@ -429,12 +434,32 @@ and readTypeTail elementType env s =
         let openType = resolveType env md
         openType.MakeGenericType(List.toArray typeArgs)
 
+    | E.MVAR ->
+        let i = readNumber s
+        env.MethodTypeArgs.[i]
+
+    | E.OBJECT -> typeof<obj>
+    | E.PTR ->
+        let rec aux ms s =
+            match readElementType s with
+            | E.CMOD_OPT
+            | E.CMOD_REQD as et ->
+                let m = ruadCustomModTail et env s
+                aux (m::ms) s
+
+            | e ->
+                let t = if e = E.VOID then typeof<Void> else readTypeTail e env s
+                match ms with
+                | [] -> t.MakePointerType()
+                | ms -> upcast PointerType(List.rev ms, t)
+        aux [] s
+
+    | E.STRING -> typeof<string>
+    | E.SZARRAY -> readCustomModsAndType
+    | E.VALUETYPE ->
+    | E.VAR ->
 
 //type =
-//    | MVAR number
-//    | OBJECT
-//    | PTR customMod* type
-//    | PTR customMod* VOID
 //    | STRING
 //    | SZARRAY customMod* type // zsarray
 //    | VALUETYPE typeDefOrRefEncoded
@@ -442,8 +467,9 @@ and readTypeTail elementType env s =
 
 and readRetOrParamTail elementType ms env s =
     match elementType with
-    | (E.CMOD_OPT | E.CMOD_REQD) as a ->
-        let m = Mod((a = E.CMOD_OPT), resolveType env (readTypeDefOrRefEncoded s))
+    | E.CMOD_OPT
+    | E.CMOD_REQD ->
+        let m = ruadCustomModTail elementType env s
         readRetOrParamTail (readElementType s) (m::ms) env s
 
     | E.BYREF -> Param(true, List.rev ms, readType env s)
