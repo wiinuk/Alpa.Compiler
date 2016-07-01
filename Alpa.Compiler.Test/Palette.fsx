@@ -298,15 +298,15 @@ let printOperand ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) s =
 
 [<Flags>]
 type MethodAttr =
-| DEFAULT       = 0x00
-| EXPLICITTHIS  = 0x40
-| HASTHIS       = 0x20
-| GENERIC       = 0x10
-| FASTCALL      = 0x04
-| STDCALL       = 0x02
-| C             = 0x01
-| VARARG        = 0x05
-| THISCALL      = 0x03
+    | DEFAULT       = 0x00
+    | EXPLICITTHIS  = 0x40
+    | HASTHIS       = 0x20
+    | GENERIC       = 0x10
+    | FASTCALL      = 0x04
+    | STDCALL       = 0x02
+    | C             = 0x01
+    | VARARG        = 0x05
+    | THISCALL      = 0x03
 
 type ELEMENT_TYPE =
     | VOID = 0x01
@@ -330,6 +330,7 @@ type ELEMENT_TYPE =
     | VAR = 0x13
     | ARRAY = 0x14
     | GENERICINST = 0x15
+    /// System.TypedReference
     | TYPEDBYREF = 0x16
     /// System.IntPtr
     | I = 0x18
@@ -419,62 +420,17 @@ and readTypeTail elementType env s =
 
     | E.CLASS -> readTypeDefOrRefEncoded s |> resolveType env
     | E.FNPTR -> upcast FnptrType(readSigAny env s)
+    | E.GENERICINST ->
+        let classOrValueType = readElementType s
+        let md = readTypeDefOrRefEncoded s
+        let genArgCount = readNumber s
+        let typeArgs = readCount (readType env) genArgCount s
 
-and readRetOrParam env s =
-    let rec aux ms s =
-        match readElementType s with
-        | (E.CMOD_OPT | E.CMOD_REQD) as a ->
-            let m = Mod((a = E.CMOD_OPT), resolveType env (readTypeDefOrRefEncoded s))
-            aux (m::ms) s
+        let openType = resolveType env md
+        openType.MakeGenericType(List.toArray typeArgs)
 
-        | E.BYREF -> Param(true, List.rev ms, readType env s)
-        | E.TYPEDBYREF -> Param(false, List.rev ms, typeof<TypedReference>)
-        | E.VOID -> Param(false, List.rev ms, typeof<Void>)
-        | e -> Param(false, List.rev ms, readTypeTail e env s)
-    aux [] s
-
-and readParamAndVarargParams count s =
-    let rec aux ps vs count s =
-        if count = 0 then
-        match readElementType s with
-        | E.SENTINEL ->
-
-and readSigAny env s =
-    let attr = enum(int (readU1 s))
-    let genParamCount = if attr &&& M.GENERIC = M.GENERIC then readNumber s else 0
-
-    let paramCount = readNumber s
-    let retType = readRetOrParam env s
-    let genParams = readCount (readRetOrParam env) genParamCount s
-
-    let methodParams, varargParams = readParamAndVarargParams paramCount s
-    Sig(attr, retType, genParams, methodParams, varargParams)
-
-
-//open ELEMENT_TYPE
-//
-//thisKind = HASTHIS EXPLICITTHIS?
 
 //type =
-//    | BOOLEAN
-//    | CHAR
-//    | I1
-//    | U1
-//    | I2
-//    | U2
-//    | I4
-//    | U4
-//    | I8
-//    | U8
-//    | R4
-//    | R8
-//    | I
-//    | U
-//    | ARRAY type arrayShape // general array
-//    | CLASS typeDefOrRefEncoded
-//    | FNPTR methodDefSig
-//    | FNPTR methodRefSig
-//    | GENERICINST (CLASS | VALUETYPE) typeDefOrRefEncoded (genArgCount: number) type*
 //    | MVAR number
 //    | OBJECT
 //    | PTR customMod* type
@@ -483,32 +439,41 @@ and readSigAny env s =
 //    | SZARRAY customMod* type // zsarray
 //    | VALUETYPE typeDefOrRefEncoded
 //    | VAR number
-//
-//customMod = (CMOD_OPT | CMOD_REQD) typeDefOrRefEncoded
-//
-//retType = customMod* (BYREF? type | TYPEDBYREF | VOID)
-//param = customMod* (BYREF? type | TYPEDBYREF)
-//
-//methodDefSigHead =
-//    | (thisKind? ||| (DEFAULT | VARARG)) 
-//    | (thisKind? ||| GENERIC) (genParamCount: number)
-//
-//methodDefSig = methodDefSigHead (paramCount: number) retType param*
-//methodRefSig =
-//    | (thisKind? ||| VARARG) (paramCount: number) retType param* SENTINEL param*
-//    | methodDefSig
-//
-//standAloneMethodSigAttr =
-//    | DEFAULT
-//    | C
-//    | STDCALL
-//    | THISCALL
-//    | FASTCALL
-//
-//standAloneMethodSig =
-//    | (thisKind? ||| standAloneMethodSigAttr) (paramCount: number) retParam param*
-//    | (thisKind? ||| VARARG) (paramCount: number) retParam param* (SENTINEL param*)?
 
+and readRetOrParamTail elementType ms env s =
+    match elementType with
+    | (E.CMOD_OPT | E.CMOD_REQD) as a ->
+        let m = Mod((a = E.CMOD_OPT), resolveType env (readTypeDefOrRefEncoded s))
+        readRetOrParamTail (readElementType s) (m::ms) env s
+
+    | E.BYREF -> Param(true, List.rev ms, readType env s)
+    | E.TYPEDBYREF -> Param(false, List.rev ms, typeof<TypedReference>)
+    | E.VOID -> Param(false, List.rev ms, typeof<Void>)
+    | e -> Param(false, List.rev ms, readTypeTail e env s)
+
+and readRetOrParam env s = readRetOrParamTail (readElementType s) [] env s
+
+and readParamAndVarargParams count env s =
+    let rec aux isVararg ps vs count =
+        if count <= 0 then List.rev ps, List.rev vs
+        else
+            match readElementType s with
+            | E.SENTINEL -> aux true ps vs count
+            | e ->
+                let p = readRetOrParamTail e [] env s
+                let ps, vs = if isVararg then ps, (p::vs) else (p::ps), vs
+                aux isVararg ps vs (count - 1)
+
+    aux false [] [] count
+
+and readSigAny env s =
+    let attr = enum(int (readU1 s))
+    let genParamCount = if attr &&& M.GENERIC = M.GENERIC then readNumber s else 0
+    let paramCount = readNumber s
+    let retType = readRetOrParam env s
+    let genParams = readCount (readRetOrParam env) genParamCount s
+    let methodParams, varargParams = readParamAndVarargParams paramCount env s
+    Sig(attr, retType, genParams, methodParams, varargParams)
 
 type SignatureInfo =
     | StandAloneMethodSig
