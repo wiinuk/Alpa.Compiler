@@ -5,10 +5,12 @@ open System
 open Microsoft.FSharp.Quotations
 
 type O = System.Reflection.Emit.OperandType
+type C = System.Reflection.ExceptionHandlingClauseOptions
+
+type Instr = Instr of offset: int * OpCode * value1: int64 * value2: obj
 
 type MEnv = {
-    Module : Module
-    BaseModule : Module
+    Modules : Module list
     TypeArgs : Type array
     MethodTypeArgs : Type array
     Handlers : ExceptionHandlingClause array
@@ -33,11 +35,9 @@ let readU1 s =
 
 let readI1 s = readU1 s |> int8
 let readI2 s = int16 (readU1 s) ||| (int16 (readU1 s) <<< 8)
-
 let readI4 s = 
     let read s n = int (readU1 s) <<< n
     read s 0 ||| read s 8 ||| read s 16 ||| read s 24
-
 let readI8 s = int64 (readI4 s) ||| (int64 (readI4 s) <<< 32)
 let readF8 s = readI8 s |> BitConverter.Int64BitsToDouble
 let readF4 s = BitConverter.ToSingle(readI4 s |> BitConverter.GetBytes, 0)
@@ -45,9 +45,13 @@ let readF4 s = BitConverter.ToSingle(readI4 s |> BitConverter.GetBytes, 0)
 
 let envOfMethodBase (m : MethodBase) = 
     let t = m.DeclaringType
+    let rec baseModules (t: Type) =
+        match t.BaseType with
+        | null -> []
+        | b when b = typeof<obj> -> [b.Module]
+        | b -> b.Module::baseModules b
     {
-        Module = m.Module
-        BaseModule = t.BaseType.Module
+        Modules = m.Module::t.Module::baseModules t
         TypeArgs = 
             if t.IsGenericType then t.GetGenericArguments()
             else null
@@ -124,22 +128,37 @@ let printField (x: FieldInfo) =
 
 let printBr x = printf "@x%04X" x
 
-let printOperand env s = 
+let resolve resolveOrRaise { Modules = ms } =
+    Seq.pick (fun r -> try Some <| resolveOrRaise r with _ -> None) ms
+
+let resolveType ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) md =
+    resolve (fun m -> m.ResolveType(md, targs, mtargs)) env
+
+let printOperand ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) s = 
     function 
     | O.InlineBrTarget -> printBr <| readI4 s + s.index
-    | O.InlineField -> printField <| env.Module.ResolveField(readI4 s, env.TypeArgs, env.MethodTypeArgs)
+    | O.InlineField ->
+        let md = readI4 s
+        resolve (fun m -> m.ResolveField(md, targs, mtargs)) env
+        |> printField
+
     | O.InlineI -> printf "%d" <| readI4 s
     | O.InlineI8 -> printf "%dL" <| readI8 s
     | O.InlineMethod -> 
         let md = readI4 s
-        try 
-            env.Module.ResolveMethod(md, env.TypeArgs, env.MethodTypeArgs)
-        with _ -> env.BaseModule.ResolveMethod(md, env.TypeArgs, env.MethodTypeArgs)
+        resolve (fun m -> m.ResolveMethod(md, targs, mtargs)) env
         |> printMethod
+
     | O.InlineNone -> ()
     | O.InlineR -> printf "%f" <| readF8 s
-    | O.InlineSig -> printf "signature (%A)" <| env.Module.ResolveSignature(readI4 s)
-    | O.InlineString -> printString '"' <| env.Module.ResolveString(readI4 s)
+    | O.InlineSig ->
+        let md = readI4 s
+        resolve (fun m -> m.ResolveSignature md) env |> printf "signature (%A)"
+
+    | O.InlineString ->
+        let md = readI4 s
+        resolve (fun m -> m.ResolveString md) env |> printString '"'
+
     | O.InlineSwitch -> 
         let count = readI4 s
         let offset = s.index + count * 4
@@ -149,13 +168,402 @@ let printOperand env s =
 
     | O.InlineTok -> 
         let tok = readI4 s
-        env.Module.ResolveMember(tok, env.TypeArgs, env.MethodTypeArgs) |> function 
+        resolve (fun m -> m.ResolveMember(tok, targs, mtargs)) env |> function 
         | :? FieldInfo as x -> printField x
         | :? MethodBase as x -> printMethod x
         | :? Type as x -> printType x
         | _ -> printf "member(%06X)" tok
 
-    | O.InlineType -> printType <| env.Module.ResolveType(readI4 s, env.TypeArgs, env.MethodTypeArgs)
+    | O.InlineType -> readI4 s |> resolveType env |> printType
+    | O.InlineVar -> printf "%d" <| int32 (readI2 s)
+    | O.ShortInlineBrTarget -> printBr <| int (readI1 s) + s.index
+    | O.ShortInlineI -> printf "%dy" <| readI1 s
+    | O.ShortInlineR -> printf "%ff" <| readF4 s
+    | O.ShortInlineVar -> printf "%d" <| int32 (readU1 s)
+    | _ -> failwith ""
+
+//DEFAULT         = 0x00uy = 0b00000000uy
+//EXPLICITTHIS    = 0x40uy = 0b01000000uy
+//HASTHIS         = 0x20uy = 0b00100000uy
+//GENERIC         = 0x10uy = 0b00010000uy
+//FASTCALL        = 0x04uy = 0b00000100uy
+//STDCALL         = 0x02uy = 0b00000010uy
+//C               = 0x01uy = 0b00000001uy
+//VARARG          = 0x05uy = 0b00000101uy
+//THISCALL        = 0x03uy = 0b00000011uy
+//
+//module ELEMENT_TYPE =
+//    VOID        = 0x01
+//    BOOLEAN     = 0x02
+//    CHAR        = 0x03
+//    I1          = 0x04
+//    U1          = 0x05
+//    I2          = 0x06
+//    U2          = 0x07
+//    I4          = 0x08
+//    U4          = 0x09
+//    I8          = 0x0a
+//    U8          = 0x0b
+//    R4          = 0x0c
+//    R8          = 0x0d
+//    STRING      = 0x0e
+//    PTR         = 0x0f
+//    BYREF       = 0x10
+//    VALUETYPE   = 0x11
+//    CLASS       = 0x12
+//    VAR         = 0x13
+//    ARRAY       = 0x14
+//    GENERICINST = 0x15
+//    TYPEDBYREF  = 0x16
+//    I           = 0x18 // System.IntPtr
+//    U           = 0x19 // System.UIntPtr
+//    FNPTR       = 0x1b
+//    OBJECT      = 0x1c // System.Object
+//    SZARRAY     = 0x1d
+//    MVAR        = 0x1e
+//    CMOD_REQD   = 0x1f
+//    CMOD_OPT    = 0x20
+//    SENTINEL    = 0x41 // Sentinel for vararg method signature
+//
+//open ELEMENT_TYPE
+//
+//thisKind = HASTHIS EXPLICITTHIS?
+//
+//bit = 0b | 1b
+//number =
+//    | 0b bit{7}           (0x00..0x7F)
+//    | 1b 0b bit{14}       (0x0080..0x3FFF)
+//    | 1b 1b 0b bit{29}    (0x00040000..0x1FFFFFFF)
+//
+//rank = number (1..)
+//arrayShape = rank (numSizes: number) (size: number)* (numLoBounds: number) (loBound: number)*
+//
+// // 0x49 = 0x01000012
+//typeDefOrRefEncoded = number |>> fun n ->
+//    int32 ((uint32 n &&& 0b11u <<< 24) ||| (uint32 n >>> 2))
+//
+//type =
+//    | BOOLEAN
+//    | CHAR
+//    | I1
+//    | U1
+//    | I2
+//    | U2
+//    | I4
+//    | U4
+//    | I8
+//    | U8
+//    | R4
+//    | R8
+//    | I
+//    | U
+//    | ARRAY type arrayShape // general array
+//    | CLASS typeDefOrRefEncoded
+//    | FNPTR methodDefSig
+//    | FNPTR methodRefSig
+//    | GENERICINST (CLASS | VALUETYPE) typeDefOrRefEncoded (genArgCount: number) type*
+//    | MVAR number
+//    | OBJECT
+//    | PTR customMod* type
+//    | PTR customMod* VOID
+//    | STRING
+//    | SZARRAY customMod* type // zsarray
+//    | VALUETYPE typeDefOrRefEncoded
+//    | VAR number
+//
+//customMod = (CMOD_OPT | CMOD_REQD) typeDefOrRefEncoded
+//
+//retType = customMod* (BYREF? type | TYPEDBYREF | VOID)
+//param = customMod* (BYREF? type | TYPEDBYREF)
+//
+//methodDefSigHead =
+//    | (thisKind? ||| (DEFAULT | VARARG)) 
+//    | (thisKind? ||| GENERIC) (genParamCount: number)
+//
+//methodDefSig = methodDefSigHead (paramCount: number) retType param*
+//methodRefSig =
+//    | (thisKind? ||| VARARG) (paramCount: number) retType param* SENTINEL param*
+//    | methodDefSig
+//
+//standAloneMethodSigAttr =
+//    | DEFAULT
+//    | C
+//    | STDCALL
+//    | THISCALL
+//    | FASTCALL
+//
+//standAloneMethodSig =
+//    | (thisKind? ||| standAloneMethodSigAttr) (paramCount: number) retParam param*
+//    | (thisKind? ||| VARARG) (paramCount: number) retParam param* (SENTINEL param*)?
+
+[<Flags>]
+type MethodAttr =
+| DEFAULT       = 0x00
+| EXPLICITTHIS  = 0x40
+| HASTHIS       = 0x20
+| GENERIC       = 0x10
+| FASTCALL      = 0x04
+| STDCALL       = 0x02
+| C             = 0x01
+| VARARG        = 0x05
+| THISCALL      = 0x03
+
+type ELEMENT_TYPE =
+    | VOID = 0x01
+    | BOOLEAN = 0x02
+    | CHAR = 0x03
+    | I1 = 0x04
+    | U1 = 0x05
+    | I2 = 0x06
+    | U2 = 0x07
+    | I4 = 0x08
+    | U4 = 0x09
+    | I8 = 0x0a
+    | U8 = 0x0b
+    | R4 = 0x0c
+    | R8 = 0x0d
+    | STRING = 0x0e
+    | PTR = 0x0f
+    | BYREF = 0x10
+    | VALUETYPE = 0x11
+    | CLASS = 0x12
+    | VAR = 0x13
+    | ARRAY = 0x14
+    | GENERICINST = 0x15
+    | TYPEDBYREF = 0x16
+    /// System.IntPtr
+    | I = 0x18
+    /// System.UIntPtr
+    | U = 0x19
+    | FNPTR = 0x1b
+    /// System.Object
+    | OBJECT = 0x1c
+    | SZARRAY = 0x1d
+    | MVAR = 0x1e
+    | CMOD_REQD = 0x1f
+    | CMOD_OPT = 0x20
+    /// Sentinel for vararg method signature
+    | SENTINEL = 0x41
+
+let readNumber s =
+    let v1 = int <| readI1 s
+    if v1 &&& 0b10000000 = 0 then v1
+    elif v1 &&& 0b11000000 = 0b10000000 then
+        ((v1 &&& 0b00111111) <<< 8) ||| int (readI1 s)
+    else
+        let v2 = int <| readI1 s
+        let v3 = int <| readI1 s
+        let v4 = int <| readI1 s
+        ((v1 &&& 0b00011111) <<< 24) ||| (v2 <<< 16) ||| (v3 <<< 8) ||| v4
+
+let readCount read n s =
+    let rec aux xs n = if n <= 0 then List.rev xs else aux (read s::xs) (n-1)
+    aux [] n
+
+type ArrayShape = ArrayShape of rank: int * sizes: int list * loBounds: int list
+let readArrayShape s =
+    ArrayShape(
+        readNumber s,
+        readCount readNumber (readNumber s) s,
+        readCount readNumber (readNumber s) s
+    )
+
+let readTypeDefOrRefEncoded s =
+    let n = uint32 <| readNumber s
+    int32 ((n &&& 0b11u <<< 24) ||| (n >>> 2))
+
+type E = ELEMENT_TYPE
+
+let readElementType s = enum(int (readU1 s))
+
+type M = MethodAttr
+
+type Mod = Mod of isOpt: bool * Type
+type Param = Param of isByref: bool * Mod list * Type
+type Sig = Sig of MethodAttr * retType: Param * genParams: Param list * methodParams: Param list * varargParams: Param list
+
+[<Sealed>]
+type GenericArrayType(elementType: Type, shape: ArrayShape) =
+    inherit Type()
+//    override __.IsArrayImpl() = true
+//    override __.HasElementTypeImpl() = true
+//    override __.GetElementType() = elementType
+
+[<Sealed>]
+type FnptrType(signature: Sig) =
+    inherit Type()
+    
+let rec readType env s = readTypeTail (readElementType s) env s
+and readTypeTail elementType env s =
+    match elementType with
+    | E.BOOLEAN -> typeof<bool>
+    | E.CHAR -> typeof<char>
+    | E.I1 -> typeof<int8>
+    | E.U1 -> typeof<uint8>
+    | E.I2 -> typeof<int16>
+    | E.U2 -> typeof<uint16>
+    | E.I4 -> typeof<int32>
+    | E.U4 -> typeof<uint32>
+    | E.I8 -> typeof<int64>
+    | E.U8 -> typeof<uint64>
+    | E.R4 -> typeof<single>
+    | E.R8 -> typeof<double>
+    | E.I -> typeof<nativeint>
+    | E.U -> typeof<unativeint>
+    | E.ARRAY ->
+        let t = readType env s
+        match readArrayShape s with
+        | ArrayShape(0,[],[]) -> t.MakeArrayType()
+        | ArrayShape(rank,[],[]) -> t.MakeArrayType rank
+        | shape -> upcast GenericArrayType(t, shape)
+
+    | E.CLASS -> readTypeDefOrRefEncoded s |> resolveType env
+    | E.FNPTR -> upcast FnptrType(readSigAny env s)
+
+and readRetOrParam env s =
+    let rec aux ms s =
+        match readElementType s with
+        | (E.CMOD_OPT | E.CMOD_REQD) as a ->
+            let m = Mod((a = E.CMOD_OPT), resolveType env (readTypeDefOrRefEncoded s))
+            aux (m::ms) s
+
+        | E.BYREF -> Param(true, List.rev ms, readType env s)
+        | E.TYPEDBYREF -> Param(false, List.rev ms, typeof<TypedReference>)
+        | E.VOID -> Param(false, List.rev ms, typeof<Void>)
+        | e -> Param(false, List.rev ms, readTypeTail e env s)
+    aux [] s
+
+and readParamAndVarargParams count s =
+    let rec aux ps vs count s =
+        if count = 0 then
+        match readElementType s with
+        | E.SENTINEL ->
+
+and readSigAny env s =
+    let attr = enum(int (readU1 s))
+    let genParamCount = if attr &&& M.GENERIC = M.GENERIC then readNumber s else 0
+
+    let paramCount = readNumber s
+    let retType = readRetOrParam env s
+    let genParams = readCount (readRetOrParam env) genParamCount s
+
+    let methodParams, varargParams = readParamAndVarargParams paramCount s
+    Sig(attr, retType, genParams, methodParams, varargParams)
+
+
+//open ELEMENT_TYPE
+//
+//thisKind = HASTHIS EXPLICITTHIS?
+
+//type =
+//    | BOOLEAN
+//    | CHAR
+//    | I1
+//    | U1
+//    | I2
+//    | U2
+//    | I4
+//    | U4
+//    | I8
+//    | U8
+//    | R4
+//    | R8
+//    | I
+//    | U
+//    | ARRAY type arrayShape // general array
+//    | CLASS typeDefOrRefEncoded
+//    | FNPTR methodDefSig
+//    | FNPTR methodRefSig
+//    | GENERICINST (CLASS | VALUETYPE) typeDefOrRefEncoded (genArgCount: number) type*
+//    | MVAR number
+//    | OBJECT
+//    | PTR customMod* type
+//    | PTR customMod* VOID
+//    | STRING
+//    | SZARRAY customMod* type // zsarray
+//    | VALUETYPE typeDefOrRefEncoded
+//    | VAR number
+//
+//customMod = (CMOD_OPT | CMOD_REQD) typeDefOrRefEncoded
+//
+//retType = customMod* (BYREF? type | TYPEDBYREF | VOID)
+//param = customMod* (BYREF? type | TYPEDBYREF)
+//
+//methodDefSigHead =
+//    | (thisKind? ||| (DEFAULT | VARARG)) 
+//    | (thisKind? ||| GENERIC) (genParamCount: number)
+//
+//methodDefSig = methodDefSigHead (paramCount: number) retType param*
+//methodRefSig =
+//    | (thisKind? ||| VARARG) (paramCount: number) retType param* SENTINEL param*
+//    | methodDefSig
+//
+//standAloneMethodSigAttr =
+//    | DEFAULT
+//    | C
+//    | STDCALL
+//    | THISCALL
+//    | FASTCALL
+//
+//standAloneMethodSig =
+//    | (thisKind? ||| standAloneMethodSigAttr) (paramCount: number) retParam param*
+//    | (thisKind? ||| VARARG) (paramCount: number) retParam param* (SENTINEL param*)?
+
+
+type SignatureInfo =
+    | StandAloneMethodSig
+
+type Operand =
+    | InlineBrTarget of int32
+    | InlineField of FieldInfo
+    | InlineI4 of int32
+    | InlineI8 of int64
+    | InlineMethod of MethodBase
+    | InlineNone
+    | InlineR of double
+    | InlineSig of SignatureInfo
+    
+let readOperand ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) s = function 
+    | O.InlineBrTarget -> InlineBrTarget <| readI4 s + s.index
+    | O.InlineField ->
+        let md = readI4 s
+        InlineField <| resolve (fun m -> m.ResolveField(md, targs, mtargs)) env
+
+    | O.InlineI -> InlineI4 <| readI4 s
+    | O.InlineI8 -> InlineI8 <| readI8 s
+    | O.InlineMethod -> 
+        let md = readI4 s
+        InlineMethod <| resolve (fun m -> m.ResolveMethod(md, targs, mtargs)) env
+
+    | O.InlineNone -> InlineNone
+    | O.InlineR -> InlineR <| readF8 s
+    | O.InlineSig ->
+        let md = readI4 s
+        resolve (fun m -> m.ResolveSignature md) env |> printf "signature (%A)"
+
+    | O.InlineString ->
+        let md = readI4 s
+        resolve (fun m -> m.ResolveString md) env |> printString '"'
+
+    | O.InlineSwitch -> 
+        let count = readI4 s
+        let offset = s.index + count * 4
+
+        Seq.init count (fun _ -> offset + readI4 s)
+        |> printTupleLike printBr
+
+    | O.InlineTok -> 
+        let tok = readI4 s
+        resolve (fun m -> m.ResolveMember(tok, targs, mtargs)) env |> function 
+        | :? FieldInfo as x -> printField x
+        | :? MethodBase as x -> printMethod x
+        | :? Type as x -> printType x
+        | _ -> printf "member(%06X)" tok
+
+    | O.InlineType ->
+        let md = readI4 s
+        printType <| resolve (fun m -> m.ResolveType(md, targs, mtargs)) env
+
     | O.InlineVar -> printf "%d" <| int32 (readI2 s)
     | O.ShortInlineBrTarget -> printBr <| int (readI1 s) + s.index
     | O.ShortInlineI -> printf "%dy" <| readI1 s
@@ -167,8 +575,6 @@ let readOpValue s =
     match readU1 s with
     | 0xFEuy -> (0xFEs <<< 8) ||| int16 (readU1 s)
     | v -> int16 v
-
-type C = System.Reflection.ExceptionHandlingClauseOptions
 
 let printIndent i = for _ in 1..i do printf "    "
 
