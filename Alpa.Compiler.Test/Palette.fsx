@@ -431,30 +431,30 @@ let readNumber s =
         let v4 = int <| readU1 s
         ((v1 &&& 0b00011111) <<< 24) ||| (v2 <<< 16) ||| (v3 <<< 8) ||| v4
 
-let test () =
-    let test orig comp =
-        let decomp = readNumber (makeStream comp)
-        if decomp <> orig then failwithf "comp: %A, decomp: %A, orig: %A" comp decomp orig
-
-    test 0x03 "\x03"B
-    test 0x7F "\x7F"B
-    test 0x80 "\x80\x80"B
-    test 0x2E57 "\xAE\x57"B
-    test 0x3FFF "\xBF\xFF"B
-    test 0x4000 "\xC0\x00\x40\x00"B
-    test 0x1FFFFFFF "\xDF\xFF\xFF\xFF"B
-
-    0b11
-    0b110
-
-    //test 3 "\x06"B
-    //test -3 "\x7B"B
-    //test 64 "\x80\x80"B
-    //test -64 "\x01"B
-    //test 8192 "\xC0\x00\x40\x00"B
-    //test -8192 "\x80\x01"B
-    //test 268435455 "\xDF\xFF\xFF\xFE"B
-    //test -268435456 "\xC0\x00\x00\x01"B
+//let test () =
+//    let test orig comp =
+//        let decomp = readNumber (makeStream comp)
+//        if decomp <> orig then failwithf "comp: %A, decomp: %A, orig: %A" comp decomp orig
+//
+//    test 0x03 "\x03"B
+//    test 0x7F "\x7F"B
+//    test 0x80 "\x80\x80"B
+//    test 0x2E57 "\xAE\x57"B
+//    test 0x3FFF "\xBF\xFF"B
+//    test 0x4000 "\xC0\x00\x40\x00"B
+//    test 0x1FFFFFFF "\xDF\xFF\xFF\xFF"B
+//
+//    0b11
+//    0b110
+//
+//    //test 3 "\x06"B
+//    //test -3 "\x7B"B
+//    //test 64 "\x80\x80"B
+//    //test -64 "\x01"B
+//    //test 8192 "\xC0\x00\x40\x00"B
+//    //test -8192 "\x80\x01"B
+//    //test 268435455 "\xDF\xFF\xFF\xFE"B
+//    //test -268435456 "\xC0\x00\x00\x01"B
 
 let readArrayShape s =
     ArrayShape(
@@ -480,42 +480,13 @@ let readModsTail elementType env s =
 
     aux [] elementType s
 
-
-let x = System.Array.CreateInstance(typeof<int>, [|3|], [|1|])
-x.GetType() <> typeof<int[]>
-x.Get
-
-#load @"C:\Users\pc-2\project\Sandbox\Alpa.Compiler.Test\Alpa.IL.Helpers.fsx"
-open Alpa.IL.Helpers
-
-ilasm (System.IO.Path.Combine(__SOURCE_DIRECTORY__, "test.dll")) "
-
-.assembly extern mscorlib {}
-.assembly test {}
-
-.class public test.T1
-{
-    .field public static int32[2...,3...] F1
-}
-"
-#r "./test.dll"
-let f = global.test.T1.F1
-typeof<global.test.T1>.GetField("F1").FieldType = typeof<int[,]>
-
-type GeneralArrayType(elementType: Type, shape: ArrayShape) =
-    inherit Type()
-    let o = Array.CreateInstance(elementType, )
-//    override __.GetNestedType(_,_) = null
-//    override __.GetMembers()
-
-type FnptrType(signature: MethodSig) = inherit Type()
-type ModifiedType(m: Mod, ms: Mod list, t: Type) = inherit Type()
-
 let readMods env s = readModsTail (readElementType s) env s
 let makeModType ms t =
     match ms with
     | [] -> t
-    | m::ms -> ModifiedType(m, ms, t) :> Type
+    | _ ->
+        // TODO: ModifiedType
+        t
     
 let rec readModsAndType env s =
     let ms, et = readMods env s
@@ -542,12 +513,18 @@ and readTypeTail elementType ({ TypeArgs = vars; MethodTypeArgs = mvars } as env
     | E.ARRAY ->
         let t = readType env s
         match readArrayShape s with
-        | ArrayShape(0,[],[]) -> t.MakeArrayType()
-        | ArrayShape(rank,[],[]) -> t.MakeArrayType rank
-        | shape -> upcast GeneralArrayType(t, shape)
+        | ArrayShape(1,[],([]|[0])) -> t.MakeArrayType()
+        | ArrayShape(1,[],[loBound]) -> Array.CreateInstance(t, [|0|], [|loBound|]).GetType()
+        | ArrayShape(rank,_,_) ->
+            // TODO: GeneralArrayType
+            t.MakeArrayType rank
 
     | E.CLASS -> readTypeDefOrRefEncoded env s
-    | E.FNPTR -> upcast FnptrType(readAnyMethodSig env s)
+    | E.FNPTR ->
+        let methodSig = readAnyMethodSig env s
+        // TODO: FnptrType
+        typeof<nativeint>
+
     | E.GENERICINST ->
         match readElementType s with
         | E.CLASS
@@ -579,7 +556,9 @@ and readRetOrParamTail elementType env s =
     let ms, et = readModsTail elementType env s
     match et with
     | E.BYREF -> Param(true, ms, readType env s)
-    | E.TYPEDBYREF -> Param(false, ms, typeof<TypedReference>)
+    | E.TYPEDBYREF ->
+        <@ typeof<System.TypedReference> @>
+        Param(false, ms, new TypedReference().GetType())
     | E.VOID -> Param(false, ms, typeof<Void>)
     | _ -> Param(false, ms, readTypeTail et env s)
 
