@@ -267,7 +267,7 @@ let printOperand ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) s =
 //    | PTR customMod* type
 //    | PTR customMod* VOID
 //    | STRING
-//    | SZARRAY customMod* type // zsarray
+//    | SZARRAY customMod* type // szarray
 //    | VALUETYPE typeDefOrRefEncoded
 //    | VAR number
 //
@@ -369,9 +369,9 @@ let readArrayShape s =
         readCount readNumber (readNumber s) s
     )
 
-let readTypeDefOrRefEncoded s =
+let readTypeDefOrRefEncoded env s =
     let n = uint32 <| readNumber s
-    int32 ((n &&& 0b11u <<< 24) ||| (n >>> 2))
+    resolveType env <| int32 ((n &&& 0b11u <<< 24) ||| (n >>> 2))
 
 type E = ELEMENT_TYPE
 
@@ -383,24 +383,54 @@ type Mod = Mod of isOpt: bool * Type
 type Param = Param of isByref: bool * Mod list * Type
 type Sig = Sig of MethodAttr * retType: Param * genParams: Param list * methodParams: Param list * varargParams: Param list
 
-[<Sealed>]
-type GenericArrayType(elementType: Type, shape: ArrayShape) =
-    inherit Type()
+type GeneralArrayType(elementType: Type, shape: ArrayShape) = inherit Type()
 //    override __.IsArrayImpl() = true
 //    override __.HasElementTypeImpl() = true
 //    override __.GetElementType() = elementType
+type FnptrType(signature: Sig) = inherit Type()
+type ModifiedType(m: Mod, ms: Mod list, t: Type) = inherit Type()
 
-[<Sealed>]
-type FnptrType(signature: Sig) =
-    inherit Type()
+let readModsTail elementType env s =
+    let rec aux ms et s =
+        match et with
+        | E.CMOD_OPT
+        | E.CMOD_REQD as et ->
+            let m = Mod((et = E.CMOD_OPT), readTypeDefOrRefEncoded env s)
+            aux (m::ms) (readElementType s) s
 
+        | e -> List.rev ms, e
 
-let ruadCustomModTail elementType env s =
-    let md = readTypeDefOrRefEncoded s
-    Mod((elementType = E.CMOD_OPT), resolveType env md)
+    aux [] elementType s
+
+let readMods env s = readModsTail (readElementType s) env s
+
+#load @"C:\Users\pc-2\project\Sandbox\Alpa.Compiler.Test\Alpa.IL.Helpers.fsx"
+open Alpa.IL.Helpers
+
+opMap
+|> Seq.choose (function KeyValue(_,v) -> match v.OperandType with OperandType.InlineSig | OperandType.InlineTok -> Some v | _ -> None)
+|> Seq.toList
+
+ilasm (System.IO.Path.Combine(__SOURCE_DIRECTORY__, "test.dll")) "
+.assembly test {}
+.assembly extern mscorlib
+{
+  .publickeytoken = (B7 7A 5C 56 19 34 E0 89)
+  .ver 4:0:0:0
+}
+
+.class public test.T1
+{
+    .field public static method $callConv $type *($sigArgs0) F1
+}
+"
+
+#r "./test.dll"
+let t = test.T1.M3()
+
 
 let rec readType env s = readTypeTail (readElementType s) env s
-and readTypeTail elementType env s =
+and readTypeTail elementType ({ TypeArgs = vars; MethodTypeArgs = mvars } as env) s =
     match elementType with
     | E.BOOLEAN -> typeof<bool>
     | E.CHAR -> typeof<char>
@@ -421,7 +451,7 @@ and readTypeTail elementType env s =
         match readArrayShape s with
         | ArrayShape(0,[],[]) -> t.MakeArrayType()
         | ArrayShape(rank,[],[]) -> t.MakeArrayType rank
-        | shape -> upcast GenericArrayType(t, shape)
+        | shape -> upcast GeneralArrayType(t, shape)
 
     | E.CLASS -> readTypeDefOrRefEncoded s |> resolveType env
     | E.FNPTR -> upcast FnptrType(readSigAny env s)
@@ -430,54 +460,42 @@ and readTypeTail elementType env s =
         let md = readTypeDefOrRefEncoded s
         let genArgCount = readNumber s
         let typeArgs = readCount (readType env) genArgCount s
-
         let openType = resolveType env md
         openType.MakeGenericType(List.toArray typeArgs)
 
-    | E.MVAR ->
-        let i = readNumber s
-        env.MethodTypeArgs.[i]
+    | E.MVAR -> Array.item (readNumber s) vars
 
     | E.OBJECT -> typeof<obj>
     | E.PTR ->
-        let rec aux ms s =
-            match readElementType s with
-            | E.CMOD_OPT
-            | E.CMOD_REQD as et ->
-                let m = ruadCustomModTail et env s
-                aux (m::ms) s
-
-            | e ->
-                let t = if e = E.VOID then typeof<Void> else readTypeTail e env s
-                match ms with
-                | [] -> t.MakePointerType()
-                | ms -> upcast PointerType(List.rev ms, t)
-        aux [] s
+        let ms, et = readMods env s
+        let t = if et = E.VOID then typeof<Void> else readTypeTail et env s
+        let t = t.MakePointerType()
+        match ms with
+        | [] -> t
+        | m::ms -> upcast ModifiedType(m, ms, t)
 
     | E.STRING -> typeof<string>
-    | E.SZARRAY -> readCustomModsAndType
-    | E.VALUETYPE ->
-    | E.VAR ->
+    | E.SZARRAY ->
+        let ms, et = readMods env s
+        let t = readTypeTail et env s
+        let t = t.MakeArrayType()
+        match ms with
+        | [] -> t
+        | m::ms -> upcast ModifiedType(m, ms, t)
 
-//type =
-//    | STRING
-//    | SZARRAY customMod* type // zsarray
-//    | VALUETYPE typeDefOrRefEncoded
-//    | VAR number
+    | E.VALUETYPE -> readTypeDefOrRefEncoded env s
+    | E.VAR -> Array.item (readNumber s) vars
+    | _ -> failwith ""
 
-and readRetOrParamTail elementType ms env s =
-    match elementType with
-    | E.CMOD_OPT
-    | E.CMOD_REQD ->
-        let m = ruadCustomModTail elementType env s
-        readRetOrParamTail (readElementType s) (m::ms) env s
+and readRetOrParamTail elementType env s =
+    let ms, et = readModsTail elementType env s
+    match et with
+    | E.BYREF -> Param(true, ms, readType env s)
+    | E.TYPEDBYREF -> Param(false, ms, typeof<TypedReference>)
+    | E.VOID -> Param(false, ms, typeof<Void>)
+    | _ -> Param(false, ms, readTypeTail et env s)
 
-    | E.BYREF -> Param(true, List.rev ms, readType env s)
-    | E.TYPEDBYREF -> Param(false, List.rev ms, typeof<TypedReference>)
-    | E.VOID -> Param(false, List.rev ms, typeof<Void>)
-    | e -> Param(false, List.rev ms, readTypeTail e env s)
-
-and readRetOrParam env s = readRetOrParamTail (readElementType s) [] env s
+and readRetOrParam env s = readRetOrParamTail (readElementType s) env s
 
 and readParamAndVarargParams count env s =
     let rec aux isVararg ps vs count =
@@ -486,7 +504,7 @@ and readParamAndVarargParams count env s =
             match readElementType s with
             | E.SENTINEL -> aux true ps vs count
             | e ->
-                let p = readRetOrParamTail e [] env s
+                let p = readRetOrParamTail e env s
                 let ps, vs = if isVararg then ps, (p::vs) else (p::ps), vs
                 aux isVararg ps vs (count - 1)
 
