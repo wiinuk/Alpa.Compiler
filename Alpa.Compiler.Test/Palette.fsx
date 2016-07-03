@@ -340,7 +340,7 @@ type SigKind =
     | VARARG        = 0x05
     | FIELD         = 0x06
     | LOCAL_SIG     = 0x07
-    //| GENERICINST   = 0x0A
+    | GENERICINST   = 0x0A
 
 type ELEMENT_TYPE =
     | VOID          = 0x01
@@ -417,6 +417,16 @@ type Local = {
 type LocalSig = {
     locals: Local list
 }
+type MethodSpecSig = {
+    retType: Type
+    genArgs: Type list
+}
+type SignatureInfo =
+    | FieldSig of FieldSig
+    | PropertySig of PropertySig
+    | LocalSig of LocalSig
+    | MethodSig of MethodSig
+    | MethodSpecSig of MethodSpecSig
 
 let hasFlag v f = v &&& f = f
 
@@ -470,12 +480,16 @@ let readTypeDefOrRefEncoded env s =
 let readElementType s = enum(int (readU1 s))
 let readSigKind s = enum(int (readU1 s))
 
+/// require: e = ELEMENT_TYPE.CMOD_OPT || e = ELEMENT_TYPE.CMOD_REQD
 let readModTail e env s = Mod((e = E.CMOD_OPT), readTypeDefOrRefEncoded env s)
 let readModsTail elementType env s =
     let rec aux ms et s =
         match et with
         | E.CMOD_OPT
-        | E.CMOD_REQD -> let m = readModTail et env s in aux (m::ms) (readElementType s) s
+        | E.CMOD_REQD ->
+            let m = readModTail et env s
+            aux (m::ms) (readElementType s) s
+
         | _ -> List.rev ms, et
 
     aux [] elementType s
@@ -487,7 +501,9 @@ let makeModType ms t =
     | _ ->
         // TODO: ModifiedType
         t
-    
+
+let typeofTypedReference() = typeof<int>.Assembly.GetType("System.TypedReference", true)
+
 let rec readModsAndType env s =
     let ms, et = readMods env s
     let t = readTypeTail et env s
@@ -529,7 +545,7 @@ and readTypeTail elementType ({ TypeArgs = vars; MethodTypeArgs = mvars } as env
         match readElementType s with
         | E.CLASS
         | E.VALUETYPE -> ()
-        | _ -> failwith ""
+        | e -> failwithf "invalid ElementType %A (GENERICINST)" e
 
         let openType = readTypeDefOrRefEncoded env s
         let genArgCount = readNumber s
@@ -550,15 +566,13 @@ and readTypeTail elementType ({ TypeArgs = vars; MethodTypeArgs = mvars } as env
 
     | E.VALUETYPE -> readTypeDefOrRefEncoded env s
     | E.VAR -> Array.item (readNumber s) vars
-    | _ -> failwith ""
+    | e -> failwithf "invalid ElementType %A (Type)" e
 
 and readRetOrParamTail elementType env s =
     let ms, et = readModsTail elementType env s
     match et with
     | E.BYREF -> Param(true, ms, readType env s)
-    | E.TYPEDBYREF ->
-        <@ typeof<System.TypedReference> @>
-        Param(false, ms, new TypedReference().GetType())
+    | E.TYPEDBYREF -> Param(true, ms, typeofTypedReference())
     | E.VOID -> Param(false, ms, typeof<Void>)
     | _ -> Param(false, ms, readTypeTail et env s)
 
@@ -603,6 +617,68 @@ and readAnyMethodSigTail kind env s =
         varargParams = varargParams
     }
 and readAnyMethodSig env s = readAnyMethodSigTail (readSigKind s) env s
+
+let readFieldSigTail env s =
+    let ms, t = readModsAndType env s
+    { mods = ms; fieldType = t }
+
+let readPropertySig k env s =
+    let paramCount = readNumber s
+    let ms, t = readModsAndType env s
+    let ps = readCount (readRetOrParam env) paramCount s
+    {
+        hasThis = hasFlag k K.HASTHIS
+        mods = ms
+        propType = t
+        propParams = ps
+    }
+
+let readLocal env s =
+    let rec aux isPinned ms = function
+        | E.TYPEDBYREF ->
+            {
+                mods = []
+                isPinned = false
+                isByref = false
+                localType = typeofTypedReference()
+            }
+        | E.BYREF ->
+            {
+                mods = List.rev ms
+                isPinned = isPinned
+                isByref = true
+                localType = readType env s
+            }
+        | E.PINNED -> aux isPinned ms (readElementType s)
+        | E.CMOD_OPT 
+        | E.CMOD_REQD as e ->
+            let m = readModTail e env s
+            aux isPinned (m::ms) (readElementType s)
+
+        | e -> failwithf "invalid ElementType %A (Local)" e
+
+    aux false [] (readElementType s)
+
+let readLocalVarSigTail env s =
+    let count = readNumber s
+    { locals = readCount (readLocal env) count s }
+
+let readMethodSpec env s =
+    let genArgCount = readNumber s
+    let t = readType env s
+    let ts = readCount (readType env) genArgCount s
+    {
+        retType = t
+        genArgs = ts
+    }
+
+let readSig env s =
+    match readSigKind s with
+    | K.FIELD -> readFieldSigTail env s |> FieldSig
+    | K.LOCAL_SIG -> readLocalVarSigTail env s |> LocalSig
+    | K.GENERICINST -> readMethodSpec env s |> MethodSpecSig
+    | k when hasFlag k K.PROPERTY -> readPropertySig k env s |> PropertySig
+    | k -> failwithf ""
 
 type Operand =
     | InlineI1 of int8
@@ -798,3 +874,21 @@ print <@ y @>
 
 try print <@ tryf @>
 with e -> printfn "%A" e
+
+
+let s() =
+    let d = System.AppDomain.CurrentDomain
+    let a = d.DefineDynamicAssembly(AssemblyName "test", AssemblyBuilderAccess.ReflectionOnly)
+    let f = a.DefineDynamicModule "test.dll"
+
+    let fsig = SignatureHelper.GetFieldSigHelper f
+    fsig.AddSentinel()
+    fsig.AddArgument(typeof<int>, true)
+
+    let env = {
+        Modules = [f]
+        TypeArgs = Type.EmptyTypes
+        MethodTypeArgs = Type.EmptyTypes
+        Handlers = [||]
+    }
+    parseSig env <| fsig.GetSignature()
