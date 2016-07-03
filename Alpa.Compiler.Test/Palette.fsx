@@ -678,7 +678,7 @@ let readSig env s =
     | K.LOCAL_SIG -> readLocalVarSigTail env s |> LocalSig
     | K.GENERICINST -> readMethodSpec env s |> MethodSpecSig
     | k when hasFlag k K.PROPERTY -> readPropertySig k env s |> PropertySig
-    | k -> failwithf ""
+    | k -> readAnyMethodSigTail k env s |> MethodSig
 
 type Operand =
     | InlineI1 of int8
@@ -699,7 +699,7 @@ type Operand =
     | InlineVar of int16
     | InlineVarI1 of int8
 
-let parseSig env xs = readAnyMethodSig env <| makeStream xs
+let parseMethodSig env xs = readAnyMethodSig env <| makeStream xs
 
 let readOperand ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) s = function 
     | O.InlineBrTarget -> InlineBrTarget <| readI4 s
@@ -718,7 +718,7 @@ let readOperand ({ TypeArgs = targs; MethodTypeArgs = mtargs } as env) s = funct
     | O.InlineSig ->
         let md = readI4 s
         resolve (fun m -> m.ResolveSignature md) env
-        |> parseSig env
+        |> parseMethodSig env
         |> InlineSig
 
     | O.InlineString ->
@@ -861,20 +861,46 @@ let getMethod e =
     |> Option.get
 
 let print e = getMethod e |> printMethodBase; printfn ""
-let x() = [|20n; 30n|]
-let app f x = f x
 
 let tryf() = try 1 / 0 with :? DivideByZeroException -> 0
+let x() = [|20n; 30n|]
+let app f x = f x
+let f() =
+    let y() = [|1s;2s|]
+    print <@ y @>
 
-// print <@ let mutable x = ResizeArray.Enumerator() in x.MoveNext() @>
+    try print <@ tryf @>
+    with e -> printfn "%A" e
 
 
-let y() = [|1s;2s|]
-print <@ y @>
+type CC = System.Reflection.CallingConventions
+let s = SignatureHelper.GetMethodSigHelper(CC.Standard, typeof<Void>)
+let bs = s.GetSignature()
 
-try print <@ tryf @>
-with e -> printfn "%A" e
 
+let env = {
+    Modules = []
+    TypeArgs = Type.EmptyTypes
+    MethodTypeArgs = Type.EmptyTypes
+    Handlers = [||]
+}
+
+let writeMethodSig
+    {
+        thisKind = thisKind
+        callKind = callKind
+        retType = retType
+        genParams = genParams
+        methodParams = methodParams
+        varargParams = varargParams
+    } =
+    CC.ExplicitThis
+    CC.HasThis
+    CC.Standard
+    CC.VarArgs
+    SignatureHelper.GetMethodSigHelper()
+
+parseMethodSig env bs
 
 let s() =
     let d = System.AppDomain.CurrentDomain
@@ -891,4 +917,4 @@ let s() =
         MethodTypeArgs = Type.EmptyTypes
         Handlers = [||]
     }
-    parseSig env <| fsig.GetSignature()
+    parseMethodSig env <| fsig.GetSignature()
