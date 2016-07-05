@@ -84,9 +84,9 @@ let writeMethodSig
     let addParams pars (s: SignatureHelper) =
         for Param(isByref, mods, t) in pars do
             let t = if isByref then t.MakeByRefType() else t
-            let reqs = Seq.choose (function Mod(isOpt,t) -> if not isOpt then Some t else None) mods |> Seq.toArray
-            let opts = Seq.choose (function Mod(isOpt,t) -> if isOpt then Some t else None) mods |> Seq.toArray
-            s.AddArgument(t, reqs, opts)
+            let opts, reqs = List.partition (function Mod(isOpt=isOpt) -> isOpt) mods
+            let getTypes xs = Seq.map (function Mod(_,t) -> t) xs |> Seq.toArray
+            s.AddArgument(t, getTypes reqs, getTypes opts)
 
     let (Param(isByref, mods, retType)) = retType
     let tk =

@@ -291,6 +291,24 @@ namespace ConsoleApplication1
         }
     }
 
+    public struct StructBox<T>
+    {
+        public T Value;
+        public long A;
+        public long B;
+        public long C;
+        public long D;
+    }
+
+    public class ClassBox<T>
+    {
+        public T Value;
+        public long A;
+        public long B;
+        public long C;
+        public long D;
+    }
+
     static class Program
     {
         public static bool RetBool() => true;
@@ -304,6 +322,23 @@ namespace ConsoleApplication1
         public static T Default<T>() => default(T);
 
         public static string Show<T>(T x) => x.ToString();
+
+        public static unsafe void LoadRef()
+        {
+            var n = 10;
+            var np = &n;
+            *np = 20;
+            var n2 = *np;
+        }
+
+        public static void Field()
+        {
+            var x = new StructBox<StructBox<int>>();
+            var n = x.Value.Value;
+
+            var x2 = new ClassBox<ClassBox<int>>();
+            var n2 = x2.Value.Value;
+        }
 
         public static void Main(string[] args)
         {

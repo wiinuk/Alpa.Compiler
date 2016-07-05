@@ -35,7 +35,7 @@ type MethodRef =
     | MethodRef of 
         thisType: TypeSpec *
         name: MethodName *
-        anntation: MethodTypeAnnotation option
+        annotation: MethodTypeAnnotation option
 
 type Operand =
     | OpNone
