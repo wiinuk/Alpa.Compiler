@@ -331,13 +331,11 @@ namespace ConsoleApplication1
             var n2 = *np;
         }
 
-        public static void Field()
+        public static void StructField()
         {
             var x = new StructBox<StructBox<int>>();
+            x.Value.Value = 10;
             var n = x.Value.Value;
-
-            var x2 = new ClassBox<ClassBox<int>>();
-            var n2 = x2.Value.Value;
         }
 
         public static void Main(string[] args)

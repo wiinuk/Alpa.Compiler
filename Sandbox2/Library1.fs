@@ -34,6 +34,7 @@ module X =
         let n2 = nr
         ()
 
-    let field() =
+    let structField() =
         let mutable a = StructBox<StructBox<_>>()
+        a.Value.Value <- 10
         a.Value.Value
