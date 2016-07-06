@@ -67,12 +67,15 @@ let envOfMethodBase (m : MethodBase) =
         Handlers = Seq.toArray <| m.GetMethodBody().ExceptionHandlingClauses
     }
 
+type Box<'a> = { Value: 'a }
+let Box a = { Value = a }
+
 let opMap = 
     let xs = 
         typeof<OpCodes>.GetFields()
         |> Seq.map (fun f -> f.GetValue null)
-        |> Seq.choose (function :? OpCode as x -> Some x | _ -> None)
-        |> Seq.map (fun x -> x.Value, x)
+        |> Seq.choose (function :? OpCode as x -> Some(Box x) | _ -> None)
+        |> Seq.map (fun x -> x.Value.Value, x)
         |> dict
     Dictionary xs
     
@@ -721,7 +724,6 @@ let readOpValue s =
     | v -> int16 v
 
 let printIndent i = for _ in 1..i do printf "    "
-
 let printBlockStart i { Handlers = hs } offset =
     let h =
         hs 
@@ -779,8 +781,8 @@ let printInstr i env s =
     let i = printBlockStart i env offset
     printIndent i
     printBr offset
-    printf " %s " op.Name
-    printOperand env s op.OperandType
+    printf " %s " op.Value.Name
+    printOperand env s op.Value.OperandType
     printBlockEnd i env s.index
 
 let printIL env s = 
@@ -833,5 +835,11 @@ let getMethod e =
         | _ -> None
     ) e
     |> Option.get
+    
+let getOpenMethod (m: MethodBase) =
+    match m with
+    | :? MethodInfo as m when m.IsGenericMethod -> m.GetGenericMethodDefinition() :> MethodBase
+    | m -> m
 
 let print e = getMethod e |> printMethodBase; printfn ""
+let printDef e = getMethod e |> getOpenMethod |> printMethodBase; printfn ""

@@ -38,3 +38,16 @@ module X =
         let mutable a = StructBox<StructBox<_>>()
         a.Value.Value <- 10
         a.Value.Value
+
+    let setRef (r1: int byref) (r2: int nativeptr) (r3: nativeint) (r4: unativeint) =
+        r1 <- 10
+        NativeInterop.NativePtr.write r2 10
+        NativeInterop.NativePtr.write<int> (NativeInterop.NativePtr.ofNativeInt r3) 10
+        NativeInterop.NativePtr.write<int> (NativeInterop.NativePtr.ofNativeInt(nativeint r4)) 10
+        ()
+
+    let setRefGeneric (p: _ nativeptr) x = NativeInterop.NativePtr.write p x
+
+    let get (xs: _ array) i =
+        [|0|].[0] |> ignore
+        xs.[i]

@@ -308,7 +308,7 @@ namespace ConsoleApplication1
         public long C;
         public long D;
     }
-
+    
     static class Program
     {
         public static bool RetBool() => true;
@@ -330,6 +330,29 @@ namespace ConsoleApplication1
             *np = 20;
             var n2 = *np;
         }
+        public unsafe static void SetRef(ref int r1, int* r2, IntPtr r3, UIntPtr r4)
+        {
+            r1 = 10;
+            *r2 = 10;
+            *(int*)r3 = 10;
+            *(int*)r4 = 10;
+        }
+        public unsafe static void RefElemType(int* n)
+        {
+            var n0 = (IntPtr)10;
+            var r0 = &n0;
+            var v0 = *r0;
+
+            var n1 = (UIntPtr)10;
+            var r1 = &n1;
+            var v1 = *r1;
+            
+            var n2 = n;
+            var r2 = &n2;
+            var v2 = *r2;
+        }
+
+        public static T ArrayElem<T>(T[] xs) => xs[0];
 
         public static void StructField()
         {

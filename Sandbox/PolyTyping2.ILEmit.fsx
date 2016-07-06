@@ -113,17 +113,18 @@ type CExp =
     ///     string::Equals(string, string)(a, b);
     ///     "".Equals(string)(null)
     | ICall of Choice<CExp, Type> * Choice<string, MethodRef> * CExp list
-    /// ex: x.Value; String.Empty
-    | GetField of Choice<CExp, Type> * fieldName: string
 
-    /// ex: x.&Value
-    | FieldRef of Choice<CExp, Type> * fieldName: string
-    /// ex: &a
+    /// ex: x.Value; String.Empty
+    | Field of Choice<CExp, Type> * fieldName: string
+
+    /// ex: &e
     | NVarRef of Var
-    /// ex: &0
+    /// ex: &$0
     | AVarRef of int
-    /// ex: xs.&[i]
-    | ArrayElemRef of CExp * CExp
+    /// ex: x.&F; T.&F
+    | FieldRef of Choice<CExp, Type> * fieldName: string
+    /// ex: x.&[n]
+    | ArrayElemRef of CExp * index: CExp
 
     /// ex: upcast "" IEquatable`1(string)
     | Upcast of CExp * Type
@@ -137,13 +138,13 @@ type CExp =
 
     /// ex: *r
     | RefRead of CExp
-    /// ex: r *<- 10
-    | MRefWrite of CExp * CExp
+    /// ex: r *<- 10; 0
+    | MRefWrite of ref: CExp * value: CExp * cont: CExp
 
-    /// ex: initobj &a // initobj<'T when 'T : not struct> : ('T byref | 'T nativeptr | nativeint | unativeint) -> void
-    | Initobj of CExp
+    /// ex: initobj &a: 10;
+    | Initobj of CExp * CExp
     /// ex: newobj string('a', 10i)
-    | Newobj of Type * CExp list
+    | Newobj of Choice<Type, MethodRef> * CExp list
 
 type O = System.Reflection.Emit.OpCodes
 
@@ -218,8 +219,25 @@ let ldind env = function
         | _ ->
             let t' = solveType env t
             if t' = typeof<nativeint> || t' = typeof<unativeint> then Instr("", O.Ldind_I, OpNone)
-            elif t'.IsValueType then Instr("", O.Ldobj, OpType t)
+            elif t'.IsValueType || t'.IsGenericParameter then Instr("", O.Ldobj, OpType t)
             else Instr("", O.Ldind_Ref, OpNone)
+
+let stind env = function
+    | TypeSpec.Pointer _ -> Instr("", O.Stind_I, OpNone)
+    | TypeSpec.Array _ -> Instr("", O.Stind_Ref, OpNone)
+    | t ->
+        match getTypeCode t with
+        | C.SByte -> Instr("", O.Stind_I1, OpNone)
+        | C.Int16 -> Instr("", O.Stind_I2, OpNone)
+        | C.Int32 -> Instr("", O.Stind_I4, OpNone)
+        | C.Int64 -> Instr("", O.Stind_I8, OpNone)
+        | C.Single -> Instr("", O.Stind_R4, OpNone)
+        | C.Double -> Instr("", O.Stind_R8, OpNone)
+        | _ ->
+            let t' = solveType env t
+            if t' = typeof<nativeint> || t' = typeof<unativeint> then Instr("", O.Stind_I, OpNone)
+            elif t'.IsValueType || t'.IsGenericParameter then Instr("", O.Stobj, OpType t)
+            else Instr("", O.Stind_Ref, OpNone)
 
 let ldelem env = function
     | TypeSpec.Pointer _ -> Instr("", O.Ldelem_I, OpNone)
@@ -238,7 +256,7 @@ let ldelem env = function
         | _ ->
             let t' = solveType env t
             if t' = typeof<nativeint> || t' = typeof<unativeint> then Instr("", O.Ldelem_I, OpNone)
-            elif t'.IsValueType then Instr("", O.Ldelem, OpType t)
+            elif t'.IsValueType || t'.IsGenericParameter then Instr("", O.Ldelem, OpType t)
             else Instr("", O.Ldelem_Ref, OpNone)
 
 let stelem env = function
@@ -255,19 +273,16 @@ let stelem env = function
         | _ ->
             let t' = solveType env t
             if t' = typeof<nativeint> || t' = typeof<unativeint> then Instr("", O.Stelem_I, OpNone)
-            elif t'.IsValueType then Instr("", O.Stelem, OpType t)
+            elif t'.IsValueType || t'.IsGenericParameter then Instr("", O.Stelem, OpType t)
             else Instr("", O.Stelem_Ref, OpNone)
 
 let emitLit = function
-    | LitB x ->
-        if x then Instr("", O.Ldc_I4_1, OpNone), boolT
-        else Instr("", O.Ldc_I4_0, OpNone), boolT
-
+    | LitB x when x -> Instr("", O.Ldc_I4_1, OpNone), boolT
+    | LitB _ -> Instr("", O.Ldc_I4_0, OpNone), boolT
     | LitI1 x -> ldcI4(int32 x), int8T
     | LitI2 x -> ldcI4(int32 x), int16T
     | LitI4 x -> ldcI4 x, int32T
     | LitI8 x -> Instr("", O.Ldc_I8, OpI8 x), int64T
-
     | LitU1 x -> ldcI4(int32 x), uint8T
     | LitU2 x -> ldcI4(int32 x), uint16T
     | LitU4 x -> ldcI4(int32 x), uint32T
@@ -291,6 +306,7 @@ type Env = {
     locals: Map<string, LocalInfo>
     args: (string option * Type) list
     menv: SolveEnv
+    isR: bool
 }
 let updateLocals ({ locals = locals } as env) (ls: ResizeArray<_>) v vt =
     let l = 
@@ -317,18 +333,40 @@ let findNVar { args = args; locals = locals } v =
             | [] -> failwithf "not found NVar(%A)" v
         findi 0s args
 
-let rec go ({ menv = menv; args = args } as env) ls (rs: ResizeArray<_>) = function
-    | Lit x -> let i, t = emitLit x in rs.Add i; t
-    | NVar v ->
-        let isLoc, i, t = findNVar env v
-        rs.Add <| if isLoc then ldloc i else ldarg i
-        t
+let (<<|) (xs: ResizeArray<_>) x = xs.Add x
 
-    | AVar i ->
-        let _,t = List.item i args
-        rs.Add <| ldarg(int16 i)
-        t
+let emitNVarRef env _ rs v =
+    let isLoc, i, t = findNVar env v
+    rs <<| if isLoc then ldloca i else ldarga i
+    TypeSpec.Byref t
 
+let emitAVarRef { args = args } _ rs i =
+    let _,t = List.item i args
+    rs <<| ldarga (int16 i)
+    TypeSpec.Byref t
+
+let emitNVar env _ rs v =
+    // `$0.[1].F <- 2` =
+    // `
+    // ldloca 0
+    // ldc.i4.1
+    // ldelema ...
+    // ldc.i4.2
+    // stfld ...::F
+    // `
+    let isLoc, i, t = findNVar env v
+    rs <<| if isLoc then ldloc i else ldarg i
+    t
+
+let emitAVar { args = args } _ rs i =
+    let _,t = List.item i args
+    rs <<| ldarg (int16 i)
+    t
+
+let rec go ({ menv = menv } as env) ls rs = function
+    | Lit x -> let i, t = emitLit x in rs <<| i; t
+    | NVar v -> emitNVar env ls rs v
+    | AVar i -> emitAVar env ls rs i
     | LetZero(v, vt, e) ->
         let { i = i } as l, env = updateLocals env ls v vt
         let t = go env ls rs e
@@ -345,7 +383,7 @@ let rec go ({ menv = menv; args = args } as env) ls (rs: ResizeArray<_>) = funct
 
     | Next(l, r) ->
         let t = go env ls rs l
-        if t <> voidT then rs.Add <| Instr("", O.Pop, OpNone)
+        if t <> voidT then rs <<| Instr("", O.Pop, OpNone)
         go env ls rs r
 
     | VCall(this, m, args) -> emitVCall env ls rs (this, m, args)
@@ -353,40 +391,32 @@ let rec go ({ menv = menv; args = args } as env) ls (rs: ResizeArray<_>) = funct
     | Upcast(x, t) -> go env ls rs x |> ignore; t
     | NewArray(x, xs) -> emitNewArray env ls rs (x, xs)
     | NewEmptyArray t ->
-        rs.Add <| ldcI4 0
-        rs.Add <| Instr("", O.Newarr, OpType t)
+        rs <<| ldcI4 0
+        rs <<| Instr("", O.Newarr, OpType t)
         TypeSpec.Array t
 
-    | NVarRef v ->
-        let isLoc, i, t = findNVar env v
-        rs.Add <| if isLoc then ldloca i else ldarga i
-        TypeSpec.Byref t
+    | NVarRef v -> emitNVarRef env ls rs v
+    | AVarRef i -> emitAVarRef env ls rs i
+    | FieldRef(this, fieldName) ->
+        let thisT, op =
+            match this with
+            | Choice1Of2 this -> go env ls rs this, O.Ldflda
+            | Choice2Of2 thisT -> thisT, O.Ldsflda
 
-    | AVarRef i ->
-        let _,t = List.item i args
-        rs.Add <| ldarga (int16 i)
-        TypeSpec.Byref t
+        rs <<| Instr("", op, OpField(thisT, fieldName))
+        let f = Solve.getField menv thisT fieldName
+        TypeSpec.Byref <| typeOfT f.FieldType
 
-    | ArrayElemRef(xs, i) ->
-        let arrayT = go env ls rs xs
-        go env ls rs i |> ignore
-        rs.Add <| Instr("", O.Ldelema, OpNone)
-        match arrayT with
-        | TypeSpec.Array t -> TypeSpec.Byref t
-        | _ -> failwithf "ArrayIndex %A" arrayT
+    | ArrayElemRef(array, index) ->
+        let elemT =
+            match go env ls rs array with
+            | TypeSpec.Array t -> t
+            | _ -> failwith "ArrayIndex"
 
-    | FieldRef(Choice1Of2 this, name) ->
-        let thisT = go env ls rs this
-        rs.Add <| Instr("", O.Ldflda, OpField(thisT, name))
-        let field = Solve.getField menv thisT name
-        let fieldT = typeOfT field.FieldType
-        TypeSpec.Byref fieldT
+        if go env ls rs index <> int32T then failwith "ArrayIndex"
 
-    | FieldRef(Choice2Of2 thisT, name) ->
-        rs.Add <| Instr("", O.Ldsflda, OpField(thisT, name))
-        let field = Solve.getField menv thisT name
-        let fieldT = typeOfT field.FieldType
-        TypeSpec.Byref fieldT
+        rs <<| Instr("", O.Ldelema, OpType elemT)
+        TypeSpec.Byref elemT
 
     | RefRead e ->
         let byrefT = go env ls rs e
@@ -395,30 +425,34 @@ let rec go ({ menv = menv; args = args } as env) ls (rs: ResizeArray<_>) = funct
             | TypeSpec.Byref t -> t
             | _ -> failwithf "MRefRead(%A : %A)" e byrefT
 
-        rs.Add <| ldind menv elemT
+        rs <<| ldind menv elemT
         elemT
 
-    | Initobj e ->
-        let refT = go env ls rs e
+    | Initobj(ref, e) ->
+        let refT = go env ls rs ref
         let t =
             match refT with
             | TypeSpec.Byref t -> t
             | _ -> failwith "Initobj"
 
-        rs.Add(Instr("", O.Initobj, OpType t))
-        voidT
+        rs <<| Instr("", O.Initobj, OpType t)
+        go env ls rs e
 
-    | Newobj(thisT, args) ->
+    | Newobj(this, args) ->
         let argTs = List.map (fun arg -> go env ls rs arg) args
-        let m = MethodRef(thisT, ".ctor", Some(MethodTypeAnnotation([], argTs, None)))
-        rs.Add <| Instr("", O.Newobj, OpMethod m)
+        let MethodRef(thisType=thisT) as m =
+            match this with
+            | Choice1Of2 thisT -> MethodRef(thisT, ".ctor", Some(MethodTypeAnnotation([], argTs, None)))
+            | Choice2Of2 ctor -> ctor
+
+        rs <<| Instr("", O.Newobj, OpMethod m)
         thisT
 
-    | GetField(this, fieldName) ->
-        // `.&` ... FieldRef = O.Ldflda
-        // `&.&` ... ReadFieldRef = O.Ldflda
-        // `&.` ... GetField = O.Ldfld
-        // `.` ... GetField
+    | Field(this, fieldName) ->
+        // `.&` ... IFieldRef = O.Ldflda
+        // `&.&` ... RFieldRef = O.Ldflda
+        // `&.` ... RField = O.Ldfld
+        // `.` ... IField
 
         // x.F.G.H
         // x.&F&.&G&.H
@@ -428,7 +462,7 @@ let rec go ({ menv = menv; args = args } as env) ls (rs: ResizeArray<_>) = funct
             | Choice1Of2 this -> go env ls rs this, O.Ldfld
             | Choice2Of2 thisT -> thisT, O.Ldsfld
 
-        rs.Add <| Instr("", op, OpField(thisT, fieldName))
+        rs <<| Instr("", op, OpField(thisT, fieldName))
         let f = Solve.getField menv thisT fieldName
         typeOfT f.FieldType
 
@@ -438,15 +472,58 @@ let rec go ({ menv = menv; args = args } as env) ls (rs: ResizeArray<_>) = funct
             | TypeSpec.Array t -> t
             | _ -> failwith "ArrayIndex"
         
-        let indexT = go env ls rs index
+        if go env ls rs index <> int32T then failwith "ArrayIndex"
 
-        rs.Add <| ldelem menv elemT
+        rs <<| ldelem menv elemT
         elemT
+
+    | MRefWrite(ref, value, cont) ->
+        let elemT =
+            match go env ls rs ref with
+            | TypeSpec.Byref t -> t
+            | _ -> failwith "MRefWrite"
+
+        let valueT = go env ls rs value
+        if elemT <> valueT then failwith "MRefWrite"
+        rs <<| stind menv valueT
+        go env ls rs cont
+
+and emitArrayIndexRef env ls rs (array, i) =
+    let arrayT = go env ls rs array
+    go env ls rs i |> ignore
+    rs <<| Instr("", O.Ldelema, OpNone)
+    match arrayT with
+    | TypeSpec.Array t -> TypeSpec.Byref t
+    | _ -> failwithf "emitArrayIndexRef %A" arrayT
+
+and emitSFieldRef { menv = menv } _ rs (thisT, name) =
+    rs <<| Instr("", O.Ldsflda, OpField(thisT, name))
+    let field = Solve.getField menv thisT name
+    let fieldT = typeOfT field.FieldType
+    TypeSpec.Byref fieldT
+
+and emitIFieldRef { menv = menv } env ls rs (this, name) =
+    (*
+    `S::new().F` ->
+    `
+        ldloca 0
+        initobj S::.ctor()
+        ldloc.0
+        stloc.1
+        ldloca 1
+        ldflda S::F
+    `
+    *)
+    let thisT = go env ls rs this
+    rs.Add <| Instr("", O.Ldflda, OpField(thisT, name))
+    let field = Solve.getField menv thisT name
+    let fieldT = typeOfT field.FieldType
+    TypeSpec.Byref fieldT
 
 and emitVCall env ls rs (this, m, args) =
     go env ls rs this |> ignore
     for arg in args do go env ls rs arg |> ignore
-    rs.Add <| Instr("", O.Callvirt, OpMethod m)
+    rs <<| Instr("", O.Callvirt, OpMethod m)
     match m with
     | MethodRef(_, _, Some(MethodTypeAnnotation(returnType=Some r))) -> r
     | _ ->
@@ -470,7 +547,7 @@ and emitICall env ls rs (this, m, args) =
         | Choice2Of2 m -> m
         | Choice1Of2 name -> MethodRef(thisT, name, Some(MethodTypeAnnotation([], argsT, None)))
 
-    rs.Add <| Instr("", O.Call, OpMethod m)
+    rs <<| Instr("", O.Call, OpMethod m)
 
     match m with
     | MethodRef(_, _, Some(MethodTypeAnnotation(returnType=Some r))) -> r
@@ -503,7 +580,6 @@ and emitNewArray ({ menv = menv } as env) ls rs (x, xs) =
 
     TypeSpec.Array t
 
-
 let emitDefault env t =
     match getTypeCode t with
     | C.Boolean -> Lit <| LitB false
@@ -521,7 +597,7 @@ let emitDefault env t =
     | C.UInt64 -> Lit <| LitU8 0UL
     | _ ->
         if (let t = solveType env t in t.IsValueType || t.IsGenericParameter)
-        then LetZero("a", t, Next(Initobj(NVarRef "a"), RefRead(NVar "a")))
+        then LetZero("a", t, Initobj(NVarRef "a", RefRead(NVar "a")))
         else Lit <| LitNull t
 
 let bigintT = typeOf<bigint>
@@ -555,22 +631,31 @@ let int64Max = bigint(System.Int64.MaxValue)
 let uint64Min = bigint(System.UInt64.MinValue)
 let uint64Max = bigint(System.UInt64.MaxValue)
 
+let scall m args =
+    let MethodRef(thisType=thisType) as m = methodOf m
+    ICall(Choice2Of2 thisType, Choice2Of2 m, args)
+
+let newobj m args = Newobj(Choice2Of2(methodOf m), args)
+
 let emitBigint env (n: bigint) = 
     if n.IsZero then emitDefault env bigintT
-    elif n.IsOne then Call(methodOf <@ bigint.get_One @>, [])
-    elif n = bigint.MinusOne then Call(methodOf <@ bigint.get_MinusOne @>, [])
+    elif n.IsOne then scall <@ bigint.get_One @> []
+    elif n = bigint.MinusOne then scall <@ bigint.get_MinusOne @> []
     elif inRange int32Min int32Max n then
-        Newobj(methodOf <@ bigint : int32 -> _ @>, [Lit <| LitI4(int32 n)])
+        newobj <@ bigint : int32 -> _ @> [Lit <| LitI4(int32 n)]
 
     elif inRange int64Min int64Max n then
-        Newobj(methodOf <@ bigint : int64 -> _ @>, [Lit <| LitI8(int64 n)])
+        newobj <@ bigint : int64 -> _ @> [Lit <| LitI8(int64 n)]
 
     elif inRange uint64Min uint64Max n then
-        Newobj(methodOf <@ bigint : uint64 -> _ @>, [Lit <| LitU8(uint64 n)])
+        newobj <@ bigint : uint64 -> _ @> [Lit <| LitU8(uint64 n)]
 
     else
-        let xs = NewArray [for x in n.ToByteArray() -> Lit(LitU1 x)]
-        Newobj(methodOf <@ bigint : byte array -> _ @>, [xs])
+        let xs =
+            match n.ToByteArray() with
+            | [||] -> failwith ""
+            | bs -> NewArray(Lit(LitU1 bs.[0]), [for x in bs.[1..] -> Lit(LitU1 x)])
+        newobj <@ bigint : byte array -> _ @> [xs]
 
 let emitLit env = function
     | CharLit n -> Lit(LitC n)
