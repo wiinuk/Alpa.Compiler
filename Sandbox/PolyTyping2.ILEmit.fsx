@@ -115,7 +115,7 @@ type CExp =
     | ICall of Choice<CExp, Type> * Choice<string, MethodRef> * CExp list
 
     /// ex: x.Value; String.Empty
-    | Field of Choice<CExp, Type> * fieldName: string
+    | FieldAccess of Choice<CExp, Type> * fieldName: string
 
     /// ex: &e
     | NVarRef of Var
@@ -448,7 +448,7 @@ let rec go ({ menv = menv } as env) ls rs = function
         rs <<| Instr("", O.Newobj, OpMethod m)
         thisT
 
-    | Field(this, fieldName) ->
+    | FieldAccess(this, fieldName) ->
         // `.&` ... IFieldRef = O.Ldflda
         // `&.&` ... RFieldRef = O.Ldflda
         // `&.` ... RField = O.Ldfld
@@ -674,6 +674,43 @@ let mutable ident = 0
 let fleshId() = ident <- ident + 1; ident
 let lambdaT x r = TypeSpec(FullName("Lambda`2", [], [], None), [x; r])
 
+let findVar v env = Map.find v env
+
+let param n t = Parameter(Some n, t)
+let overrideD n ps rt body =
+    let m = MethodInfo(MethodHead(n, [], ps, Parameter(None, rt)), MethodExpr body)
+    MethodDef(None, Some(Override []), None, m)
+
+let fieldI n t = Field(None, false, false, n, t)
+
+let f = fun x -> ()
+let lam1 x y =
+    let lam (xs: list<_>) =
+        f (* <- freevar *) x (* <- freevar *)
+        f y
+        ResizeArray()
+    lam
+let l() =
+    let l = lam1 ' ' true
+    let xs = l [0]
+    xs.Add ""
+    l.GetType().GetGenericTypeDefinition()
+l()
+
+let typeVarToTypeSpec = function
+    | { contents = _ } as v ->
+        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode v
+        |> sprintf "t%08d"
+
+let rec typeToTypeSpec = function
+    | Type(symbol, ts) -> TypeSpec(FullName(symbol, [], [], None), List.map typeToTypeSpec ts)
+    | IndefType { contents = SomeType t } -> typeToTypeSpec t
+    | IndefType({ contents = TypeVar } as v) -> TypeSpec.TypeVar <| typeVarToTypeSpec v
+
+let freeVars = function
+    | E.Lit _ -> 
+    | E.Var(v,t) ->
+
 let emit env = function
     | E.Lit l -> emitLit l
 
@@ -684,16 +721,22 @@ let emit env = function
     //     override Apply(int32): int32 => $0 + this::a
     // ;
     // map(int)().Apply[Lambda`2(Lambda`2(int32,int32),Lambda`2(List`1(int32),List`1(int32)))](new Closure@123(a)).Apply[Lambda`2(List`1(int32),List`1(int32))](xs)
-    | E.Var(v, _) -> Map.find v env
-
+    | E.Var(v, _) -> findVar v env
     | E.Lam(v, vt, b) ->
         // closure = tuple, func
-        let lamType tps =
+        let lamType freeVars vt rt body =
+            let tps = []
+            let tps = collectFreeVarsRev tps rt
+            let tps = collectFreeVarsRev tps vt
+            let tps = List.fold (fun tps (_,t) -> collectFreeVarsRev tps t) tps freeVars
+            let tps = List.rev tps |> List.map typeVarToTypeSpec
+            let vt, rt = typeToTypeSpec vt, typeToTypeSpec rt
             let name =
                 match tps with
                 | [] -> sprintf "Closure@%d" (fleshId())
                 | _ -> sprintf "Closure@%d`%d" (fleshId()) (List.length tps)
 
+            let fields = List.map (fun (n,t) -> fieldI n <| typeToTypeSpec t) freeVars
             TopTypeDef(
                 Some TypeAccess.Private,
                 (name, []),
@@ -702,12 +745,19 @@ let emit env = function
                     typeParams = tps
                     parent = Some <| lambdaT vt rt
                     impls = []
-                    members = [
-                        
-                    ]
+                    members = overrideD "Invoke" [param v vt] rt body::fields
                 }
             )
 
+        // `f x = (); (n -> f x; 10 + n)` =>
+        // `
+        //     f = newobj
+        //      {
+        //          type Closure(`T) : Closure(`T,unit) =
+        //              override Invoke(x: `T)
+        //      }
+        // `
+        
         Newobj()
 
     | E.App(_, _) -> failwith "Not implemented yet"
