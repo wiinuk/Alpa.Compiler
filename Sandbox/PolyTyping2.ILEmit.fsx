@@ -637,8 +637,8 @@ let scall m args =
 
 let newobj m args = Newobj(Choice2Of2(methodOf m), args)
 
-let emitBigint env (n: bigint) = 
-    if n.IsZero then emitDefault env bigintT
+let emitBigint (n: bigint) =
+    if n.IsZero then LetZero("a", typeOf<bigint>, Initobj(NVarRef "a", RefRead(NVar "a")))
     elif n.IsOne then scall <@ bigint.get_One @> []
     elif n = bigint.MinusOne then scall <@ bigint.get_MinusOne @> []
     elif inRange int32Min int32Max n then
@@ -657,9 +657,9 @@ let emitBigint env (n: bigint) =
             | bs -> NewArray(Lit(LitU1 bs.[0]), [for x in bs.[1..] -> Lit(LitU1 x)])
         newobj <@ bigint : byte array -> _ @> [xs]
 
-let emitLit env = function
+let emitLit = function
     | CharLit n -> Lit(LitC n)
-    | IntegerLit n -> emitBigint env n
+    | IntegerLit n -> emitBigint n
     | IntLit n -> Lit(LitI4 n)
     | FloatLit n -> Lit(LitF8 n)
     | StringLit s -> Lit(LitS s)
@@ -673,7 +673,8 @@ f a =
 let mutable ident = 0
 let fleshId() = ident <- ident + 1; ident
 let lambdaT x r = TypeSpec(FullName("Lambda`2", [], [], None), [x; r])
-let emit = function
+
+let emit env = function
     | E.Lit l -> emitLit l
 
     // map (\x -> x + a) xs
@@ -683,7 +684,8 @@ let emit = function
     //     override Apply(int32): int32 => $0 + this::a
     // ;
     // map(int)().Apply[Lambda`2(Lambda`2(int32,int32),Lambda`2(List`1(int32),List`1(int32)))](new Closure@123(a)).Apply[Lambda`2(List`1(int32),List`1(int32))](xs)
-    | E.Var(v, _) -> LVar v
+    | E.Var(v, _) -> Map.find v env
+
     | E.Lam(v, vt, b) ->
         // closure = tuple, func
         let lamType tps =
