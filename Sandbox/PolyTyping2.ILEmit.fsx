@@ -698,9 +698,7 @@ let l() =
 l()
 
 let typeVarToTypeSpec = function
-    | { contents = _ } as v ->
-        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode v
-        |> sprintf "t%08d"
+    | { contents = _ } as v -> LanguagePrimitives.PhysicalHash v |> sprintf "t%08d"
 
 let rec typeToTypeSpec = function
     | Type(symbol, ts) -> TypeSpec(FullName(symbol, [], [], None), List.map typeToTypeSpec ts)

@@ -53,14 +53,84 @@ type Operand =
 type Instr = 
     | Instr of string * OpCode * Operand
 
-type Override = Override of baseMethods: MethodRef list
+type ILLit =
+    | LitB of bool
+    | LitI1 of int8
+    | LitI2 of int16
+    | LitI4 of int32
+    | LitI8 of int64
+    | LitU1 of uint8
+    | LitU2 of uint16
+    | LitU4 of uint32
+    | LitU8 of uint64
+    | LitC of char
+    | LitF4 of single
+    | LitF8 of double
+    /// ex: null; "abc"
+    | LitS of string
+    | LitNull of TypeSpec
 
-type Parameter = Parameter of name: string option * TypeSpec
+type ILExp =
+    /// ex: 10i; 'c'; "test"; null[string]
+    | Lit of ILLit
+    /// ex: a
+    | NVar of string
+    /// ex: $0
+    | AVar of int
+    /// ex: a: string in x
+    | LetZero of string * TypeSpec * ILExp
+    /// ex: a <- "" in x
+    | Let of string * ILExp * ILExp
+    /// ex: a; b
+    | Next of ILExp * ILExp
+
+    /// ex: 'a'.[object::ToString]()
+    | VCall of ILExp * MethodRef * ILExp list
+    /// ex: object::ReferenceEquals(x, y);
+    ///     string::Equals(string, string)(a, b);
+    ///     "".Equals(string)(null)
+    | ICall of Choice<ILExp, TypeSpec> * Choice<string, MethodRef> * ILExp list
+
+    /// ex: x.Value; String.Empty
+    | FieldAccess of Choice<ILExp, TypeSpec> * fieldName: string
+
+    /// ex: &e
+    | NVarRef of string
+    /// ex: &$0
+    | AVarRef of int
+    /// ex: x.&F; T.&F
+    | FieldRef of Choice<ILExp, TypeSpec> * fieldName: string
+    /// ex: x.&[n]
+    | ArrayElemRef of ILExp * index: ILExp
+
+    /// ex: upcast "" IEquatable`1(string)
+    | Upcast of ILExp * TypeSpec
+
+    /// ex: [1; 2; 3]
+    | NewArray of ILExp * ILExp list
+    /// ex: xs.[i]
+    | ArrayIndex of ILExp * ILExp
+    /// ex: []: int array
+    | NewEmptyArray of TypeSpec
+
+    /// ex: *r
+    | RefRead of ILExp
+    /// ex: r *<- 10; 0
+    | MRefWrite of ref: ILExp * value: ILExp * cont: ILExp
+
+    /// ex: initobj &a: 10;
+    | Initobj of ILExp * ILExp
+    /// ex: newobj string('a', 10i)
+    | Newobj of Choice<Type, MethodRef> * ILExp list
+
+
 type Local = Local of isPinned: bool * TypeSpec
 type Locals = Locals of initLocals: bool * locals: Local list
-type MethodBody = MethodBody of Locals option * Instr list
+type MethodBody = MethodBody of Locals option * Instr list | MethodExpr of ILExp
+type Parameter = Parameter of name: string option * TypeSpec
 type MethodHead = MethodHead of name: MethodName * typeParams: TypeVar list * pars: Parameter list * ret: Parameter
 type MethodInfo = MethodInfo of MethodHead * MethodBody
+type Override = Override of baseMethods: MethodRef list
 type StaticMethodInfo = MethodInfo
 
 type Literal =
