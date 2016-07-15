@@ -670,8 +670,11 @@ f a =
     \() -> _ = a; ""
 *)
 
-let mutable ident = 0
-let fleshId() = ident <- ident + 1; ident
+type Temp<'a> = {
+    rs: ResizeArray<'a>
+    ident: int ref
+}
+let fleshId { ident = ident } = incr ident; !ident
 let lambdaT x r = TypeSpec(FullName("Lambda`2", [], [], None), [x; r])
 
 let findVar v env = Map.find v env
@@ -707,8 +710,9 @@ let rec typeToTypeSpec = function
 
 let rec freeVars known vs = function
     | E.Lit _ -> vs
-    | E.Var(v,t) -> if List.contains v known then vs else (v,t)::vs
-    | E.Lam(v, _, e) -> freeVars (v::known) vs e
+    | E.Var(v, _) when List.contains v known || List.exists (fst >> (=) v) vs -> vs
+    | E.Var(v, t) -> (v,t)::vs
+    | E.Lam(v, _, _, e) -> freeVars (v::known) vs e
     | E.App(e1, e2) -> freeVars known (freeVars known vs e1) e2
     | E.Ext(v, _, e) -> freeVars (v::known) vs e
     | E.Let(v, _, e1, e2) -> freeVars (v::known) (freeVars known vs e1) e2
@@ -733,7 +737,9 @@ let rec freeVars known vs = function
         // TODO: instance inner vars
         freeVars known vs e
 
-let emit env = function
+let add (xs: _ ResizeArray) x = xs.Add x
+
+let rec emit env ({ rs = rs } as temp) = function
     | E.Lit l -> emitLit l
 
     // map (\x -> x + a) xs
@@ -744,7 +750,7 @@ let emit env = function
     // ;
     // map(int)().Apply[Lambda`2(Lambda`2(int32,int32),Lambda`2(List`1(int32),List`1(int32)))](new Closure@123(a)).Apply[Lambda`2(List`1(int32),List`1(int32))](xs)
     | E.Var(v, _) -> findVar v env
-    | E.Lam(v, vt, b) ->
+    | E.Lam(v, vt, rt, body) ->
         // closure = tuple, func
         let lamType freeVars vt rt body =
             let tps = []
@@ -755,10 +761,11 @@ let emit env = function
             let vt, rt = typeToTypeSpec vt, typeToTypeSpec rt
             let name =
                 match tps with
-                | [] -> sprintf "Closure@%d" (fleshId())
-                | _ -> sprintf "Closure@%d`%d" (fleshId()) (List.length tps)
+                | [] -> sprintf "Closure@%d" (fleshId temp)
+                | _ -> sprintf "Closure@%d`%d" (fleshId temp) (List.length tps)
 
             let fields = List.map (fun (n,t) -> fieldI n <| typeToTypeSpec t) freeVars
+            let ty = TypeSpec(FullName(name, [], [], None), List.map TypeSpec.TypeVar tps)
             TopTypeDef(
                 Some TypeAccess.Private,
                 (name, []),
@@ -767,14 +774,25 @@ let emit env = function
                     typeParams = tps
                     parent = Some <| lambdaT vt rt
                     impls = []
-                    members = overrideD "Invoke" [param v vt] rt body::fields
+                    members = overrideD "Invoke" [param v vt] rt (MethodExpr body)::fields
                 }
-            )
+            ), ty
+
+        // TODO: emit vcs
         let (TypeSign(vcs, vt)) = vt
-        let (TypeSign(rcs, rt)) = exprType b
-        let freeVars = freeVars [v] [] b |> List.map (fun (v,TypeSign(vc,t)) -> v,t)
-        lamType freeVars vt rt b
-        
+        // TODO: emit rcs
+        let (TypeSign(rcs, rt)) = rt
+        let freeVarsRev =
+            freeVars [v] [] body
+            |> List.map (fun (v,TypeSign(vc,t)) -> v,t)
+
+        let body = emit env temp body
+        let letFreeVar b (v,_) = Let(v, FieldAccess(Choice1Of2(AVar 0), v), b)
+        let body = List.fold letFreeVar body freeVarsRev
+        let freeVars = List.rev freeVarsRev
+        let lamTypeDef, lamType = lamType freeVars vt rt body
+        add rs lamTypeDef
+
         (*
          * `a = 10; \x -> \y -> a +# x +# y` ->
          * `
@@ -791,8 +809,9 @@ let emit env = function
         //              override Invoke(x: `T)
         //      }
         // `
-        
-        Newobj()
+
+        let closureEnvs = List.map (fst >> NVar) freeVars
+        Newobj(Choice1Of2 lamType, closureEnvs)
 
     | E.App(_, _) -> failwith "Not implemented yet"
     | E.Ext(_, _, _) -> failwith "Not implemented yet"

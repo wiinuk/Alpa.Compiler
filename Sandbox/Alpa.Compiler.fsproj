@@ -73,7 +73,6 @@
     <Compile Include="Alpa.Emit.Types.fs" />
     <Compile Include="Alpa.Emit.Utils.fs" />
     <Compile Include="Alpa.Emit.Solve.fs" />
-    <Compile Include="Alpa.Emit.ILEmit.fs" />
     <Compile Include="Alpa.IL.Lexer.fs" />
     <Compile Include="Alpa.IL.Parser.fs" />
     <None Include="Alpa.Parser.Types.fsx" />
@@ -93,6 +92,8 @@
     <None Include="PolyTyping2.Desuger.fsx" />
     <None Include="PolyTyping2.ILEmit.fsx" />
     <None Include="PolyTyping2.Closure.fsx" />
+    <Compile Include="Alpa.Emit.ILEmitExpr.fs" />
+    <Compile Include="Alpa.Emit.ILEmit.fs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FParsec">

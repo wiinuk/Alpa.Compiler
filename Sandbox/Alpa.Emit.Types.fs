@@ -121,7 +121,7 @@ type ILExp =
     /// ex: initobj &a: 10;
     | Initobj of ILExp * ILExp
     /// ex: newobj string('a', 10i)
-    | Newobj of Choice<Type, MethodRef> * ILExp list
+    | Newobj of Choice<TypeSpec, MethodRef> * ILExp list
 
 
 type Local = Local of isPinned: bool * TypeSpec
@@ -261,7 +261,7 @@ and ILMethodBuilder = {
     /// DeclaringType
     dt: ILTypeBuilder
     ov: Override option
-    mb: Choice<MethodBuilder,ConstructorBuilder>
+    mb: Choice<MethodBuilder, ConstructorBuilder>
     mVarMap: TypeVarMap
     h: MethodHead
     b: MethodBody option

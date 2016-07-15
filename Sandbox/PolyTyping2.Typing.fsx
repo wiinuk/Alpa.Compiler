@@ -14,7 +14,7 @@ type TPat =
 type TExp =
     | Lit of Lit
     | Var of Var * TypeSign
-    | Lam of Var * TypeSign * TExp
+    | Lam of var: Var * varType: TypeSign * retType: TypeSign * TExp
     | App of TExp * TExp
     | Ext of Var * TypeScheme * TExp
     | Let of Var * TypeScheme * TExp * TExp
@@ -84,7 +84,8 @@ and typingLam env v e =
     let t = TypeSign([], vt)
     let env = Env.add v (TypeScheme([], t)) env
     let e, TypeSign(ec, et) = typingCore env e
-    Lam(v, t, e), TypeSign(ec, lamT vt et)
+    let rt = TypeSign(ec, lamT vt et)
+    Lam(v, t, rt, e), rt
 
 and typingLet env var body cont e =
     let vt = newVarT()

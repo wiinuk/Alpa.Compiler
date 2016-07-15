@@ -131,6 +131,7 @@ module SolveEnv =
         typeArgs = []
         mTypeArgs = []
     }
+    let envOfMethodBuilder { mVarMap = mVarMap; dt = dt } = envOfTypeBuilder mVarMap dt
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module SolvedType =

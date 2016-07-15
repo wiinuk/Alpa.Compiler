@@ -371,21 +371,33 @@ let defineOverride env { dt = { t = t }; ov = ov; mb = mb } =
 
             | _ -> raise <| System.NotImplementedException()
 
-let emitMethod ({ mVarMap = mVarMap; dt = dt; b = body } as m) =
-    match body with
-    | None -> ()
-    | Some(MethodBody(locals, instrs)) ->
-        let env = envOfTypeBuilder mVarMap dt
-        defineOverride env m
-        let g = getILGenerator m
+let emitMethodBody m locals instrs =
+    let env = envOfMethodBuilder m
+    defineOverride env m
+    let g = getILGenerator m
 
-        Option.iter (fun (Locals(initLocals,locals)) ->
-            setInitLocals m initLocals
-            for Local(isPinned, t) in locals do
-                g.DeclareLocal(solveType env t, isPinned) |> ignore
-        ) locals
+    Option.iter (fun (Locals(initLocals,locals)) ->
+        setInitLocals m initLocals
+        for Local(isPinned, t) in locals do
+            g.DeclareLocal(solveType env t, isPinned) |> ignore
+    ) locals
 
-        for instr in instrs do emitInstr g env instr
+    for instr in instrs do emitInstr g env instr
+
+let emitMethod = function
+    | { b = None } -> ()
+    | { b = Some(MethodBody(locals, instrs)) } as m -> emitMethodBody m locals instrs
+    | { h = MethodHead(pars=pars); b = Some(MethodExpr expr) } as m ->
+        let env = {
+            ILEmitExpr.locals = Map.empty
+            ILEmitExpr.pars = pars
+            ILEmitExpr.menv = envOfMethodBuilder m
+        }
+        let ls = ResizeArray()
+        let rs = ResizeArray()
+        ILEmitExpr.emit env ls rs expr |> ignore
+        let ls = ls |> Seq.map (fun { t = t } -> Local(false, t)) |> Seq.toList
+        emitMethodBody m (Some(Locals(true, ls))) rs
 
 let emitMethods { map = map } =
     for { mmap = mmap } in values map do
