@@ -22,7 +22,7 @@ type TExp =
 
     | Mat of TExp * (TPat * TExp) * (TPat * TExp) list
 
-    | TypeDef of name: Symbol * TypeDef * TExp
+    | TypeDef of name: Symbol * TypeDef * cont: TExp
     | InstanceDef of name: Symbol * typeArgs: Type list * methodImpls: assoc<Var, TypeScheme * TExp> * cont: TExp
 
 type P = PolyTyping2.Pat

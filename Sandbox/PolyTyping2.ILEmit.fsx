@@ -705,14 +705,6 @@ let rec typeToTypeSpec = function
     | IndefType { contents = SomeType t } -> typeToTypeSpec t
     | IndefType({ contents = TypeVar } as v) -> TypeSpec.TypeVar <| typeVarToTypeSpec v
 
-(*
- * `a = 10; \x -> \y -> a #+ x #+ y` ->
- * `
- * a = 10
- * closure{a}(\{a} x -> closure{a}(\{a} y -> a #+ x #+ y))
- * `
- *)
-
 let rec freeVars known vs = function
     | E.Lit _ -> vs
     | E.Var(v,t) -> if List.contains v known then vs else (v,t)::vs
@@ -736,12 +728,11 @@ let rec freeVars known vs = function
         let freeVarsC known vs (p, e) = freeVars (vars known p) vs e
         List.fold (freeVarsC known) (freeVarsC known (freeVars known vs e) c) cs
 
-    | E.TypeDef(name, td, e) ->
-        match td with
-        | TypeDef.ClassDef(typeArgs, methods) -> ()
+    | E.TypeDef(cont=e)
+    | E.InstanceDef(cont=e) ->
+        // TODO: instance inner vars
+        freeVars known vs e
 
-    | E.InstanceDef(name, typeArgs, methodImpls, cont) -> failwith "Not implemented yet"
-    
 let emit env = function
     | E.Lit l -> emitLit l
 
@@ -779,6 +770,18 @@ let emit env = function
                     members = overrideD "Invoke" [param v vt] rt body::fields
                 }
             )
+        let (TypeSign(vcs, vt)) = vt
+        let (TypeSign(rcs, rt)) = exprType b
+        let freeVars = freeVars [v] [] b |> List.map (fun (v,TypeSign(vc,t)) -> v,t)
+        lamType freeVars vt rt b
+        
+        (*
+         * `a = 10; \x -> \y -> a +# x +# y` ->
+         * `
+         * a = 10
+         * closure{a}(\{a} x -> closure{a}(\{a} y -> a +# x +# y))
+         * `
+         *)
 
         // `f x = (); (n -> f x; 10 + n)` =>
         // `
