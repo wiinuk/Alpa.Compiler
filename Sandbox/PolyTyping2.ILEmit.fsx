@@ -678,7 +678,7 @@ let findVar v env = Map.find v env
 
 let param n t = Parameter(Some n, t)
 let overrideD n ps rt body =
-    let m = MethodInfo(MethodHead(n, [], ps, Parameter(None, rt)), MethodExpr body)
+    let m = MethodInfo(MethodHead(n, [], ps, Parameter(None, rt)), body)
     MethodDef(None, Some(Override []), None, m)
 
 let fieldI n t = Field(None, false, false, n, t)
@@ -705,10 +705,43 @@ let rec typeToTypeSpec = function
     | IndefType { contents = SomeType t } -> typeToTypeSpec t
     | IndefType({ contents = TypeVar } as v) -> TypeSpec.TypeVar <| typeVarToTypeSpec v
 
-let freeVars = function
-    | E.Lit _ -> 
-    | E.Var(v,t) ->
+(*
+ * `a = 10; \x -> \y -> a #+ x #+ y` ->
+ * `
+ * a = 10
+ * closure{a}(\{a} x -> closure{a}(\{a} y -> a #+ x #+ y))
+ * `
+ *)
 
+let rec freeVars known vs = function
+    | E.Lit _ -> vs
+    | E.Var(v,t) -> if List.contains v known then vs else (v,t)::vs
+    | E.Lam(v, _, e) -> freeVars (v::known) vs e
+    | E.App(e1, e2) -> freeVars known (freeVars known vs e1) e2
+    | E.Ext(v, _, e) -> freeVars (v::known) vs e
+    | E.Let(v, _, e1, e2) -> freeVars (v::known) (freeVars known vs e1) e2
+    | E.LetRec(ds, e) ->
+        let known = List.fold (fun known (v,_) -> v::known) known ds
+        let vs = List.fold (fun vs (_,(_,e)) -> freeVars known vs e) vs ds
+        freeVars known vs e
+
+    | E.Mat(e, c, cs) ->
+        let rec vars vs = function
+            | TPat.AnyPat -> vs
+            | TPat.AsPat(p,v,_) -> vars (v::vs) p
+            | TPat.VarPat(v,_) -> v::vs
+            | TPat.ConPat(c, p, ps) -> List.fold vars (vars vs p) ps
+            | TPat.LitPat _ -> vs
+
+        let freeVarsC known vs (p, e) = freeVars (vars known p) vs e
+        List.fold (freeVarsC known) (freeVarsC known (freeVars known vs e) c) cs
+
+    | E.TypeDef(name, td, e) ->
+        match td with
+        | TypeDef.ClassDef(typeArgs, methods) -> ()
+
+    | E.InstanceDef(name, typeArgs, methodImpls, cont) -> failwith "Not implemented yet"
+    
 let emit env = function
     | E.Lit l -> emitLit l
 
