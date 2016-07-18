@@ -1,127 +1,140 @@
-﻿let rec gcd(x, y) =
-    if y <> 0 then gcd(y, x % y)
-    else x
-    
-gcd(10, 5)
-
-// ---
-
-let print x = printf "%A" x
-
-print(stdin.ReadLine())
-
-// ---
-
-let foo = "5"
-int(foo) + 3
-
-// ---
-
-let mutable counter = 0
-while counter < 5 do
-    print counter
-    counter <- counter+1
-
-for i in 0..4 do print(i)
-
-// ---
-module NumericLiteralG =
-    let FromInt32(n) = System.Numerics.Complex(double<int> n, 0.0)
-    let FromOne() = System.Numerics.Complex.One
-    let FromZero() = System.Numerics.Complex.Zero
-
-let ex1(i) =
-    if i > 0. then sqrt(i)
-    elif i = 0. then 0.
-    else 1. * sqrt(-i)
-
-// ---
-
-print("Hello, world!")
-
-// ---
-
-open System.Collections.Generic
-
-let d = dict ["spam", 1; "ham", 2] |> Dictionary
-
-let def = 0
-let k = "eggs"
-
-let v =
-    try d.[k]
-    with :? KeyNotFoundException ->
-        d.[k] <- def
-        def
-
-printfn "v: %d" v
-printfn "d: %A" d
-
-begin
-    let d = Map ["spam", 1; "ham", 2]
-    let def = 0
-    let k = "eggs"
-    let v, d =
-        match Map.tryFind k d with
-        | Some v -> v, d
-        | None -> def, Map.add k def d
-    
-    printfn "v: %d" v
-    printfn "d: %A" d
-end
-
-// ---
-
-let ex2(a, b) =
-    if not a && b then ()
-    if b || not a then ()
-    if (not a) && b then ()
-
-// ---
-
-let ex3(sequence) =
-    for element in sequence do ()
-
-// ---
-
-let ex4(cond, expr1, expr2) =
-    let a = if cond then expr1 else expr2
-    ()
-
-// ---
+﻿open System
 open System.IO
+open System.Threading
+open System.Windows.Forms
 
-let ex5(_) =
-    let openW(p) = new StreamWriter(File.OpenWrite(p))
+let day (t: DateTime) = t.Day
+let span = TimeSpan.FromSeconds 1.
 
-    let f = openW("stay_open.txt")
-    f.Write("every even number > 2 is the sum of two primes")
-    assert false
-    f.Close()
+let startTimer onTick =
+    let t = new Timer(Interval = int span.TotalMilliseconds)
+    t.Tick.Add onTick
+    t.Start()
 
-    using (openW("will_be_closed.txt")) (fun f ->
-        f.Write("the sum of two primes > 2 is an even number")
-        assert false
+let validate (t: DateTime) s =
+    match t.DayOfWeek with
+    | DayOfWeek.Sunday
+    | DayOfWeek.Saturday -> TimeSpan.FromHours 2. < s
+    | _ -> TimeSpan.FromMinutes 30. < s
+
+
+type Stream = {
+    Items: char array
+    mutable Index: int
+}
+exception ReadException of string
+let raiseReadExn f = Printf.kprintf (ReadException >> raise) f
+
+let streamOfString xs = { Items = (xs + "").ToCharArray(); Index = 0 }
+let runString r xs = r <| streamOfString xs
+
+let satisfy predicate xs =
+    xs.Index < xs.Items.Length &&
+    predicate xs.Items.[xs.Index] &&
+    (
+        xs.Index <- xs.Index + 1
+        true
     )
 
-    use f = openW("will_be_closed.txt")
-    f.Write("the sum of two primes > 2 is an even number")
-    assert false
+let readTrivia xs =
+    let rec aux xs = if satisfy Char.IsWhiteSpace xs then aux xs else ()
+    aux xs
+
+let readCharT c xs =
+    readTrivia xs
+    if satisfy ((=) c) xs then () else raiseReadExn "readCharT %c" c
+    readTrivia xs
+
+let readStringT s xs =
+    readTrivia xs
+    let rec aux i =
+        if String.length s = i then ()
+        elif satisfy ((=) s.[i]) xs then aux (i+1)
+        else raiseReadExn "readStringT %A" s
+    aux 0
+    readTrivia xs
+
+let readTuple3 r1 r2 r3 xs =
+    readCharT '(' xs
+    let x1 = r1 xs
+    readCharT ',' xs
+    let x2 = r2 xs
+    readCharT ',' xs
+    let x3 = r3 xs
+    readCharT ')' xs
+    x1, x2, x3
+
+let readTable rs xs =
+    let rec aux = function
+        | [] -> raiseReadExn "readTable"
+        | (r,v)::rs -> try ignore(r xs); v with _ -> aux rs
+    aux rs
+
+let readBool =
+    readTable [
+        readStringT "true", true
+        readStringT "false", false
+    ]
+
+let readIntT xs =
     
-    let f = openW("will_be_closed.txt")
+
+let readHms xs =
+    let h = readIntT xs
+    readCharT ':' xs
+    let m = readIntT xs
+    readCharT ':' xs
+    let s = readIntT xs
+    h, m, s
+
+let readDateTime xs =
+    let y = readIntT xs
+    readCharT '/' xs
+    let M = readIntT xs
+    readCharT '/' xs
+    let d = readIntT xs
+    let h, m, s = readHms xs
+    try DateTime(y, M, d, h, m, s)
+    with
+    | :? ArgumentOutOfRangeException -> raiseReadExn "readDateTime"
+
+let readTimeSpan xs =
+    try readHms xs |> TimeSpan
+    with
+    | :? ArgumentOutOfRangeException -> raiseReadExn "readTimeSpan"
+
+let readEos xs = if xs.Index < xs.Items.Length then raiseReadExn "readEos"
+
+let readAll r xs =
+    let x = r xs
+    readEos xs
+    x
+
+let serializer() =
+    let r xs = runString (readAll (readTuple3 readDateTime readTimeSpan readBool)) xs
+    let w x = sprintf "%A" x
+    r, w
+
+let useSetting using =
+    let path = @"C:\Users\Public\Document\Pallete.log"
+    use m = new Mutex(false, path)
     try
-        f.Write("every even number > 2 is the sum of two primes")
-        assert false
+        m.WaitOne() |> ignore
+        let r, w = serializer()
+        if File.Exists path then r <| File.ReadAllText path
+        else (DateTime.MinValue, TimeSpan.Zero, false)
+        |> using
+        |> w
+        |> fun data -> File.WriteAllText(path, data)
     finally
-        f.Close()
+        m.ReleaseMutex()
 
-    File.WriteAllText("will_be_closed.txt", "the sum of two primes > 2 is an even number")
+let onTick _ = useSetting <| fun (t,s,isSend) ->
+    let now = DateTime.Now
+    if day now <> day t then now, span, isSend
+    else
+        let s = s + span
+        let isSend = if validate t s && not isSend then (sendMail(); true) else false
+        t, s, isSend
 
-// ---
-
-module Ex = FSharp.Core.ExtraTopLevelOperators
-type C = System.Console
-Ex.double(10)
-C.Write("a")
-
-Seq.empty
+let onStart _ = startTimer onTick

@@ -132,8 +132,9 @@
     <None Include="AssemblyImport.ail">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="Palette.fsx" />
     <None Include="ILPrinter.fsx" />
+    <None Include="TheZenOfPython.fsx" />
+    <None Include="Palette.fsx" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="FsCheck">
